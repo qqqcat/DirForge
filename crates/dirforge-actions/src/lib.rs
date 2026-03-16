@@ -346,9 +346,7 @@ fn validate_deletion_target(
     }
 
     let parent = path.parent().unwrap_or(path);
-    if std::fs::OpenOptions::new().read(true).open(parent).is_err() {
-        return Err(ActionFailureKind::PermissionDenied);
-    }
+    std::fs::metadata(parent).map_err(|e| map_io_error(&e))?;
 
     let writable = !meta.permissions().readonly();
 

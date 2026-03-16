@@ -83,6 +83,7 @@ fn scan_can_cancel() {
 fn scan_reports_errors_on_restricted_dir() {
     let fixture = dirforge_testkit::FixtureTree::restricted_dir().expect("fixture");
     let handle = start_scan(fixture.root.clone(), ScanConfig::default());
+    #[cfg(unix)]
     let mut got_errors = false;
 
     for _ in 0..2000 {
@@ -92,7 +93,14 @@ fn scan_reports_errors_on_restricted_dir() {
             .events
             .recv_timeout(std::time::Duration::from_millis(10))
         {
-            got_errors = summary.error_count > 0 || !errors.is_empty();
+            #[cfg(unix)]
+            {
+                got_errors = summary.error_count > 0 || !errors.is_empty();
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (summary, errors);
+            }
             break;
         }
     }

@@ -42,3 +42,16 @@
 - 同步更新 `README.md` 项目现状摘要，确保与最新测试和架构状态一致。
 - 更新 `docs/dirforge-sdd.md`，修正线程模型为并发流水线（worker 池 + 聚合线程 + 有界发布通道）。
 - 更新 `docs/dirforge-install-usage.md`，补齐当前性能阈值与诊断归档产物说明。
+
+## 2026-03-16（UI 可用性重构与中文显示修复）
+- 完成 `dirforge-ui` 一轮结构性重构：引入顶部工具栏、左导航、中央工作区、右侧检查器和底部状态栏。
+- 修复中文显示问题：启动时加载系统中文字体回退，Windows 优先使用 Microsoft YaHei / DengXian 等字体。
+- 统一实现人类可读格式化：文件大小、计数和状态摘要不再直接输出原始整数。
+- 重做 treemap 标签规则：对小面积 tile 隐藏标签，对可读区域执行截断与 hover 详情展示，避免文字重叠。
+- 顺带修复两处 Windows 平台问题：稳定文件标识实现改为稳定 Win32 API；卷信息匹配兼容 `\\?\\` 前缀路径。
+- 回归验证完成：`cargo check --workspace` 与 `cargo test --workspace` 均通过。
+
+## 2026-03-16（统计语义与亮色主题修正）
+- 修正概览页指标语义：将易误导的 `Observed Size` 改为 `Scanned Size`，并新增 `Volume Used` / `Total` 显示。
+- 增加扫描覆盖率提示，帮助区分“本次扫描遍历到的数据量”和“卷级已用空间”。
+- 修复浅色主题背景与卡片填充：由透明框架改为完整亮色 panel/surface token，不再出现黑底浅字混搭。

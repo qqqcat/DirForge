@@ -24,11 +24,13 @@ pub fn volume_info(path: &str) -> Result<VolumeInfo, PlatformError> {
     let canonical = p
         .canonicalize()
         .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
+    let canonical_key = mount_compare_key(&canonical);
 
     let mut best: Option<VolumeInfo> = None;
     for d in &disks {
         let mount = d.mount_point();
-        if canonical.starts_with(mount) {
+        let mount_key = mount_compare_key(mount);
+        if canonical_key.starts_with(&mount_key) {
             let candidate = VolumeInfo {
                 mount_point: mount.display().to_string(),
                 name: d.name().to_string_lossy().to_string(),
@@ -46,4 +48,20 @@ pub fn volume_info(path: &str) -> Result<VolumeInfo, PlatformError> {
     }
 
     best.ok_or_else(|| PlatformError::new(PlatformErrorKind::Unsupported, "no volume found"))
+}
+
+fn mount_compare_key(path: &std::path::Path) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        path.display()
+            .to_string()
+            .trim_start_matches(r"\\?\")
+            .replace('/', "\\")
+            .to_lowercase()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.display().to_string()
+    }
 }

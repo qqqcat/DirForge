@@ -1,4 +1,4 @@
-# DirForge UI 高保真组件规格（v1）
+# DirForge UI 高保真组件规格（v2）
 
 ## 1. 设计基线
 
@@ -7,6 +7,10 @@
 - 已提供页面：Dashboard / Current Scan / Treemap / History / Errors / Operations / Diagnostics / Settings。
 - 已实现大列表虚拟化（show_rows）与基础帧预算指标展示。
 - 已实现多语言默认策略（系统语言）与设置持久化。
+- 已落地顶部工具栏、左导航、中央工作区、右侧 Inspector、底部状态栏。
+- 已落地人类可读格式化：`format_bytes` / `format_count`。
+- 已落地系统中文字体回退与 treemap 标签阈值控制。
+- 已区分“扫描到的文件体积（Scanned Size）”与“卷已用空间（Volume Used）”，避免将扫描结果误读为磁盘总容量。
 
 产品定位：专业、克制、高信息密度、可长时使用。
 
@@ -15,6 +19,7 @@
 - 默认密度：`Compact`
 - 默认主题：`Dark`（支持 Light）
 - Inspector 固定宽度：`320px`
+- 标签文本策略：超过可读阈值才显示，长文本中间截断。
 
 ## 2. 布局与尺寸
 
@@ -99,6 +104,13 @@
 - `Cancelled`
 - `Error`
 
+### 5.4 本地化与字体
+
+- 默认依据系统语言环境推断语言。
+- 设置页手动选择优先级高于自动检测。
+- Windows 优先加载 `Microsoft YaHei / DengXian / SimHei / SimSun` 作为 CJK fallback。
+- 中文 UI 禁止出现 `□` 占位符或 ASCII 拼接式半成品文案。
+
 ### 5.3 操作状态
 
 - `Pending`
@@ -119,6 +131,13 @@ Treemap 颜色模式：
 1. 按 Category（默认）
 2. 按 Extension
 3. 按 Risk
+
+Treemap 标签规则：
+
+1. 当 tile 宽高低于最小阈值时不渲染标签。
+2. 中等 tile 仅显示截断名称。
+3. 较大 tile 显示名称 + 人类可读大小。
+4. 完整路径统一通过 hover 提示展示，不强行塞入 tile 本体。
 
 ## 7. 图标语义
 
@@ -142,10 +161,10 @@ Treemap 颜色模式：
 Current Scan 页面必须包含：
 
 - 顶部 Toolbar
-- 左侧 Directory Tree
-- 中央工作区（Treemap/Files/Duplicates/Extensions/Timeline）
+- 左侧 Navigation
+- 中央工作区（概览指标 + 热点列表 + 实时发现）
 - 右侧 Inspector
-- 底部 Results Panel
+- 底部 Status Bar
 - 状态栏
 
 ## 新增交互要求（本轮）
@@ -153,6 +172,10 @@ Current Scan 页面必须包含：
 - Errors 页面需展示错误分类统计（User/Transient/System）。
 - Operations 页面需展示批执行结果列表（success/failure/message）。
 - Diagnostics 页面提供诊断包导出入口。
+- 所有大小与计数信息必须使用人类可读格式展示。
+- 概览页必须显式区分 `Scanned Size`、`Volume Used`、`Total Capacity` 三类不同语义。
+- Settings 页面语言选择改为明确单选，不使用“中文复选框”这种含糊交互。
+- Dashboard / Current Scan / History 页面需避免把 4 个以上指标挤在单行纯文本中。
 
 ## 10. 设计 Token 建议结构
 

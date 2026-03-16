@@ -28,15 +28,22 @@ cargo run -p dirforge-app
 
 ## 4. 推荐使用流程
 
-1. 在 Dashboard 选择扫描根目录。
+1. 在 Overview 页面选择扫描根目录。
 2. 调整扫描参数（profile、batch、snapshot interval）。
-3. 在 Current Scan 观察实时进度与统计。
+3. 在 Live Scan 页面观察实时进度、热点文件/目录与实时发现列表。
 4. 扫描完成后查看：
-   - Top 文件/目录
-   - 重复文件候选
+   - Treemap（只对可读区域显示标签，悬浮看完整路径）
+   - 历史快照
    - 错误分类（User/Transient/System）
-5. 在 Operations 中生成删除计划并执行模拟动作。
-6. 导出报告和诊断文件（含诊断归档目录）。
+   - 操作中心中的删除计划与模拟执行结果
+5. 在右侧 Inspector 查看当前选中文件/目录的上下文信息。
+6. 在 Settings 中切换中英文或深浅主题；Windows 默认会优先加载 Microsoft YaHei / DengXian 等中文字体回退。
+7. 导出报告和诊断文件（含诊断归档目录）。
+
+说明：
+
+- `Scanned Size` 表示本次扫描实际遍历到的文件总大小。
+- `Volume Used` / `Total` 表示卷级别空间信息，来源于系统磁盘信息，不等同于扫描结果。
 
 ## 5. 性能阈值测试
 
@@ -67,3 +74,4 @@ cargo test -p dirforge-testkit --test benchmark_thresholds
 - 删除相关功能仍建议以“模拟执行优先”作为默认安全策略。
 - 大体量目录扫描时，首次运行可能出现较高 CPU/内存占用。
 - 若 GUI 无法启动，请确认运行环境具备桌面窗口支持。
+- 若中文显示为方框或乱码，请确认系统存在可用 CJK 字体；应用会优先加载系统字体回退。
