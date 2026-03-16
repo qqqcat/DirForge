@@ -59,6 +59,7 @@ impl Publisher {
                 .send(ScanEvent::Batch(std::mem::take(&mut self.batch)));
             self.publisher_lag = self.publisher_lag.saturating_sub(size);
             telemetry::record_scan_batch(size, started.elapsed().as_millis() as u64);
+            telemetry::record_batch_flush_size(size);
         } else {
             self.publisher_lag = self.publisher_lag.saturating_add(1);
         }
@@ -94,6 +95,7 @@ impl Publisher {
                 .send(ScanEvent::Batch(std::mem::take(&mut self.batch)));
             self.publisher_lag = self.publisher_lag.saturating_sub(size);
             telemetry::record_scan_batch(size, started.elapsed().as_millis() as u64);
+            telemetry::record_batch_flush_size(size);
         }
     }
 

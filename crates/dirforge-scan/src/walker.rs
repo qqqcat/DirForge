@@ -17,6 +17,7 @@ pub struct EntryEvent {
     pub is_dir: bool,
     pub size: u64,
     pub metadata_backlog: usize,
+    pub recv_blocked_ms: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +77,8 @@ pub fn walk_events(
     event_tx: SyncSender<WalkerEvent>,
 ) {
     let worker_count = tuning.metadata_parallelism.max(1);
-    let max_backlog = tuning.deep_tasks_throttle.max(worker_count);
+    let max_backlog =
+        (tuning.deep_tasks_throttle * tuning.duplicate_scheduling_hint).max(worker_count);
     let root_string = root.display().to_string();
     let queue = DirQueue::new(root);
     let pending_dirs = Arc::new(AtomicUsize::new(1));
@@ -109,6 +111,7 @@ pub fn walk_events(
                         &pending_dirs,
                         &cancel,
                         &event_tx,
+                        tuning,
                     );
 
                     pending_dirs.fetch_sub(1, Ordering::SeqCst);
@@ -126,20 +129,33 @@ fn process_directory(
     pending_dirs: &AtomicUsize,
     cancel: &AtomicBool,
     event_tx: &SyncSender<WalkerEvent>,
+    tuning: ProfileTuning,
 ) {
-    let read_dir = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) => {
-            let reason = format!("read_dir: {e}");
-            let _ = event_tx.send(WalkerEvent::Error(ScanErrorRecord {
-                path: dir.display().to_string(),
-                reason: reason.clone(),
-                kind: classify_error(&reason),
-            }));
-            return;
+    let mut read_dir_attempt = 0u8;
+    let read_dir = loop {
+        match fs::read_dir(dir) {
+            Ok(entries) => break entries,
+            Err(e) => {
+                let reason = format!("read_dir: {e}");
+                let _ = event_tx.send(WalkerEvent::Error(ScanErrorRecord {
+                    path: dir.display().to_string(),
+                    reason: reason.clone(),
+                    kind: classify_error(&reason),
+                }));
+
+                if read_dir_attempt >= tuning.error_retry_limit {
+                    return;
+                }
+
+                read_dir_attempt = read_dir_attempt.saturating_add(1);
+                std::thread::sleep(std::time::Duration::from_millis(
+                    tuning.network_retry_backoff_ms * read_dir_attempt as u64,
+                ));
+            }
         }
     };
 
+    let mut dir_entries = 0usize;
     for entry_result in read_dir {
         if cancel.load(Ordering::SeqCst) {
             break;
@@ -164,17 +180,32 @@ fn process_directory(
             continue;
         }
 
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(v) => v,
-            Err(e) => {
-                let reason = format!("metadata: {e}");
-                let _ = event_tx.send(WalkerEvent::Error(ScanErrorRecord {
-                    path: path_string,
-                    reason: reason.clone(),
-                    kind: classify_error(&reason),
-                }));
-                continue;
+        let mut metadata_attempt = 0u8;
+        let metadata = loop {
+            match fs::symlink_metadata(&path) {
+                Ok(v) => break Some(v),
+                Err(e) => {
+                    let reason = format!("metadata: {e}");
+                    let _ = event_tx.send(WalkerEvent::Error(ScanErrorRecord {
+                        path: path_string.clone(),
+                        reason: reason.clone(),
+                        kind: classify_error(&reason),
+                    }));
+
+                    if metadata_attempt >= tuning.error_retry_limit {
+                        break None;
+                    }
+
+                    metadata_attempt = metadata_attempt.saturating_add(1);
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        tuning.network_retry_backoff_ms * metadata_attempt as u64,
+                    ));
+                }
             }
+        };
+
+        let Some(metadata) = metadata else {
+            continue;
         };
 
         let is_dir = metadata.is_dir();
@@ -183,6 +214,7 @@ fn process_directory(
             queue.push(path.clone());
         }
 
+        let send_started = std::time::Instant::now();
         let _ = event_tx.send(WalkerEvent::Entry(EntryEvent {
             path: path.display().to_string(),
             parent_path: dir.display().to_string(),
@@ -190,6 +222,15 @@ fn process_directory(
             is_dir,
             size: if is_dir { 0 } else { metadata.len() },
             metadata_backlog: pending_dirs.load(Ordering::SeqCst),
+            recv_blocked_ms: send_started.elapsed().as_millis() as u32,
         }));
+
+        dir_entries += 1;
+        if dir_entries > tuning.large_dir_entry_threshold {
+            std::thread::sleep(std::time::Duration::from_millis(
+                tuning.large_dir_backoff_ms,
+            ));
+            dir_entries = 0;
+        }
     }
 }

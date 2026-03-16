@@ -108,21 +108,38 @@ pub(crate) struct ProfileTuning {
     pub snapshot_ms: u64,
     pub metadata_parallelism: usize,
     pub deep_tasks_throttle: usize,
+    pub error_retry_limit: u8,
+    pub network_retry_backoff_ms: u64,
+    pub large_dir_entry_threshold: usize,
+    pub large_dir_backoff_ms: u64,
+    pub duplicate_scheduling_hint: usize,
+    pub ui_backpressure_batch_budget: usize,
 }
 
 impl ScanConfig {
     pub(crate) fn tuned(self) -> ProfileTuning {
-        let (batch_mult, snapshot_mult, parallel_cap) = match self.profile {
-            ScanProfile::Ssd => (1.0, 1.0, 16),
-            ScanProfile::Hdd => (0.75, 1.5, 6),
-            ScanProfile::Network => (0.5, 2.0, 3),
-        };
+        let (batch_mult, snapshot_mult, parallel_cap, retry, retry_backoff, large_dir_backoff) =
+            match self.profile {
+                ScanProfile::Ssd => (1.0, 1.0, 16, 1, 10, 1),
+                ScanProfile::Hdd => (0.75, 1.5, 6, 2, 25, 2),
+                ScanProfile::Network => (0.5, 2.0, 3, 3, 50, 4),
+            };
+
+        let batch_size = ((self.batch_size.max(1) as f32) * batch_mult).round() as usize;
+        let metadata_parallelism = self.metadata_parallelism.clamp(1, parallel_cap);
+        let deep_tasks_throttle = self.deep_tasks_throttle.max(metadata_parallelism);
 
         ProfileTuning {
-            batch_size: ((self.batch_size.max(1) as f32) * batch_mult).round() as usize,
+            batch_size,
             snapshot_ms: ((self.snapshot_ms.max(50) as f32) * snapshot_mult).round() as u64,
-            metadata_parallelism: self.metadata_parallelism.clamp(1, parallel_cap),
-            deep_tasks_throttle: self.deep_tasks_throttle.max(1),
+            metadata_parallelism,
+            deep_tasks_throttle,
+            error_retry_limit: retry,
+            network_retry_backoff_ms: retry_backoff,
+            large_dir_entry_threshold: (batch_size * 8).clamp(256, 8192),
+            large_dir_backoff_ms: large_dir_backoff,
+            duplicate_scheduling_hint: (deep_tasks_throttle / metadata_parallelism).max(1),
+            ui_backpressure_batch_budget: (batch_size * 4).max(256),
         }
     }
 }
@@ -139,12 +156,12 @@ fn classify_error(reason: &str) -> ErrorKind {
 }
 
 pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
-    let (tx, rx) = mpsc::sync_channel(config.batch_size.max(64) * 4);
+    let tuning = config.tuned();
+    let (tx, rx) = mpsc::sync_channel(tuning.ui_backpressure_batch_budget);
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_clone = Arc::clone(&cancel);
 
     std::thread::spawn(move || {
-        let tuning = config.tuned();
         let root_path = root.display().to_string();
         let root_name = root
             .file_name()
@@ -156,21 +173,33 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         let mut publisher = Publisher::new(tx, tuning.batch_size.max(1), tuning.snapshot_ms);
         publisher.send_planning(root_path, aggregator.summary.clone());
 
-        let (walker_tx, walker_rx) = mpsc::sync_channel(tuning.batch_size.max(64) * 4);
+        let (walker_tx, walker_rx) = mpsc::sync_channel(tuning.ui_backpressure_batch_budget);
         let walker_cancel = Arc::clone(&cancel_clone);
         let walker_thread = std::thread::spawn(move || {
             walker::walk_events(root, tuning, walker_cancel, walker_tx);
         });
 
+        let scan_started = Instant::now();
+        let mut cancelled_at: Option<Instant> = None;
         while let Ok(event) = walker_rx.recv() {
+            if cancelled_at.is_none() && cancel_clone.load(Ordering::SeqCst) {
+                cancelled_at = Some(Instant::now());
+            }
+
             match event {
                 WalkerEvent::Error(err) => {
                     aggregator.on_error(err);
                     telemetry::record_scan_error();
                 }
                 WalkerEvent::Entry(entry) => {
+                    telemetry::record_walker_recv_blocked(entry.recv_blocked_ms as u64);
+
+                    let aggregator_started = Instant::now();
                     let metadata_backlog = entry.metadata_backlog;
                     let entries = aggregator.on_entry(entry);
+                    telemetry::record_aggregator_processing(
+                        aggregator_started.elapsed().as_millis() as u64,
+                    );
                     for entry in entries {
                         publisher.on_batch_entry(entry, &aggregator.summary, metadata_backlog);
                         telemetry::record_scan_item();
@@ -193,6 +222,18 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
 
         publisher.flush_batch();
         let (summary, errors, final_delta, final_view) = aggregator.finalize();
+        let finished_payload_size = serde_json::to_vec(&final_view)
+            .map(|payload| payload.len() as u64)
+            .unwrap_or_default();
+        telemetry::record_scan_finished(final_view.nodes.len() as u64, finished_payload_size);
+
+        if cancel_clone.load(Ordering::SeqCst) {
+            let cancel_elapsed = cancelled_at
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or_else(|| scan_started.elapsed().as_millis() as u64);
+            telemetry::record_cancelled_scan_latency(cancel_elapsed);
+        }
+
         publisher.send_snapshot(final_delta, final_view);
         telemetry::record_snapshot();
         publisher.send_finished(summary, errors);
