@@ -97,13 +97,6 @@ pub fn walk_events(
                         break;
                     }
 
-                    while pending_dirs.load(Ordering::SeqCst) > max_backlog {
-                        if cancel.load(Ordering::SeqCst) {
-                            break;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-
                     process_directory(
                         &current_dir,
                         &root_string,
@@ -115,6 +108,11 @@ pub fn walk_events(
                     );
 
                     pending_dirs.fetch_sub(1, Ordering::SeqCst);
+                    if pending_dirs.load(Ordering::SeqCst) > max_backlog {
+                        // Yield only after completing the current directory. Waiting before
+                        // processing would deadlock once every worker observes backlog above the cap.
+                        std::thread::yield_now();
+                    }
                     queue.notify_all();
                 }
             });

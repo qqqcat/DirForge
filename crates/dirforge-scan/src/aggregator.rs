@@ -148,7 +148,10 @@ impl Aggregator {
         SnapshotDelta,
         SnapshotView,
     ) {
-        let (delta, view) = self.make_snapshot_data(true);
+        // Avoid cloning the entire tree on scan completion. The UI already
+        // receives incremental snapshots during the run; a full-tree clone for
+        // million-node scans causes long stalls right at the finish line.
+        let (delta, view) = self.make_snapshot_data(false);
         (self.summary, self.errors, delta, view)
     }
 }

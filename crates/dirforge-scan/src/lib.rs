@@ -67,6 +67,8 @@ pub enum ScanEvent {
     Finished {
         summary: ScanSummary,
         errors: Vec<ScanErrorRecord>,
+        top_files: Vec<(String, u64)>,
+        top_dirs: Vec<(String, u64)>,
     },
 }
 
@@ -78,6 +80,10 @@ pub struct ScanHandle {
 impl ScanHandle {
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
+    }
+
+    pub fn into_parts(self) -> (Receiver<ScanEvent>, Arc<AtomicBool>) {
+        (self.events, self.cancel)
     }
 }
 
@@ -234,9 +240,11 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             telemetry::record_cancelled_scan_latency(cancel_elapsed);
         }
 
+        let final_top_files = final_view.top_files.clone();
+        let final_top_dirs = final_view.top_dirs.clone();
         publisher.send_snapshot(final_delta, final_view);
         telemetry::record_snapshot();
-        publisher.send_finished(summary, errors);
+        publisher.send_finished(summary, errors, final_top_files, final_top_dirs);
     });
 
     ScanHandle { events: rx, cancel }

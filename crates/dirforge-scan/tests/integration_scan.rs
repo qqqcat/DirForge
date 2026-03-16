@@ -159,3 +159,36 @@ fn scan_deep_and_wide_fixtures() {
         assert!(done, "scan should finish for fixture");
     }
 }
+
+#[test]
+fn scan_finishes_when_directory_backlog_exceeds_throttle() {
+    let fixture = dirforge_testkit::FixtureTree::massive_tree(2, 5).expect("massive");
+    let handle = start_scan(
+        fixture.root.clone(),
+        ScanConfig {
+            profile: ScanProfile::Ssd,
+            batch_size: 8,
+            snapshot_ms: 50,
+            metadata_parallelism: 4,
+            deep_tasks_throttle: 4,
+        },
+    );
+
+    let mut done = false;
+    for _ in 0..3000 {
+        if let Ok(ScanEvent::Finished { summary, .. }) = handle
+            .events
+            .recv_timeout(std::time::Duration::from_millis(10))
+        {
+            assert!(summary.scanned_dirs >= 10);
+            assert!(summary.scanned_files >= 10);
+            done = true;
+            break;
+        }
+    }
+
+    assert!(
+        done,
+        "scan should finish even when discovered directories exceed the throttle budget"
+    );
+}

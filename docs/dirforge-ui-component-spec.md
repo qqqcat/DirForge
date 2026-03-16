@@ -11,6 +11,7 @@
 - 已落地人类可读格式化：`format_bytes` / `format_count`。
 - 已落地系统中文字体回退与 treemap 标签阈值控制。
 - 已区分“扫描到的文件体积（Scanned Size）”与“卷已用空间（Volume Used）”，避免将扫描结果误读为磁盘总容量。
+- 已将内部性能指标从主视图下沉到 Diagnostics，主视图以“卷空间、最大文件夹、最大文件、treemap”为中心。
 
 产品定位：专业、克制、高信息密度、可长时使用。
 
@@ -162,7 +163,7 @@ Current Scan 页面必须包含：
 
 - 顶部 Toolbar
 - 左侧 Navigation
-- 中央工作区（概览指标 + 热点列表 + 实时发现）
+- 中央工作区（卷空间摘要 + 最大文件夹 + 最大文件 + 最近发现）
 - 右侧 Inspector
 - 底部 Status Bar
 - 状态栏
@@ -174,8 +175,11 @@ Current Scan 页面必须包含：
 - Diagnostics 页面提供诊断包导出入口。
 - 所有大小与计数信息必须使用人类可读格式展示。
 - 概览页必须显式区分 `Scanned Size`、`Volume Used`、`Total Capacity` 三类不同语义。
+- 默认主视图不展示 `frame / queue depth / batch size / snapshot commit` 这类内部性能数字。
 - Settings 页面语言选择改为明确单选，不使用“中文复选框”这种含糊交互。
 - Dashboard / Current Scan / History 页面需避免把 4 个以上指标挤在单行纯文本中。
+- 扫描过程中的提示 Banner 必须放在页面内容区，不能塞进固定高度工具栏，否则会制造大面积无意义占位。
+- 桌面 UI 在存在后台扫描句柄时必须持续请求重绘，确保 `Progress / Snapshot / Finished` 事件会被及时消费，而不是停留在假死式 `Scanning` 状态。
 
 ## 10. 设计 Token 建议结构
 
