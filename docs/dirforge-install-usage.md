@@ -1,70 +1,67 @@
-# DirForge 安装与使用文档（含性能阈值与批执行链路）
+# DirForge 安装与使用指南（2026-03）
 
-## 1. 新增能力（本次更新）
+## 0. 阶段说明
 
-- Benchmark 套件与性能阈值固化（扫描与去重）
-- 错误分类升级（User / Transient / System）
-- 操作中心执行链路增强（回收站/永久删除模拟 + 批执行结果追踪）
+- 当前：Production Readiness（生产就绪冲刺）
+- 目标：Production（生产级）
 
-## 2. 安装与构建
+
+## 1. 安装
 
 ```bash
 git clone <your-repo-url> DirForge
 cd DirForge
+```
+
+## 2. 构建与测试
+
+```bash
 cargo fmt --all
 cargo check --workspace
 cargo test --workspace
 ```
 
-## 3. 运行应用
+## 3. 运行
 
 ```bash
 cargo run -p dirforge-app
 ```
 
-## 4. 关键使用流程
+## 4. 推荐使用流程
 
-1. Dashboard 设置扫描参数（profile / batch / snapshot interval）并启动。
-2. Current Scan 查看实时扫描与虚拟化文件列表。
-3. Errors 页面查看分类统计（User/Transient/System）。
-4. Operations 页面：
-   - 生成删除计划
-   - 运行“模拟回收站删除”或“模拟永久删除”
-   - 查看批执行结果（success/failure + message）
-5. Diagnostics 页面导出 `dirforge_diagnostics.json`。
+1. 在 Dashboard 选择扫描根目录。
+2. 调整扫描参数（profile、batch、snapshot interval）。
+3. 在 Current Scan 观察实时进度与统计。
+4. 扫描完成后查看：
+   - Top 文件/目录
+   - 重复文件候选
+   - 错误分类（User/Transient/System）
+5. 在 Operations 中生成删除计划并执行模拟动作。
+6. 导出报告和诊断文件。
 
-## 5. Benchmark 与阈值验证
+## 5. 性能阈值测试
 
-本项目已内置阈值测试：
-
-- `benchmark_scan_threshold_small_tree`
-- `benchmark_dup_threshold_small_dataset`
-
-运行：
+项目包含阈值测试：
 
 ```bash
 cargo test -p dirforge-testkit --test benchmark_thresholds
 ```
 
-默认阈值（可在测试文件中调整）：
+当前默认阈值（小规模基准）：
 
-- 扫描阈值：`SCAN_THRESHOLD_MS = 4000`
-- 去重阈值：`DUP_THRESHOLD_MS = 1200`
+- 扫描阈值：4000ms
+- 去重阈值：1200ms
 
-## 6. 运行产物
+## 6. 产物说明
 
-- `dirforge.db`：SQLite 缓存
-- `dirforge_report.txt`：扫描报告
+- `dirforge.db`：SQLite 缓存（快照/设置/历史）
+- `dirforge_report.txt`：文本报告
+- `dirforge_summary.json`：摘要 JSON
+- `dirforge_duplicates.csv`：重复候选导出
+- `dirforge_errors.csv`：错误导出
 - `dirforge_diagnostics.json`：诊断导出
 
-## 7. 常见问题
+## 7. 注意事项
 
-### 7.1 错误分类说明
-
-- `User`：常见权限/访问问题
-- `Transient`：临时性错误（网络/超时等）
-- `System`：其余系统或内部错误
-
-### 7.2 永久删除模拟失败
-
-高风险文件在永久删除模拟下会被阻断并标记失败，这是安全策略设计。
+- 删除相关功能当前以“模拟执行”优先，属于安全策略的一部分。
+- 大体量目录扫描时，首次运行可能出现较高 CPU/内存占用。
