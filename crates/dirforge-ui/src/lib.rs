@@ -3,7 +3,8 @@ use dirforge_actions::{
 };
 use dirforge_cache::{CacheStore, HistoryRecord};
 use dirforge_core::{
-    ErrorKind, NodeStore, RiskLevel, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
+    ErrorKind, NodeId, NodeStore, RiskLevel, ScanErrorRecord, ScanProfile, ScanSummary,
+    SnapshotDelta,
 };
 use dirforge_dup::{detect_duplicates, DupConfig, DuplicateGroup};
 use dirforge_report::{export_diagnostics_bundle, export_text_report};
@@ -30,6 +31,21 @@ enum Lang {
     Zh,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionSource {
+    Treemap,
+    Table,
+    History,
+    Error,
+}
+
+#[derive(Default, Clone)]
+struct SelectionState {
+    selected_node: Option<NodeId>,
+    selected_path: Option<String>,
+    source: Option<SelectionSource>,
+}
+
 #[derive(Default)]
 struct PerfMetrics {
     frame_ms: f32,
@@ -51,6 +67,8 @@ pub struct DirForgeNativeApp {
     pending_batch_events: Vec<Vec<BatchEntry>>,
     pending_snapshots: Vec<SnapshotDelta>,
     live_files: Vec<(String, u64)>,
+    live_top_files: Vec<(String, u64)>,
+    live_top_dirs: Vec<(String, u64)>,
     last_coalesce_commit: Instant,
 
     duplicates: Vec<DuplicateGroup>,
@@ -67,6 +85,7 @@ pub struct DirForgeNativeApp {
 
     perf: PerfMetrics,
     diagnostics_json: String,
+    selection: SelectionState,
 }
 
 impl DirForgeNativeApp {
@@ -98,6 +117,8 @@ impl DirForgeNativeApp {
             pending_batch_events: Vec::new(),
             pending_snapshots: Vec::new(),
             live_files: Vec::new(),
+            live_top_files: Vec::new(),
+            live_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             duplicates: Vec::new(),
             deletion_plan: None,
@@ -110,6 +131,7 @@ impl DirForgeNativeApp {
             cache,
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
+            selection: SelectionState::default(),
         };
 
         let _ = app.reload_history();
@@ -144,6 +166,8 @@ impl DirForgeNativeApp {
         self.pending_batch_events.clear();
         self.pending_snapshots.clear();
         self.live_files.clear();
+        self.live_top_files.clear();
+        self.live_top_dirs.clear();
         self.last_coalesce_commit = Instant::now();
 
         self.scan_handle = Some(start_scan(
@@ -169,7 +193,10 @@ impl DirForgeNativeApp {
                         self.perf.snapshot_queue_depth = p.queue_depth;
                     }
                     ScanEvent::Batch(batch) => self.pending_batch_events.push(batch),
-                    ScanEvent::Snapshot { delta } => self.pending_snapshots.push(delta),
+                    ScanEvent::Snapshot { delta, store } => {
+                        self.store = Some(store);
+                        self.pending_snapshots.push(delta)
+                    }
                     ScanEvent::Finished {
                         store,
                         summary,
@@ -194,13 +221,21 @@ impl DirForgeNativeApp {
                 let drop_n = self.live_files.len() - 20_000;
                 self.live_files.drain(0..drop_n);
             }
-            self.pending_snapshots.clear();
+            let snapshots: Vec<_> = self.pending_snapshots.drain(..).collect();
+            for snapshot in snapshots {
+                self.summary = snapshot.summary;
+                if let Some(store) = &self.store {
+                    self.live_top_files = map_nodes_to_rows(store, &snapshot.top_files_delta);
+                    self.live_top_dirs = map_nodes_to_rows(store, &snapshot.top_dirs_delta);
+                }
+            }
             self.last_coalesce_commit = Instant::now();
         }
 
         if let Some((store, summary, errors)) = finished {
             self.summary = summary.clone();
             self.status = self.t("完成", "Completed").to_string();
+            self.store = Some(store.clone());
             self.duplicates = detect_duplicates(&store, DupConfig::default());
             self.deletion_plan = Some(self.build_deletion_plan_from_duplicates());
 
@@ -218,7 +253,6 @@ impl DirForgeNativeApp {
                 )
                 .ok();
 
-            self.store = Some(store);
             self.errors = errors;
             if let Some(id) = history_id {
                 self.selected_history_id = Some(id);
@@ -308,12 +342,32 @@ impl DirForgeNativeApp {
             self.perf.frame_ms, self.perf.snapshot_queue_depth
         ));
 
+        ui.label(self.t("扫描中 Top Files", "Top Files During Scan"));
+        for (path, size) in self.live_top_files.iter().take(10) {
+            ui.label(format!("{} ({})", path, size));
+        }
+        ui.separator();
+        ui.label(self.t("扫描中 Top Dirs", "Top Dirs During Scan"));
+        for (path, size) in self.live_top_dirs.iter().take(10) {
+            ui.label(format!("{} ({})", path, size));
+        }
+        ui.separator();
+
         let rows = self.live_files.len();
         egui::ScrollArea::vertical().show_rows(ui, 22.0, rows, |ui, row_range| {
             for row in row_range {
                 if let Some((path, size)) = self.live_files.get(row) {
                     ui.horizontal(|ui| {
-                        ui.label(path);
+                        if ui
+                            .selectable_label(
+                                self.selection.selected_path.as_deref() == Some(path),
+                                path,
+                            )
+                            .clicked()
+                        {
+                            self.selection.selected_path = Some(path.clone());
+                            self.selection.source = Some(SelectionSource::Table);
+                        }
                         ui.separator();
                         ui.label(size.to_string());
                     });
@@ -325,7 +379,7 @@ impl DirForgeNativeApp {
     fn ui_treemap(&mut self, ui: &mut egui::Ui) {
         ui.heading("Treemap");
         let desired = egui::vec2(ui.available_width(), ui.available_height() - 20.0);
-        let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
+        let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
         if let Some(store) = &self.store {
             let dirs = store.largest_dirs(20);
             let total = dirs.iter().map(|d| d.size_subtree).sum::<u64>().max(1);
@@ -337,11 +391,24 @@ impl DirForgeNativeApp {
                     egui::pos2(x, rect.top()),
                     egui::vec2(w.max(3.0), rect.height()),
                 );
-                let color = egui::Color32::from_rgb(
+                let resp = ui.interact(
+                    r,
+                    ui.make_persistent_id(("treemap", d.id.0)),
+                    egui::Sense::click(),
+                );
+                let mut color = egui::Color32::from_rgb(
                     (d.id.0 as u8).wrapping_mul(29),
                     (d.id.0 as u8).wrapping_mul(53),
                     140,
                 );
+                if self.selection.selected_node == Some(d.id) {
+                    color = egui::Color32::LIGHT_GREEN;
+                }
+                if resp.clicked() {
+                    self.selection.selected_node = Some(d.id);
+                    self.selection.selected_path = Some(d.path.clone());
+                    self.selection.source = Some(SelectionSource::Treemap);
+                }
                 painter.rect_filled(r, 2.0, color);
                 painter.text(
                     r.center(),
@@ -352,9 +419,10 @@ impl DirForgeNativeApp {
                 );
                 x += w;
             }
-            if response.hovered() {
-                ui.label(self.t("提示：点击导航查看明细", "Tip: use navigation for details"));
-            }
+            ui.label(self.t(
+                "提示：点击块后可跨页面复用选中对象",
+                "Tip: click a block to share selection across pages",
+            ));
         } else {
             ui.label(self.t("暂无数据", "No data"));
         }
@@ -385,6 +453,7 @@ impl DirForgeNativeApp {
                         if let Ok(e) = self.cache.list_errors_by_history(h.id) {
                             self.errors = e;
                         }
+                        self.selection.source = Some(SelectionSource::History);
                     }
                 }
             }
@@ -412,7 +481,16 @@ impl DirForgeNativeApp {
             for i in range {
                 if let Some(e) = self.errors.get(i) {
                     ui.group(|ui| {
-                        ui.label(format!("[{:?}] {}", e.kind, e.path));
+                        if ui
+                            .selectable_label(
+                                self.selection.selected_path.as_deref() == Some(&e.path),
+                                format!("[{:?}] {}", e.kind, e.path),
+                            )
+                            .clicked()
+                        {
+                            self.selection.selected_path = Some(e.path.clone());
+                            self.selection.source = Some(SelectionSource::Error);
+                        }
                         ui.label(&e.reason);
                     });
                 }
@@ -426,6 +504,9 @@ impl DirForgeNativeApp {
             self.deletion_plan = Some(self.build_deletion_plan_from_duplicates());
         }
         if let Some(plan) = self.deletion_plan.clone() {
+            if let Some(path) = &self.selection.selected_path {
+                ui.label(format!("selected={}", path));
+            }
             ui.label(format!(
                 "files={} reclaim={} high_risk={}",
                 plan.files.len(),
@@ -591,6 +672,13 @@ impl eframe::App for DirForgeNativeApp {
             Page::Settings => self.ui_settings(ui, ctx),
         });
     }
+}
+
+fn map_nodes_to_rows(store: &NodeStore, ids: &[NodeId]) -> Vec<(String, u64)> {
+    ids.iter()
+        .filter_map(|id| store.nodes.get(id.0))
+        .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
+        .collect()
 }
 
 fn detect_lang() -> Lang {

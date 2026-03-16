@@ -1,6 +1,8 @@
 use dirforge_core::{NodeKind, NodeStore, RiskLevel};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom};
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct DuplicateMember {
@@ -48,9 +50,10 @@ pub fn detect_duplicates(store: &NodeStore, cfg: DupConfig) -> Vec<DuplicateGrou
         }
 
         // phase 2: partial fingerprint regroup
-        let mut partial_bucket: HashMap<Vec<u8>, Vec<String>> = HashMap::new();
+        let mut partial_bucket: HashMap<[u8; 32], Vec<String>> = HashMap::new();
         for p in paths {
-            let sig = partial_fingerprint(&p, cfg.partial_bytes);
+            let sig = partial_fingerprint(Path::new(&p), cfg.partial_bytes)
+                .unwrap_or_else(|_| hash_bytes(p.as_bytes()));
             partial_bucket.entry(sig).or_default().push(p);
         }
 
@@ -63,9 +66,9 @@ pub fn detect_duplicates(store: &NodeStore, cfg: DupConfig) -> Vec<DuplicateGrou
             let mut full_bucket: HashMap<[u8; 32], Vec<String>> = HashMap::new();
             for p in partial_paths {
                 let hash = if size >= cfg.full_hash_min_size {
-                    full_hash(&p)
+                    full_hash(Path::new(&p)).unwrap_or_else(|_| hash_bytes(p.as_bytes()))
                 } else {
-                    hash_bytes(p.as_bytes())
+                    full_hash(Path::new(&p)).unwrap_or_else(|_| hash_bytes(p.as_bytes()))
                 };
                 full_bucket.entry(hash).or_default().push(p);
             }
@@ -100,23 +103,42 @@ pub fn detect_duplicates(store: &NodeStore, cfg: DupConfig) -> Vec<DuplicateGrou
     out
 }
 
-fn partial_fingerprint(path: &str, n: usize) -> Vec<u8> {
-    if let Ok(bytes) = fs::read(path) {
-        let head = bytes.iter().take(n).copied();
-        let tail = bytes.iter().rev().take(n).copied();
-        let mut sampled: Vec<u8> = head.collect();
-        sampled.extend(tail);
-        sampled
-    } else {
-        path.as_bytes().iter().take(n).copied().collect()
+fn partial_fingerprint(path: &Path, n: usize) -> io::Result<[u8; 32]> {
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; n.max(1)];
+
+    let head_n = file.read(&mut buf)?;
+    hasher.update(&buf[..head_n]);
+
+    if len > n as u64 {
+        let tail_n = (n as u64).min(len) as usize;
+        file.seek(SeekFrom::End(-(tail_n as i64)))?;
+        let mut tail = vec![0u8; tail_n];
+        file.read_exact(&mut tail)?;
+        hasher.update(&tail);
     }
+
+    let mut out = [0u8; 32];
+    out.copy_from_slice(hasher.finalize().as_bytes());
+    Ok(out)
 }
 
-fn full_hash(path: &str) -> [u8; 32] {
-    match fs::read(path) {
-        Ok(bytes) => hash_bytes(&bytes),
-        Err(_) => hash_bytes(path.as_bytes()),
+fn full_hash(path: &Path) -> io::Result<[u8; 32]> {
+    let mut file = File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let read_n = file.read(&mut buf)?;
+        if read_n == 0 {
+            break;
+        }
+        hasher.update(&buf[..read_n]);
     }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(hasher.finalize().as_bytes());
+    Ok(out)
 }
 
 fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
