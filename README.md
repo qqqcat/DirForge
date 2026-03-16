@@ -1,33 +1,40 @@
 # DirForge
 
-DirForge 是一个用 Rust 构建的本地磁盘分析器原型，目标是提供 **目录扫描、空间汇总、重复文件候选识别** 和后续清理动作的工程化基础。
+DirForge 是一个基于 Rust 的本地磁盘分析器原型，当前聚焦于：
 
-> 当前阶段：**pre-alpha（可运行原型）**。
+- 目录扫描与进度/快照事件流
+- 目录树聚合与 Top-N 查询
+- 重复文件候选识别
+- 删除计划与模拟执行（回收站/永久删除模拟）
+- 报告导出与 SQLite 快照缓存
 
-## 当前能力（已在代码中落地）
+> 项目阶段：**Pre-Alpha（功能链路可运行，尚未达到生产级）**。
 
-- 基于 `walkdir` 的目录扫描主链路（支持进度事件、批量事件、周期性快照、取消）。
-- 最小可用的数据模型：`NodeStore`、`rollup()`、Top-N 文件/目录查询。
-- 原生 GUI 壳（`eframe` + `egui`）可启动并消费扫描状态。
-- SQLite 缓存骨架（`rusqlite`）与去重/操作/报告等子 crate 的基础结构。
+## 项目现状（2026-03）
 
-## 当前限制（请在评估时一并考虑）
+基于当前代码与测试结果，本项目已具备从“扫描 -> 分析 -> 建议 -> 执行模拟 -> 导出”的端到端主链路。核心能力集中在 `dirforge-scan`、`dirforge-core` 与 `dirforge-ui`。
 
-- 扫描器仍是单线程遍历 + 事件推送模型，尚未实现更深度的 IO/CPU 分层调度。
-- 快照阶段仍依赖 `NodeStore` 克隆，数据量大时会影响吞吐与内存表现。
-- 平台能力仍偏薄：`dirforge-platform` 目前以 Explorer 打开封装为主。
-- `dirforge-telemetry` 仍是最小占位实现，尚未建立完整可观测链路。
-- 删除与报告链路已具备结构雏形，但执行层和审计能力仍在建设中。
+详细评估见：
 
-## 技术栈（当前 workspace 真实依赖）
+- `docs/dirforge-comprehensive-assessment.md`
 
-- GUI：`eframe` / `egui`
-- 数据与序列化：`serde` / `serde_json`
-- 扫描：`walkdir`
-- 去重哈希：`blake3`
-- 缓存：`rusqlite`（bundled SQLite）
+## 主要能力（已落地）
 
-## 仓库结构
+- 扫描引擎：支持进度事件、批事件、快照事件、完成事件、取消扫描。
+- 核心模型：`NodeStore` + `rollup()` + Top-N 文件/目录查询。
+- 去重能力：按大小与哈希进行候选分组。
+- 操作链路：删除计划生成、风险分层、模拟执行与审计输出。
+- 报告能力：文本报告、摘要 JSON、重复项/错误 CSV 导出。
+- 缓存能力：SQLite 持久化快照、历史记录、设置读写。
+
+## 当前限制
+
+- 扫描模型仍以单线程主循环 + 事件推送为主，极大规模目录下还有优化空间。
+- UI 与扫描流的快照合并策略可用但仍偏保守，需继续优化峰值内存和刷新抖动。
+- 平台能力虽有封装，但跨平台行为一致性、系统权限边界处理仍需补强。
+- 可观测性已起步，但系统级指标、结构化日志与诊断归档仍可深化。
+
+## 工作区结构
 
 ```text
 crates/
@@ -37,47 +44,40 @@ crates/
   dirforge-scan       # 目录扫描与事件流
   dirforge-dup        # 重复文件候选分析
   dirforge-cache      # SQLite 缓存层
-  dirforge-platform   # 平台相关能力封装
-  dirforge-actions    # 清理动作计划与执行框架（早期）
-  dirforge-report     # 报告与导出（早期）
-  dirforge-telemetry  # 观测初始化（占位）
-  dirforge-testkit    # 测试夹具与样例数据
+  dirforge-platform   # 平台能力封装（打开路径/回收站/卷信息等）
+  dirforge-actions    # 清理动作计划与执行（含模拟执行）
+  dirforge-report     # 报告与导出
+  dirforge-telemetry  # 观测初始化与指标骨架
+  dirforge-testkit    # 测试夹具、基线与阈值测试
 ```
 
 ## 快速开始
 
-### 1) 环境要求
+### 环境要求
 
 - Rust stable（建议通过 `rustup` 安装）
-- 桌面环境（运行 `eframe` 原生窗口）
+- 桌面环境（用于运行 `eframe` 原生窗口）
 
-### 2) 构建与运行
+### 构建与运行
 
 ```bash
 cargo run -p dirforge-app
 ```
 
-### 3) 测试
+### 质量检查
 
 ```bash
-cargo test
+cargo check --workspace
+cargo test --workspace
 ```
 
-## 近期优先级（Roadmap）
+## 文档导航
 
-1. 扫描数据流优化：从全量快照向 delta/局部快照演进。
-2. 平台能力补全：回收站、reparse point、统一错误模型。
-3. 可观测性落地：结构化日志、吞吐/错误指标、诊断导出标准化。
-4. 动作执行链路深化：预校验、批执行、部分失败处理与审计。
-5. 测试与基准强化：边界 fixture、取消/错误场景、性能基线。
-
-## 相关文档
-
-- `docs/dirforge-comprehensive-assessment.md`
-- `docs/dirforge-sdd.md`
-- `docs/dirforge-install-usage.md`
-- `docs/quickstart.md`
+- 综合评估：`docs/dirforge-comprehensive-assessment.md`
+- 系统设计：`docs/dirforge-sdd.md`
+- 安装与使用：`docs/dirforge-install-usage.md`
+- 快速上手：`docs/quickstart.md`
 
 ---
 
-如果你是第一次查看仓库，建议先从 `crates/dirforge-scan` 与 `crates/dirforge-core` 阅读主链路，再看 `dirforge-ui` 的状态消费方式。
+建议阅读顺序：`dirforge-scan` → `dirforge-core` → `dirforge-ui`。
