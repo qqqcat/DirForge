@@ -89,6 +89,8 @@ cargo test --workspace
 
 ## 文档导航
 
+- 生产升级计划与落地：`docs/production-upgrade-2026-03.md`
+
 - 综合评估：`docs/dirforge-comprehensive-assessment.md`
 - 系统设计：`docs/dirforge-sdd.md`
 - 安装与使用：`docs/dirforge-install-usage.md`

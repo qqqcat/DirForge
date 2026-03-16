@@ -1,6 +1,7 @@
 use dirforge_core::RiskLevel;
 use dirforge_platform::move_to_recycle_bin;
 use dirforge_telemetry as telemetry;
+use serde::Serialize;
 use std::io;
 use std::path::Path;
 
@@ -30,15 +31,17 @@ pub struct ExecutionResultItem {
     pub success: bool,
     pub message: String,
     pub failure_kind: Option<ActionFailureKind>,
+    pub retries: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ActionFailureKind {
     Missing,
     PermissionDenied,
     UnsupportedType,
     Protected,
     Io,
+    PrecheckMismatch,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +56,21 @@ pub struct ExecutionReport {
     pub succeeded: usize,
     pub failed: usize,
     pub items: Vec<ExecutionResultItem>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExecutionConfig {
+    pub retries: u8,
+    pub compare_with_dry_run: bool,
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
+            retries: 2,
+            compare_with_dry_run: true,
+        }
+    }
 }
 
 pub fn build_deletion_plan(files: Vec<(String, u64, RiskLevel)>) -> DeletionPlan {
@@ -74,42 +92,54 @@ pub fn build_deletion_plan(files: Vec<(String, u64, RiskLevel)>) -> DeletionPlan
 }
 
 pub fn execute_plan_simulated(plan: &DeletionPlan, mode: ExecutionMode) -> ExecutionReport {
-    execute_internal(plan, mode, true)
+    execute_internal(plan, mode, true, ExecutionConfig::default())
 }
 
 pub fn execute_plan(plan: &DeletionPlan, mode: ExecutionMode) -> ExecutionReport {
-    execute_internal(plan, mode, false)
+    execute_plan_with_config(plan, mode, ExecutionConfig::default())
 }
 
-fn execute_internal(plan: &DeletionPlan, mode: ExecutionMode, simulated: bool) -> ExecutionReport {
+pub fn execute_plan_with_config(
+    plan: &DeletionPlan,
+    mode: ExecutionMode,
+    config: ExecutionConfig,
+) -> ExecutionReport {
+    execute_internal(plan, mode, false, config)
+}
+
+fn execute_internal(
+    plan: &DeletionPlan,
+    mode: ExecutionMode,
+    simulated: bool,
+    config: ExecutionConfig,
+) -> ExecutionReport {
     let mut items = Vec::with_capacity(plan.files.len());
     let mut succeeded = 0usize;
     let mut failed = 0usize;
 
     for file in &plan.files {
-        let (success, message, failure_kind) =
-            match validate_deletion_target(Path::new(&file.path), file.risk, mode, simulated) {
-                Err(kind) => (false, format!("validation failed: {kind:?}"), Some(kind)),
-                Ok(meta) if simulated => (true, format!("simulated {:?}", mode), None),
-                Ok(meta) => match (mode, meta.is_dir) {
-                    (ExecutionMode::Permanent, false) => match std::fs::remove_file(&file.path) {
-                        Ok(_) => (true, "permanent delete ok".to_string(), None),
-                        Err(e) => (false, format!("delete failed: {e}"), Some(map_io_error(&e))),
-                    },
-                    (ExecutionMode::Permanent, true) => match std::fs::remove_dir_all(&file.path) {
-                        Ok(_) => (true, "permanent delete dir ok".to_string(), None),
-                        Err(e) => (false, format!("delete failed: {e}"), Some(map_io_error(&e))),
-                    },
-                    (ExecutionMode::RecycleBin, _) => match move_to_recycle_bin(&file.path) {
-                        Ok(_) => (true, "moved to recycle bin".to_string(), None),
-                        Err(e) => (
-                            false,
-                            format!("recycle failed: {}", e.message),
-                            Some(ActionFailureKind::Io),
-                        ),
-                    },
-                },
-            };
+        let dry_run_check =
+            validate_deletion_target(Path::new(&file.path), file.risk, mode, true).err();
+        let validation =
+            validate_deletion_target(Path::new(&file.path), file.risk, mode, simulated);
+
+        let (success, message, failure_kind, retries) = match validation {
+            Err(kind) => (false, format!("validation failed: {kind:?}"), Some(kind), 0),
+            Ok(meta) => {
+                if config.compare_with_dry_run && dry_run_check.is_some() {
+                    (
+                        false,
+                        "validation mismatch with dry-run".to_string(),
+                        Some(ActionFailureKind::PrecheckMismatch),
+                        0,
+                    )
+                } else if simulated {
+                    (true, format!("simulated {:?}", mode), None, 0)
+                } else {
+                    execute_with_retry(&file.path, mode, meta, config.retries)
+                }
+            }
+        };
 
         telemetry::record_action_result(success);
         if success {
@@ -117,11 +147,24 @@ fn execute_internal(plan: &DeletionPlan, mode: ExecutionMode, simulated: bool) -
         } else {
             failed += 1;
         }
+
+        let audit_payload = serde_json::json!({
+            "path": file.path,
+            "mode": format!("{:?}", mode),
+            "simulated": simulated,
+            "success": success,
+            "failure": failure_kind,
+            "retries": retries,
+            "message": message,
+        });
+        telemetry::record_action_audit(audit_payload.to_string());
+
         items.push(ExecutionResultItem {
             path: file.path.clone(),
             success,
             message,
             failure_kind,
+            retries,
         });
     }
 
@@ -131,6 +174,46 @@ fn execute_internal(plan: &DeletionPlan, mode: ExecutionMode, simulated: bool) -
         succeeded,
         failed,
         items,
+    }
+}
+
+fn execute_with_retry(
+    path: &str,
+    mode: ExecutionMode,
+    meta: TargetMeta,
+    retries: u8,
+) -> (bool, String, Option<ActionFailureKind>, u8) {
+    let mut attempt = 0u8;
+    loop {
+        let result = match (mode, meta.is_dir) {
+            (ExecutionMode::Permanent, false) => std::fs::remove_file(path)
+                .map(|_| ())
+                .map_err(|e| map_io_error(&e)),
+            (ExecutionMode::Permanent, true) => std::fs::remove_dir_all(path)
+                .map(|_| ())
+                .map_err(|e| map_io_error(&e)),
+            (ExecutionMode::RecycleBin, _) => {
+                move_to_recycle_bin(path).map_err(|_| ActionFailureKind::Io)
+            }
+        };
+
+        match result {
+            Ok(_) => {
+                return (true, "execute ok".to_string(), None, attempt);
+            }
+            Err(kind) => {
+                if attempt >= retries || !matches!(kind, ActionFailureKind::Io) {
+                    return (
+                        false,
+                        format!("execute failed after {} attempt(s): {kind:?}", attempt + 1),
+                        Some(kind),
+                        attempt,
+                    );
+                }
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10 * attempt as u64));
+            }
+        }
     }
 }
 

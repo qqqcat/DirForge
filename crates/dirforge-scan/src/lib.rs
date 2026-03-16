@@ -46,7 +46,8 @@ pub enum ScanEvent {
     Batch(Vec<BatchEntry>),
     Snapshot {
         delta: SnapshotDelta,
-        store: NodeStore,
+        top_files: Vec<(String, u64)>,
+        top_dirs: Vec<(String, u64)>,
     },
     Finished {
         store: NodeStore,
@@ -141,29 +142,43 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         let mut publisher = Publisher::new(tx, tuning.batch_size.max(1), tuning.snapshot_ms);
         publisher.send_planning(root_path, aggregator.summary.clone());
 
-        walker::walk_events(root, tuning, cancel_clone, |event| match event {
-            WalkerEvent::Error(err) => {
-                aggregator.on_error(err);
-                telemetry::record_scan_error();
-            }
-            WalkerEvent::Entry(entry) => {
-                let entry = aggregator.on_entry(entry);
-                publisher.on_batch_entry(entry, &aggregator.summary);
-                telemetry::record_scan_item();
-
-                if publisher.should_emit_snapshot() {
-                    let snapshot_start = Instant::now();
-                    publisher
-                        .send_snapshot_if_due(aggregator.make_snapshot_delta(), &aggregator.store);
-                    telemetry::record_snapshot();
-                    telemetry::record_snapshot_commit(snapshot_start.elapsed().as_millis() as u64);
-                }
-            }
+        let (walker_tx, walker_rx) = mpsc::sync_channel(tuning.batch_size.max(64) * 4);
+        let walker_cancel = Arc::clone(&cancel_clone);
+        let walker_thread = std::thread::spawn(move || {
+            walker::walk_events(root, tuning, walker_cancel, |event| {
+                let _ = walker_tx.send(event);
+            });
         });
 
+        while let Ok(event) = walker_rx.recv() {
+            match event {
+                WalkerEvent::Error(err) => {
+                    aggregator.on_error(err);
+                    telemetry::record_scan_error();
+                }
+                WalkerEvent::Entry(entry) => {
+                    let entry = aggregator.on_entry(entry);
+                    publisher.on_batch_entry(entry, &aggregator.summary);
+                    telemetry::record_scan_item();
+
+                    if publisher.should_emit_snapshot() {
+                        let snapshot_start = Instant::now();
+                        let (delta, top_files, top_dirs) = aggregator.make_snapshot_data();
+                        publisher.send_snapshot_if_due(delta, top_files, top_dirs);
+                        telemetry::record_snapshot();
+                        telemetry::record_snapshot_commit(
+                            snapshot_start.elapsed().as_millis() as u64
+                        );
+                    }
+                }
+            }
+        }
+
+        let _ = walker_thread.join();
+
         publisher.flush_batch();
-        let (store, summary, errors, final_delta) = aggregator.finalize();
-        publisher.send_snapshot(final_delta, store.clone());
+        let (store, summary, errors, final_delta, top_files, top_dirs) = aggregator.finalize();
+        publisher.send_snapshot(final_delta, top_files, top_dirs);
         telemetry::record_snapshot();
         publisher.send_finished(store, summary, errors);
     });

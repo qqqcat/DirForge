@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 #[derive(Deserialize)]
 struct PerfBaseline {
     scan_small_tree_ms: u128,
+    scan_massive_tree_ms: u128,
     dup_small_dataset_ms: u128,
 }
 
@@ -49,6 +50,42 @@ fn benchmark_scan_threshold_small_tree() {
         "scan perf regression: {}ms > {}ms",
         elapsed,
         baseline.scan_small_tree_ms
+    );
+}
+
+#[test]
+fn benchmark_scan_threshold_massive_tree() {
+    let baseline = load_baseline();
+    let fixture = dirforge_testkit::FixtureTree::massive_tree(3, 8).expect("fixture");
+    let start = Instant::now();
+
+    let handle = start_scan(
+        fixture.root.clone(),
+        ScanConfig {
+            profile: ScanProfile::Ssd,
+            batch_size: 256,
+            snapshot_ms: 100,
+            metadata_parallelism: 4,
+            deep_tasks_throttle: 128,
+        },
+    );
+
+    loop {
+        let event = handle
+            .events
+            .recv_timeout(Duration::from_millis(50))
+            .expect("event");
+        if let ScanEvent::Finished { .. } = event {
+            break;
+        }
+    }
+
+    let elapsed = start.elapsed().as_millis();
+    assert!(
+        elapsed <= baseline.scan_massive_tree_ms,
+        "massive scan perf regression: {}ms > {}ms",
+        elapsed,
+        baseline.scan_massive_tree_ms
     );
 }
 

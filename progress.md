@@ -20,3 +20,11 @@
 - 已新增 `.github/workflows/template-validation.yml`，为模板仓库补上最小 CI 闭环。
 - 已新增 `docs/quickstart.md`，明确首次接入和每轮收尾动作。
 - 已修正 `README.md`、`docs/autonomous-workflow.md`、`docs/engineering-requirements.md` 中与实际仓库结构相关的说明。
+
+
+## 2026-03-16
+- 完成生产级专项升级：性能（大规模基准树+扫描/聚合并发流水线+快照复制优化）。
+- 完成执行安全升级：真实删除前置校验、dry-run 对照、失败重试、可恢复审计尾部记录。
+- 完成平台与可观测升级：跨平台异常映射扩展、能力矩阵与降级策略、统一 `df.*` 指标命名和采集周期。
+- 新增并更新文档：`docs/production-upgrade-2026-03.md` 与 `README.md` 文档导航。
+- 已完成相关测试回归（scan/platform/actions/telemetry/report/testkit）。

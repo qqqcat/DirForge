@@ -36,6 +36,28 @@ impl FixtureTree {
         Ok(Self { root })
     }
 
+    pub fn massive_tree(depth: usize, width: usize) -> std::io::Result<Self> {
+        let root = unique_root("massive");
+        fs::create_dir_all(&root)?;
+
+        let mut frontier = vec![root.clone()];
+        for d in 0..depth.max(1) {
+            let mut next = Vec::new();
+            for parent in frontier {
+                for w in 0..width.max(2) {
+                    let child = parent.join(format!("d{d}_w{w}"));
+                    fs::create_dir_all(&child)?;
+                    fs::write(
+                        child.join(format!("leaf_{d}_{w}.bin")),
+                        vec![(w % 255) as u8; 128],
+                    )?;
+                    next.push(child);
+                }
+            }
+            frontier = next;
+        }
+        Ok(Self { root })
+    }
     pub fn duplicate_file_set() -> std::io::Result<Self> {
         let root = unique_root("dups");
         fs::create_dir_all(root.join("set"))?;

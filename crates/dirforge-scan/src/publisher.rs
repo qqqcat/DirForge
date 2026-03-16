@@ -1,5 +1,5 @@
 use crate::{BatchEntry, ScanEvent, ScanProgress, ScanStage};
-use dirforge_core::{NodeStore, ScanSummary, SnapshotDelta};
+use dirforge_core::{ScanSummary, SnapshotDelta};
 use dirforge_telemetry as telemetry;
 use std::collections::VecDeque;
 use std::sync::mpsc::Sender;
@@ -63,13 +63,19 @@ impl Publisher {
         self.last_snapshot.elapsed() >= self.snapshot_interval
     }
 
-    pub fn send_snapshot_if_due(&mut self, delta: SnapshotDelta, store: &NodeStore) {
+    pub fn send_snapshot_if_due(
+        &mut self,
+        delta: SnapshotDelta,
+        top_files: Vec<(String, u64)>,
+        top_dirs: Vec<(String, u64)>,
+    ) {
         if !self.should_emit_snapshot() {
             return;
         }
         let _ = self.tx.send(ScanEvent::Snapshot {
             delta,
-            store: store.clone(),
+            top_files,
+            top_dirs,
         });
         self.last_snapshot = Instant::now();
     }
@@ -85,13 +91,22 @@ impl Publisher {
         }
     }
 
-    pub fn send_snapshot(&self, delta: SnapshotDelta, store: NodeStore) {
-        let _ = self.tx.send(ScanEvent::Snapshot { delta, store });
+    pub fn send_snapshot(
+        &self,
+        delta: SnapshotDelta,
+        top_files: Vec<(String, u64)>,
+        top_dirs: Vec<(String, u64)>,
+    ) {
+        let _ = self.tx.send(ScanEvent::Snapshot {
+            delta,
+            top_files,
+            top_dirs,
+        });
     }
 
     pub fn send_finished(
         &self,
-        store: NodeStore,
+        store: dirforge_core::NodeStore,
         summary: ScanSummary,
         errors: Vec<dirforge_core::ScanErrorRecord>,
     ) {
