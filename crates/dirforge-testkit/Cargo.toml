@@ -1,0 +1,4 @@
+[package]
+name = "dirforge-testkit"
+version.workspace = true
+edition.workspace = true
