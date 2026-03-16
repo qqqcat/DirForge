@@ -117,10 +117,18 @@ pub struct ScanSummary {
     pub error_count: u64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ErrorKind {
+    User,
+    Transient,
+    System,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanErrorRecord {
     pub path: String,
     pub reason: String,
+    pub kind: ErrorKind,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

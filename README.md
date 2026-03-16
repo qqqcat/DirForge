@@ -202,6 +202,12 @@ Adapter     → 记录每次外部调用的入参、响应码、耗时
 - ✅ M3 UI 生产化：treemap、虚拟化列表、帧预算/队列监控。
 - ✅ M4 发布质量收口：schema migration、操作中心、诊断包导出。
 
+## DirForge 质量强化（本轮）
+
+- ✅ Benchmark 套件与性能阈值固化（scan/dup）。
+- ✅ 错误分类体系（User/Transient/System）与 UI 分类展示。
+- ✅ 操作中心执行链路增强（回收站/永久删除模拟 + 批执行结果追踪）。
+
 ## DirForge 当前状态说明
 
 - 当前仓库已包含可运行的原生 GUI + SQLite 缓存实现，但整体定位仍为预生产原型。

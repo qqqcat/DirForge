@@ -1,5 +1,5 @@
 use dirforge_core::{
-    NodeKind, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
+    ErrorKind, NodeKind, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -77,6 +77,17 @@ impl Default for ScanConfig {
     }
 }
 
+fn classify_error(reason: &str) -> ErrorKind {
+    let r = reason.to_lowercase();
+    if r.contains("permission") || r.contains("access") || r.contains("denied") {
+        ErrorKind::User
+    } else if r.contains("timed") || r.contains("tempor") || r.contains("network") {
+        ErrorKind::Transient
+    } else {
+        ErrorKind::System
+    }
+}
+
 pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -124,6 +135,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                     errors.push(ScanErrorRecord {
                         path: root.display().to_string(),
                         reason: format!("walkdir: {e}"),
+                        kind: classify_error(&format!("walkdir: {e}")),
                     });
                     continue;
                 }
@@ -143,6 +155,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                     errors.push(ScanErrorRecord {
                         path: path.clone(),
                         reason: format!("metadata: {e}"),
+                        kind: classify_error(&format!("metadata: {e}")),
                     });
                     continue;
                 }

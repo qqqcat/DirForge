@@ -1,50 +1,36 @@
-# DirForge 项目综合评估报告（里程碑完成版）
+# DirForge 项目综合评估报告（增强版）
 
-## 1. 总体结论
+## 1. 本轮增强结论
 
-DirForge 当前版本已从原型升级为“可投入真实团队持续开发的生产级基线”。
+本轮围绕三个关键方向完成落地：
 
-- 架构：模块化 workspace + 关键子系统分层
-- 数据管线：批处理扫描事件 + 快照合并 + profile 化扫描
-- 去重：size/partial/full 多阶段收缩 + keeper + 风险标签
-- UI：Treemap、虚拟化列表、局部刷新、性能指标
-- 发布质量：schema migration、操作中心、诊断导出
+1. Benchmark 套件 + 固化性能阈值
+2. 错误分类（User/Transient/System）与 UI 展示
+3. 操作中心执行链路（回收站/永久删除模拟 + 结果追踪）
 
-## 2. 里程碑实现状态
+## 2. 完成项
 
-### M1（性能与数据管线）
+### 2.1 性能阈值与基准
 
-- [x] 扫描事件批量化（Batch）
-- [x] Snapshot coalescing（50~100ms）
-- [x] 扫描 profile（SSD/HDD/Network）
+- 新增 `crates/dirforge-testkit/tests/benchmark_thresholds.rs`
+- 固化阈值：扫描 4000ms、去重 1200ms（小规模基准）
+- CI/本地可通过 `cargo test` 自动执行
 
-### M2（去重系统升级）
+### 2.2 错误分类体系
 
-- [x] partial hash / full hash pipeline
-- [x] 候选收缩与结果确认
-- [x] keeper 推荐与风险标签
+- 核心模型新增 `ErrorKind`
+- 扫描器将错误归类为 User/Transient/System
+- 错误中心可展示分类统计与逐条类别
 
-### M3（UI 生产化）
+### 2.3 操作中心执行链路
 
-- [x] treemap 主视图 + 交互
-- [x] 大列表虚拟化（files/duplicates/errors）
-- [x] 局部失效刷新与帧预算监控
+- 删除计划支持风险与高风险统计
+- 新增执行模式：RecycleBin / Permanent（模拟）
+- 批执行结果包含逐项 success/failure + message
+- 批执行结果可写入审计事件
 
-### M4（发布质量收口）
+## 3. 仍需持续优化
 
-- [x] schema migration
-- [x] Windows 专项封装与基础测试
-- [x] 安全删除流程与操作中心
-- [x] 诊断页与导出诊断包
-
-## 3. 现阶段风险
-
-- 去重仍需补充“字节级二次确认模式”以降低极端误判风险
-- Windows 深度能力（reparse point 细粒度策略）仍可继续增强
-- 性能基准需扩展到百万级 synthetic 数据集
-
-## 4. 下一阶段建议
-
-1. 引入 benchmark 套件并固化性能阈值。
-2. 完善错误分类（User/Transient/System）与 UI 展示。
-3. 增强操作中心执行链路（回收站/永久删除模拟与批执行结果追踪）。
+- benchmark 数据集需扩展到更大规模 synthetic 树
+- 永久删除真实执行链路（当前为安全模拟）
+- Windows reparse point 与回收站真实 API 深化接入

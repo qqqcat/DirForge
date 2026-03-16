@@ -148,6 +148,12 @@ Current Scan 页面必须包含：
 - 底部 Results Panel
 - 状态栏
 
+## 新增交互要求（本轮）
+
+- Errors 页面需展示错误分类统计（User/Transient/System）。
+- Operations 页面需展示批执行结果列表（success/failure/message）。
+- Diagnostics 页面提供诊断包导出入口。
+
 ## 10. 设计 Token 建议结构
 
 ```text

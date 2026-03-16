@@ -2,3 +2,10 @@
 name = "dirforge-testkit"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+dirforge-core = { path = "../dirforge-core" }
+dirforge-scan = { path = "../dirforge-scan" }
+dirforge-dup = { path = "../dirforge-dup" }

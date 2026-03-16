@@ -1,7 +1,9 @@
-use dirforge_actions::{build_deletion_plan, DeletionPlan};
+use dirforge_actions::{
+    build_deletion_plan, execute_plan_simulated, DeletionPlan, ExecutionMode, ExecutionReport,
+};
 use dirforge_cache::{CacheStore, HistoryRecord};
 use dirforge_core::{
-    NodeStore, RiskLevel, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
+    ErrorKind, NodeStore, RiskLevel, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
 };
 use dirforge_dup::{detect_duplicates, DupConfig, DuplicateGroup};
 use dirforge_report::{export_diagnostics_bundle, export_text_report};
@@ -52,6 +54,7 @@ pub struct DirForgeNativeApp {
 
     duplicates: Vec<DuplicateGroup>,
     deletion_plan: Option<DeletionPlan>,
+    execution_report: Option<ExecutionReport>,
 
     history: Vec<HistoryRecord>,
     errors: Vec<ScanErrorRecord>,
@@ -96,6 +99,7 @@ impl DirForgeNativeApp {
             last_coalesce_commit: Instant::now(),
             duplicates: Vec::new(),
             deletion_plan: None,
+            execution_report: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
@@ -392,11 +396,26 @@ impl DirForgeNativeApp {
 
     fn ui_errors(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.t("错误中心", "Errors"));
+        let mut user = 0usize;
+        let mut transient = 0usize;
+        let mut system = 0usize;
+        for e in &self.errors {
+            match e.kind {
+                ErrorKind::User => user += 1,
+                ErrorKind::Transient => transient += 1,
+                ErrorKind::System => system += 1,
+            }
+        }
+        ui.label(format!(
+            "User={} Transient={} System={}",
+            user, transient, system
+        ));
+
         egui::ScrollArea::vertical().show_rows(ui, 24.0, self.errors.len(), |ui, range| {
             for i in range {
                 if let Some(e) = self.errors.get(i) {
                     ui.group(|ui| {
-                        ui.label(&e.path);
+                        ui.label(format!("[{:?}] {}", e.kind, e.path));
                         ui.label(&e.reason);
                     });
                 }
@@ -416,19 +435,47 @@ impl DirForgeNativeApp {
                 plan.reclaimable_bytes,
                 plan.high_risk_count
             ));
-            if ui
-                .button(self.t("记录操作审计", "Record audit event"))
-                .clicked()
-            {
-                let payload = serde_json::json!({
-                    "files": plan.files.len(),
-                    "reclaimable": plan.reclaimable_bytes,
-                    "high_risk": plan.high_risk_count
-                })
-                .to_string();
-                let _ = self.cache.add_audit_event("delete_plan_preview", &payload);
-                self.refresh_diagnostics();
+
+            ui.horizontal(|ui| {
+                if ui
+                    .button(self.t("模拟回收站删除", "Simulate recycle delete"))
+                    .clicked()
+                {
+                    self.execution_report =
+                        Some(execute_plan_simulated(&plan, ExecutionMode::RecycleBin));
+                }
+                if ui
+                    .button(self.t("模拟永久删除", "Simulate permanent delete"))
+                    .clicked()
+                {
+                    self.execution_report =
+                        Some(execute_plan_simulated(&plan, ExecutionMode::Permanent));
+                }
+            });
+
+            if let Some(report) = &self.execution_report {
+                ui.label(format!(
+                    "mode={:?} attempted={} ok={} failed={}",
+                    report.mode, report.attempted, report.succeeded, report.failed
+                ));
+                if ui
+                    .button(self.t("记录批执行审计", "Record execution audit"))
+                    .clicked()
+                {
+                    let payload = serde_json::json!({
+                        "mode": format!("{:?}", report.mode),
+                        "attempted": report.attempted,
+                        "succeeded": report.succeeded,
+                        "failed": report.failed,
+                    })
+                    .to_string();
+                    let _ = self
+                        .cache
+                        .add_audit_event("delete_execute_simulated", &payload);
+                    self.refresh_diagnostics();
+                }
             }
+
             ui.separator();
             egui::ScrollArea::vertical().show_rows(ui, 22.0, plan.files.len(), |ui, range| {
                 for i in range {
@@ -437,6 +484,26 @@ impl DirForgeNativeApp {
                     }
                 }
             });
+
+            if let Some(report) = &self.execution_report {
+                ui.separator();
+                ui.label(self.t("批执行结果", "Batch execution results"));
+                egui::ScrollArea::vertical().show_rows(
+                    ui,
+                    22.0,
+                    report.items.len(),
+                    |ui, range| {
+                        for i in range {
+                            if let Some(it) = report.items.get(i) {
+                                ui.label(format!(
+                                    "{} | success={} | {}",
+                                    it.path, it.success, it.message
+                                ));
+                            }
+                        }
+                    },
+                );
+            }
         }
     }
 

@@ -1,21 +1,12 @@
-# DirForge 安装与使用文档（生产化版本）
+# DirForge 安装与使用文档（含性能阈值与批执行链路）
 
-## 1. 当前版本说明
+## 1. 新增能力（本次更新）
 
-本版本已实现以下生产化特性：
+- Benchmark 套件与性能阈值固化（扫描与去重）
+- 错误分类升级（User / Transient / System）
+- 操作中心执行链路增强（回收站/永久删除模拟 + 批执行结果追踪）
 
-- M1：扫描事件批量化、Snapshot coalescing、扫描 profile（SSD/HDD/Network）
-- M2：去重四阶段（size/partial/full/结果整形）基础实现
-- M3：Treemap 主视图、大列表虚拟化、帧预算与队列深度监控
-- M4：SQLite schema migration、操作中心、诊断页与诊断包导出
-
-## 2. 环境要求
-
-- Rust stable + Cargo
-- Git
-- 支持桌面图形环境（运行 eframe 原生窗口）
-
-## 3. 安装与构建
+## 2. 安装与构建
 
 ```bash
 git clone <your-repo-url> DirForge
@@ -25,57 +16,55 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-## 4. 运行方式
+## 3. 运行应用
 
 ```bash
 cargo run -p dirforge-app
 ```
 
-Release 构建：
+## 4. 关键使用流程
+
+1. Dashboard 设置扫描参数（profile / batch / snapshot interval）并启动。
+2. Current Scan 查看实时扫描与虚拟化文件列表。
+3. Errors 页面查看分类统计（User/Transient/System）。
+4. Operations 页面：
+   - 生成删除计划
+   - 运行“模拟回收站删除”或“模拟永久删除”
+   - 查看批执行结果（success/failure + message）
+5. Diagnostics 页面导出 `dirforge_diagnostics.json`。
+
+## 5. Benchmark 与阈值验证
+
+本项目已内置阈值测试：
+
+- `benchmark_scan_threshold_small_tree`
+- `benchmark_dup_threshold_small_dataset`
+
+运行：
 
 ```bash
-cargo build -p dirforge-app --release
+cargo test -p dirforge-testkit --test benchmark_thresholds
 ```
 
-## 5. 首次使用流程
+默认阈值（可在测试文件中调整）：
 
-1. Dashboard 选择扫描路径、扫描 profile、batch size、snapshot 间隔。
-2. 启动扫描，进入 Current Scan 查看实时指标与虚拟化文件列表。
-3. 切到 Treemap 查看目录空间分布与交互。
-4. 扫描完成后在 History 查看历史记录，在 Errors 查看错误详情。
-5. 在 Operations 查看删除计划（含高风险统计）并记录审计事件。
-6. 在 Diagnostics 导出 `dirforge_diagnostics.json` 诊断包。
-7. 在 Settings 调整语言（默认跟随系统 `LC_ALL`/`LANG`）和主题。
+- 扫描阈值：`SCAN_THRESHOLD_MS = 4000`
+- 去重阈值：`DUP_THRESHOLD_MS = 1200`
 
 ## 6. 运行产物
 
-- `dirforge.db`：SQLite（snapshots / scan_history / scan_errors / settings / operation_audit）
+- `dirforge.db`：SQLite 缓存
 - `dirforge_report.txt`：扫描报告
-- `dirforge_diagnostics.json`：诊断导出文件
+- `dirforge_diagnostics.json`：诊断导出
 
 ## 7. 常见问题
 
-### 7.1 首次构建慢
+### 7.1 错误分类说明
 
-`eframe` 图形依赖首次编译耗时较长，属于正常现象。
+- `User`：常见权限/访问问题
+- `Transient`：临时性错误（网络/超时等）
+- `System`：其余系统或内部错误
 
-### 7.2 语言默认不符合预期
+### 7.2 永久删除模拟失败
 
-应用优先读取 `LC_ALL`，回退 `LANG`。可在 Settings 中覆盖并持久化。
-
-### 7.3 历史为空
-
-仅扫描完成后会写入 `scan_history`，取消扫描可能无完整记录。
-
-## 8. 清理
-
-```bash
-cargo clean
-rm -f dirforge.db dirforge_report.txt dirforge_diagnostics.json
-```
-
-## 9. 相关文档
-
-- `docs/dirforge-comprehensive-assessment.md`
-- `docs/dirforge-sdd.md`
-- `docs/dirforge-ui-component-spec.md`
+高风险文件在永久删除模拟下会被阻断并标记失败，这是安全策略设计。

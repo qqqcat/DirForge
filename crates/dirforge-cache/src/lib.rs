@@ -1,4 +1,4 @@
-use dirforge_core::{NodeStore, ScanErrorRecord};
+use dirforge_core::{ErrorKind, NodeStore, ScanErrorRecord};
 use rusqlite::{params, Connection};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -71,6 +71,7 @@ impl CacheStore {
                   history_id INTEGER NOT NULL,
                   path TEXT NOT NULL,
                   reason TEXT NOT NULL,
+                  kind TEXT NOT NULL DEFAULT 'system',
                   FOREIGN KEY(history_id) REFERENCES scan_history(id)
                 );
                 CREATE TABLE IF NOT EXISTS settings (
@@ -92,6 +93,24 @@ impl CacheStore {
             "UPDATE schema_meta SET version = ? WHERE id = 1",
             params![SCHEMA_VERSION],
         )?;
+
+        // backfill migration for old databases missing `kind` column
+        let mut has_kind = false;
+        {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(scan_errors)")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(1))?;
+            for col in rows {
+                if col? == "kind" {
+                    has_kind = true;
+                }
+            }
+        }
+        if !has_kind {
+            self.conn.execute(
+                "ALTER TABLE scan_errors ADD COLUMN kind TEXT NOT NULL DEFAULT 'system'",
+                [],
+            )?;
+        }
 
         Ok(())
     }
@@ -150,8 +169,8 @@ impl CacheStore {
         let history_id = self.conn.last_insert_rowid();
         for err in errors {
             self.conn.execute(
-                "INSERT INTO scan_errors(history_id, path, reason) VALUES(?, ?, ?)",
-                params![history_id, err.path, err.reason],
+                "INSERT INTO scan_errors(history_id, path, reason, kind) VALUES(?, ?, ?, ?)",
+                params![history_id, err.path, err.reason, kind_to_str(err.kind)],
             )?;
         }
         Ok(history_id)
@@ -185,13 +204,14 @@ impl CacheStore {
         &self,
         history_id: i64,
     ) -> rusqlite::Result<Vec<ScanErrorRecord>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT path, reason FROM scan_errors WHERE history_id = ? ORDER BY id ASC")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT path, reason, kind FROM scan_errors WHERE history_id = ? ORDER BY id ASC",
+        )?;
         let rows = stmt.query_map(params![history_id], |r| {
             Ok(ScanErrorRecord {
                 path: r.get(0)?,
                 reason: r.get(1)?,
+                kind: str_to_kind(&r.get::<_, String>(2)?),
             })
         })?;
         let mut out = Vec::new();
@@ -245,6 +265,22 @@ impl CacheStore {
             r#"{{"schema_version":{},"history_count":{},"error_count":{},"settings_count":{}}}"#,
             schema, history_count, error_count, settings_count
         ))
+    }
+}
+
+fn kind_to_str(k: ErrorKind) -> &'static str {
+    match k {
+        ErrorKind::User => "user",
+        ErrorKind::Transient => "transient",
+        ErrorKind::System => "system",
+    }
+}
+
+fn str_to_kind(s: &str) -> ErrorKind {
+    match s {
+        "user" => ErrorKind::User,
+        "transient" => ErrorKind::Transient,
+        _ => ErrorKind::System,
     }
 }
 
