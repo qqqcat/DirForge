@@ -140,9 +140,10 @@ pub enum ScanProfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotDelta {
-    pub changed_nodes: usize,
-    pub scanned_files: u64,
-    pub scanned_dirs: u64,
+    pub changed_nodes: Vec<NodeId>,
+    pub summary: ScanSummary,
+    pub top_files_delta: Vec<NodeId>,
+    pub top_dirs_delta: Vec<NodeId>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,7 +167,6 @@ mod tests {
         assert_eq!(s.nodes[root.0].size_subtree, 10);
         assert_eq!(s.nodes[root.0].file_count, 2);
     }
-
 
     #[test]
     fn duplicate_path_returns_existing_node() {

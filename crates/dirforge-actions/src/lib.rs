@@ -1,6 +1,8 @@
 use dirforge_core::RiskLevel;
 use dirforge_platform::move_to_recycle_bin;
 use dirforge_telemetry as telemetry;
+use std::io;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct DeletionItem {
@@ -27,6 +29,21 @@ pub struct ExecutionResultItem {
     pub path: String,
     pub success: bool,
     pub message: String,
+    pub failure_kind: Option<ActionFailureKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionFailureKind {
+    Missing,
+    PermissionDenied,
+    UnsupportedType,
+    Protected,
+    Io,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TargetMeta {
+    is_dir: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -70,23 +87,29 @@ fn execute_internal(plan: &DeletionPlan, mode: ExecutionMode, simulated: bool) -
     let mut failed = 0usize;
 
     for file in &plan.files {
-        let (success, message) = match (mode, file.risk, simulated) {
-            (ExecutionMode::Permanent, RiskLevel::High, _) => (
-                false,
-                "blocked: high-risk item requires manual override".to_string(),
-            ),
-            (_, _, true) => (true, format!("simulated {:?}", mode)),
-            (ExecutionMode::Permanent, _, false) => {
-                match std::fs::remove_file(&file.path) {
-                    Ok(_) => (true, "permanent delete ok".to_string()),
-                    Err(e) => (false, format!("delete failed: {e}")),
-                }
-            }
-            (ExecutionMode::RecycleBin, _, false) => match move_to_recycle_bin(&file.path) {
-                Ok(_) => (true, "moved to recycle bin".to_string()),
-                Err(e) => (false, format!("recycle failed: {}", e.message)),
-            },
-        };
+        let (success, message, failure_kind) =
+            match validate_deletion_target(Path::new(&file.path), file.risk, mode, simulated) {
+                Err(kind) => (false, format!("validation failed: {kind:?}"), Some(kind)),
+                Ok(meta) if simulated => (true, format!("simulated {:?}", mode), None),
+                Ok(meta) => match (mode, meta.is_dir) {
+                    (ExecutionMode::Permanent, false) => match std::fs::remove_file(&file.path) {
+                        Ok(_) => (true, "permanent delete ok".to_string(), None),
+                        Err(e) => (false, format!("delete failed: {e}"), Some(map_io_error(&e))),
+                    },
+                    (ExecutionMode::Permanent, true) => match std::fs::remove_dir_all(&file.path) {
+                        Ok(_) => (true, "permanent delete dir ok".to_string(), None),
+                        Err(e) => (false, format!("delete failed: {e}"), Some(map_io_error(&e))),
+                    },
+                    (ExecutionMode::RecycleBin, _) => match move_to_recycle_bin(&file.path) {
+                        Ok(_) => (true, "moved to recycle bin".to_string(), None),
+                        Err(e) => (
+                            false,
+                            format!("recycle failed: {}", e.message),
+                            Some(ActionFailureKind::Io),
+                        ),
+                    },
+                },
+            };
 
         telemetry::record_action_result(success);
         if success {
@@ -98,6 +121,7 @@ fn execute_internal(plan: &DeletionPlan, mode: ExecutionMode, simulated: bool) -
             path: file.path.clone(),
             success,
             message,
+            failure_kind,
         });
     }
 
@@ -107,6 +131,47 @@ fn execute_internal(plan: &DeletionPlan, mode: ExecutionMode, simulated: bool) -
         succeeded,
         failed,
         items,
+    }
+}
+
+fn validate_deletion_target(
+    path: &Path,
+    risk: RiskLevel,
+    mode: ExecutionMode,
+    simulated: bool,
+) -> Result<TargetMeta, ActionFailureKind> {
+    if mode == ExecutionMode::Permanent && risk == RiskLevel::High {
+        return Err(ActionFailureKind::Protected);
+    }
+
+    if simulated {
+        return Ok(TargetMeta { is_dir: false });
+    }
+
+    if !path.exists() {
+        return Err(ActionFailureKind::Missing);
+    }
+
+    let meta = std::fs::metadata(path).map_err(|e| map_io_error(&e))?;
+    if !(meta.is_file() || meta.is_dir()) {
+        return Err(ActionFailureKind::UnsupportedType);
+    }
+
+    let parent = path.parent().unwrap_or(path);
+    if std::fs::OpenOptions::new().read(true).open(parent).is_err() {
+        return Err(ActionFailureKind::PermissionDenied);
+    }
+
+    Ok(TargetMeta {
+        is_dir: meta.is_dir(),
+    })
+}
+
+fn map_io_error(e: &io::Error) -> ActionFailureKind {
+    match e.kind() {
+        io::ErrorKind::NotFound => ActionFailureKind::Missing,
+        io::ErrorKind::PermissionDenied => ActionFailureKind::PermissionDenied,
+        _ => ActionFailureKind::Io,
     }
 }
 

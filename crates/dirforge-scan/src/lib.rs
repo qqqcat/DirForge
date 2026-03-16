@@ -1,5 +1,6 @@
 use dirforge_core::{
-    ErrorKind, NodeKind, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
+    ErrorKind, NodeId, NodeKind, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary,
+    SnapshotDelta,
 };
 use dirforge_telemetry as telemetry;
 use serde::{Deserialize, Serialize};
@@ -39,7 +40,10 @@ pub struct BatchEntry {
 pub enum ScanEvent {
     Progress(ScanProgress),
     Batch(Vec<BatchEntry>),
-    Snapshot { delta: SnapshotDelta },
+    Snapshot {
+        delta: SnapshotDelta,
+        store: NodeStore,
+    },
     Finished {
         store: NodeStore,
         summary: ScanSummary,
@@ -119,7 +123,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         );
 
         let mut last_snapshot = Instant::now();
-        let mut changed_since_snapshot = 0usize;
+        let mut changed_since_snapshot: Vec<NodeId> = Vec::new();
 
         for entry in WalkDir::new(&root).follow_links(false).into_iter() {
             if cancel_clone.load(Ordering::SeqCst) {
@@ -174,13 +178,14 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
 
             if meta.is_dir() {
                 summary.scanned_dirs += 1;
-                store.add_node(
+                let node_id = store.add_node(
                     parent,
                     entry.file_name().to_string_lossy().to_string(),
                     path.clone(),
                     NodeKind::Dir,
                     0,
                 );
+                changed_since_snapshot.push(node_id);
                 batch.push(BatchEntry {
                     path,
                     is_dir: true,
@@ -189,13 +194,14 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             } else {
                 summary.scanned_files += 1;
                 summary.bytes_observed += meta.len();
-                store.add_node(
+                let node_id = store.add_node(
                     parent,
                     entry.file_name().to_string_lossy().to_string(),
                     path.clone(),
                     NodeKind::File,
                     meta.len(),
                 );
+                changed_since_snapshot.push(node_id);
                 batch.push(BatchEntry {
                     path,
                     is_dir: false,
@@ -203,7 +209,6 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                 });
             }
             telemetry::record_scan_item();
-            changed_since_snapshot += 1;
 
             while frontier.len() > 32 {
                 let _ = frontier.pop_front();
@@ -222,15 +227,22 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             let _ = tx.send(ScanEvent::Progress(progress));
 
             if last_snapshot.elapsed() >= Duration::from_millis(config.snapshot_ms.max(50)) {
+                let top_files_delta = store
+                    .top_n_largest_files(10)
+                    .into_iter()
+                    .map(|n| n.id)
+                    .collect();
+                let top_dirs_delta = store.largest_dirs(10).into_iter().map(|n| n.id).collect();
                 let _ = tx.send(ScanEvent::Snapshot {
                     delta: SnapshotDelta {
-                        changed_nodes: changed_since_snapshot,
-                        scanned_files: summary.scanned_files,
-                        scanned_dirs: summary.scanned_dirs,
+                        changed_nodes: std::mem::take(&mut changed_since_snapshot),
+                        summary: summary.clone(),
+                        top_files_delta,
+                        top_dirs_delta,
                     },
+                    store: store.clone(),
                 });
                 telemetry::record_snapshot();
-                changed_since_snapshot = 0;
                 last_snapshot = Instant::now();
             }
 
@@ -245,12 +257,20 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             let _ = tx.send(ScanEvent::Batch(batch));
         }
         store.rollup();
+        let top_files_delta = store
+            .top_n_largest_files(10)
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        let top_dirs_delta = store.largest_dirs(10).into_iter().map(|n| n.id).collect();
         let _ = tx.send(ScanEvent::Snapshot {
             delta: SnapshotDelta {
                 changed_nodes: changed_since_snapshot,
-                scanned_files: summary.scanned_files,
-                scanned_dirs: summary.scanned_dirs,
+                summary: summary.clone(),
+                top_files_delta,
+                top_dirs_delta,
             },
+            store: store.clone(),
         });
         telemetry::record_snapshot();
         let _ = tx.send(ScanEvent::Finished {

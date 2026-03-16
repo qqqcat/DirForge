@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone)]
 pub struct HistoryRecord {
@@ -55,7 +55,12 @@ impl CacheStore {
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   root TEXT NOT NULL,
                   created_at INTEGER NOT NULL,
-                  payload_json TEXT NOT NULL
+                  payload_json TEXT,
+                  payload_blob BLOB,
+                  payload_encoding TEXT NOT NULL DEFAULT 'json',
+                  node_count INTEGER NOT NULL DEFAULT 0,
+                  payload_size INTEGER NOT NULL DEFAULT 0,
+                  schema_version INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE TABLE IF NOT EXISTS scan_history (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,6 +117,34 @@ impl CacheStore {
             )?;
         }
 
+        self.conn
+            .execute("ALTER TABLE snapshots ADD COLUMN payload_blob BLOB", [])
+            .ok();
+        self.conn
+            .execute(
+                "ALTER TABLE snapshots ADD COLUMN payload_encoding TEXT NOT NULL DEFAULT 'json'",
+                [],
+            )
+            .ok();
+        self.conn
+            .execute(
+                "ALTER TABLE snapshots ADD COLUMN node_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .ok();
+        self.conn
+            .execute(
+                "ALTER TABLE snapshots ADD COLUMN payload_size INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .ok();
+        self.conn
+            .execute(
+                "ALTER TABLE snapshots ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1",
+                [],
+            )
+            .ok();
+
         Ok(())
     }
 
@@ -123,30 +156,60 @@ impl CacheStore {
     }
 
     pub fn save_snapshot(&self, root: &str, store: &NodeStore) -> rusqlite::Result<()> {
-        let payload = serde_json::to_string(store)
+        let encoded = bincode::serialize(store)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        let compressed = zstd::stream::encode_all(encoded.as_slice(), 3)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        let payload_size = compressed.len() as i64;
         self.conn.execute(
-            "INSERT INTO snapshots(root, created_at, payload_json) VALUES(?, ?, ?)",
-            params![root, now_ts(), payload],
+            "INSERT INTO snapshots(root, created_at, payload_json, payload_blob, payload_encoding, node_count, payload_size, schema_version) VALUES(?, ?, NULL, ?, 'zstd+bincode', ?, ?, ?)",
+            params![root, now_ts(), compressed, store.nodes.len() as i64, payload_size, SCHEMA_VERSION],
         )?;
         Ok(())
     }
 
     pub fn load_latest_snapshot(&self, root: &str) -> rusqlite::Result<Option<NodeStore>> {
         let mut stmt = self.conn.prepare(
-            "SELECT payload_json FROM snapshots WHERE root = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            "SELECT payload_blob, payload_json, payload_encoding FROM snapshots WHERE root = ? ORDER BY created_at DESC, id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![root])?;
         if let Some(row) = rows.next()? {
-            let payload: String = row.get(0)?;
-            let store: NodeStore = serde_json::from_str(&payload).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })?;
-            Ok(Some(store))
+            let blob: Option<Vec<u8>> = row.get(0)?;
+            let payload_json: Option<String> = row.get(1)?;
+            let encoding: Option<String> = row.get(2)?;
+
+            if let (Some(bytes), Some(enc)) = (blob, encoding) {
+                if enc == "zstd+bincode" {
+                    let decompressed = zstd::stream::decode_all(bytes.as_slice()).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Blob,
+                            Box::new(e),
+                        )
+                    })?;
+                    let store: NodeStore = bincode::deserialize(&decompressed).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Blob,
+                            Box::new(e),
+                        )
+                    })?;
+                    return Ok(Some(store));
+                }
+            }
+
+            if let Some(payload) = payload_json {
+                let store: NodeStore = serde_json::from_str(&payload).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                return Ok(Some(store));
+            }
+
+            Ok(None)
         } else {
             Ok(None)
         }
