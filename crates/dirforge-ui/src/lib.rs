@@ -8,8 +8,8 @@ use dirforge_core::{
 };
 use dirforge_dup::{detect_duplicates, DupConfig, DuplicateGroup};
 use dirforge_report::{
-    export_diagnostics_bundle, export_duplicates_csv, export_errors_csv, export_summary_json,
-    export_text_report, DiagnosticsBundleManifest,
+    default_manifest, export_diagnostics_bundle, export_duplicates_csv, export_errors_csv,
+    export_summary_json, export_text_report,
 };
 use dirforge_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanHandle};
 use dirforge_telemetry as telemetry;
@@ -181,10 +181,25 @@ impl DirForgeNativeApp {
     }
 
     fn refresh_diagnostics(&mut self) {
-        self.diagnostics_json = self
+        let cache_payload = self
             .cache
             .export_diagnostics_json()
             .unwrap_or_else(|_| "{}".to_string());
+        let telemetry_snapshot = telemetry::snapshot();
+        let metrics = telemetry::metric_descriptors();
+        let audit = telemetry::action_audit_tail(32);
+
+        let cache_json = serde_json::from_str::<serde_json::Value>(&cache_payload)
+            .unwrap_or_else(|_| serde_json::json!({"raw": cache_payload}));
+
+        self.diagnostics_json = serde_json::to_string_pretty(&serde_json::json!({
+            "bundle_structure_version": 2,
+            "cache": cache_json,
+            "telemetry_snapshot": telemetry_snapshot,
+            "metrics": metrics,
+            "action_audit_tail": audit,
+        }))
+        .unwrap_or_else(|_| "{}".to_string());
     }
 
     fn reload_history(&mut self) -> rusqlite::Result<()> {
@@ -226,8 +241,13 @@ impl DirForgeNativeApp {
                         self.perf.snapshot_queue_depth = p.queue_depth;
                     }
                     ScanEvent::Batch(batch) => self.pending_batch_events.push(batch),
-                    ScanEvent::Snapshot { delta, store } => {
-                        self.store = Some(store);
+                    ScanEvent::Snapshot {
+                        delta,
+                        top_files,
+                        top_dirs,
+                    } => {
+                        self.live_top_files = top_files;
+                        self.live_top_dirs = top_dirs;
                         self.pending_snapshots.push(delta)
                     }
                     ScanEvent::Finished {
@@ -257,10 +277,6 @@ impl DirForgeNativeApp {
             let snapshots: Vec<_> = self.pending_snapshots.drain(..).collect();
             for snapshot in snapshots {
                 self.summary = snapshot.summary;
-                if let Some(store) = &self.store {
-                    self.live_top_files = map_nodes_to_rows(store, &snapshot.top_files_delta);
-                    self.live_top_dirs = map_nodes_to_rows(store, &snapshot.top_dirs_delta);
-                }
             }
             self.last_coalesce_commit = Instant::now();
         }
@@ -710,13 +726,11 @@ impl DirForgeNativeApp {
             .button(self.t("导出诊断包", "Export diagnostics bundle"))
             .clicked()
         {
-            let manifest = DiagnosticsBundleManifest {
-                diagnostics_payload_file: "dirforge_diagnostics.json".to_string(),
-                summary_report_file: "dirforge_summary.json".to_string(),
-                duplicate_report_file: "dirforge_duplicates.csv".to_string(),
-                error_report_file: "dirforge_errors.csv".to_string(),
-                format: "json",
-            };
+            let mut manifest = default_manifest();
+            manifest.diagnostics_payload_file = "dirforge_diagnostics.json".to_string();
+            manifest.summary_report_file = "dirforge_summary.json".to_string();
+            manifest.duplicate_report_file = "dirforge_duplicates.csv".to_string();
+            manifest.error_report_file = "dirforge_errors.csv".to_string();
             let _ = export_diagnostics_bundle(
                 &self.diagnostics_json,
                 "dirforge_diagnostics.json",

@@ -6,6 +6,8 @@ pub enum PlatformErrorKind {
     Permission,
     Io,
     PathNormalization,
+    Timeout,
+    Busy,
     System,
 }
 
@@ -29,6 +31,9 @@ pub fn map_io_error(e: &std::io::Error) -> PlatformErrorKind {
     match e.kind() {
         ErrorKind::NotFound => PlatformErrorKind::NotFound,
         ErrorKind::PermissionDenied => PlatformErrorKind::Permission,
+        ErrorKind::TimedOut => PlatformErrorKind::Timeout,
+        ErrorKind::WouldBlock => PlatformErrorKind::Busy,
+        ErrorKind::InvalidInput | ErrorKind::InvalidData => PlatformErrorKind::InvalidInput,
         _ => PlatformErrorKind::Io,
     }
 }

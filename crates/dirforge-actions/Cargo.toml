@@ -7,3 +7,5 @@ edition.workspace = true
 dirforge-core = { path = "../dirforge-core" }
 dirforge-platform = { path = "../dirforge-platform" }
 dirforge-telemetry = { path = "../dirforge-telemetry" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

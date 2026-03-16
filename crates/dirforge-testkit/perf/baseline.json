@@ -1,5 +1,5 @@
 {
-  "scan_small_tree_ms": 4000,
-  "dup_small_dataset_ms": 1200,
-  "notes": "CI baseline for regression detection; adjust with dedicated perf run evidence"
+  "scan_small_tree_ms": 500,
+  "scan_massive_tree_ms": 3500,
+  "dup_small_dataset_ms": 300
 }

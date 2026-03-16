@@ -50,30 +50,59 @@ impl Aggregator {
         }
     }
 
-    pub fn make_snapshot_delta(&mut self) -> SnapshotDelta {
-        let top_files_delta = self
+    pub fn make_snapshot_data(
+        &mut self,
+    ) -> (SnapshotDelta, Vec<(String, u64)>, Vec<(String, u64)>) {
+        let top_files = self
             .store
             .top_n_largest_files(10)
             .into_iter()
-            .map(|n| n.id)
-            .collect();
-        let top_dirs_delta = self
+            .map(|n| (n.path.clone(), n.size_self))
+            .collect::<Vec<_>>();
+        let top_dirs = self
             .store
             .largest_dirs(10)
             .into_iter()
-            .map(|n| n.id)
+            .map(|n| (n.path.clone(), n.size_subtree))
+            .collect::<Vec<_>>();
+
+        let top_files_delta = top_files
+            .iter()
+            .filter_map(|(path, _)| self.store.path_index.get(path).copied())
             .collect();
-        SnapshotDelta {
+        let top_dirs_delta = top_dirs
+            .iter()
+            .filter_map(|(path, _)| self.store.path_index.get(path).copied())
+            .collect();
+
+        let delta = SnapshotDelta {
             changed_nodes: std::mem::take(&mut self.changed_since_snapshot),
             summary: self.summary.clone(),
             top_files_delta,
             top_dirs_delta,
-        }
+        };
+        (delta, top_files, top_dirs)
     }
 
-    pub fn finalize(mut self) -> (NodeStore, ScanSummary, Vec<ScanErrorRecord>, SnapshotDelta) {
+    pub fn finalize(
+        mut self,
+    ) -> (
+        NodeStore,
+        ScanSummary,
+        Vec<ScanErrorRecord>,
+        SnapshotDelta,
+        Vec<(String, u64)>,
+        Vec<(String, u64)>,
+    ) {
         self.store.rollup();
-        let delta = self.make_snapshot_delta();
-        (self.store, self.summary, self.errors, delta)
+        let (delta, top_files, top_dirs) = self.make_snapshot_data();
+        (
+            self.store,
+            self.summary,
+            self.errors,
+            delta,
+            top_files,
+            top_dirs,
+        )
     }
 }

@@ -52,8 +52,21 @@ pub struct DiagnosticsBundleManifest {
     pub duplicate_report_file: String,
     pub error_report_file: String,
     pub format: &'static str,
+    pub structure_version: u32,
 }
 
+pub const DIAGNOSTICS_BUNDLE_STRUCTURE_VERSION: u32 = 2;
+
+pub fn default_manifest() -> DiagnosticsBundleManifest {
+    DiagnosticsBundleManifest {
+        diagnostics_payload_file: "diagnostics.json".to_string(),
+        summary_report_file: "summary.json".to_string(),
+        duplicate_report_file: "duplicates.csv".to_string(),
+        error_report_file: "errors.csv".to_string(),
+        format: "json",
+        structure_version: DIAGNOSTICS_BUNDLE_STRUCTURE_VERSION,
+    }
+}
 pub fn build_summary_report(store: &NodeStore) -> SummaryReport {
     let rows = store
         .nodes
@@ -247,13 +260,8 @@ mod tests {
     #[test]
     fn export_diagnostics_manifest_smoke() {
         let out = std::env::temp_dir().join("dirforge_diag_test.json");
-        let manifest = DiagnosticsBundleManifest {
-            diagnostics_payload_file: "dirforge_diag_test.json".into(),
-            summary_report_file: "summary.json".into(),
-            duplicate_report_file: "duplicates.csv".into(),
-            error_report_file: "errors.csv".into(),
-            format: "json",
-        };
+        let mut manifest = default_manifest();
+        manifest.diagnostics_payload_file = "dirforge_diag_test.json".into();
         export_diagnostics_bundle("{\"ok\":true}", &out, &manifest).expect("export diagnostics");
         let content = std::fs::read_to_string(&out).expect("read diagnostics");
         assert!(content.contains("ok"));
