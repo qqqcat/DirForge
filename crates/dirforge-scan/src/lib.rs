@@ -4,7 +4,7 @@ mod walker;
 
 use aggregator::Aggregator;
 use dirforge_core::{
-    ErrorKind, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
+    ErrorKind, Node, NodeId, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
 };
 use dirforge_telemetry as telemetry;
 use publisher::Publisher;
@@ -31,6 +31,22 @@ pub struct ScanProgress {
     pub current_path: Option<String>,
     pub summary: ScanSummary,
     pub queue_depth: usize,
+    pub metadata_backlog: usize,
+    pub publisher_lag: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionState {
+    pub focused: Option<NodeId>,
+    pub expanded: Vec<NodeId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotView {
+    pub nodes: Vec<Node>,
+    pub top_files: Vec<(String, u64)>,
+    pub top_dirs: Vec<(String, u64)>,
+    pub selection: SelectionState,
 }
 
 #[derive(Debug, Clone)]
@@ -46,11 +62,9 @@ pub enum ScanEvent {
     Batch(Vec<BatchEntry>),
     Snapshot {
         delta: SnapshotDelta,
-        top_files: Vec<(String, u64)>,
-        top_dirs: Vec<(String, u64)>,
+        view: SnapshotView,
     },
     Finished {
-        store: NodeStore,
         summary: ScanSummary,
         errors: Vec<ScanErrorRecord>,
     },
@@ -93,6 +107,7 @@ pub(crate) struct ProfileTuning {
     pub batch_size: usize,
     pub snapshot_ms: u64,
     pub metadata_parallelism: usize,
+    pub deep_tasks_throttle: usize,
 }
 
 impl ScanConfig {
@@ -107,6 +122,7 @@ impl ScanConfig {
             batch_size: ((self.batch_size.max(1) as f32) * batch_mult).round() as usize,
             snapshot_ms: ((self.snapshot_ms.max(50) as f32) * snapshot_mult).round() as u64,
             metadata_parallelism: self.metadata_parallelism.clamp(1, parallel_cap),
+            deep_tasks_throttle: self.deep_tasks_throttle.max(1),
         }
     }
 }
@@ -153,16 +169,17 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                     telemetry::record_scan_error();
                 }
                 WalkerEvent::Entry(entry) => {
+                    let metadata_backlog = entry.metadata_backlog;
                     let entries = aggregator.on_entry(entry);
                     for entry in entries {
-                        publisher.on_batch_entry(entry, &aggregator.summary);
+                        publisher.on_batch_entry(entry, &aggregator.summary, metadata_backlog);
                         telemetry::record_scan_item();
                     }
 
                     if publisher.should_emit_snapshot() {
                         let snapshot_start = Instant::now();
-                        let (delta, top_files, top_dirs) = aggregator.make_snapshot_data();
-                        publisher.send_snapshot_if_due(delta, top_files, top_dirs);
+                        let (delta, view) = aggregator.make_snapshot_data(false);
+                        publisher.send_snapshot_if_due(delta, view);
                         telemetry::record_snapshot();
                         telemetry::record_snapshot_commit(
                             snapshot_start.elapsed().as_millis() as u64
@@ -175,10 +192,10 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         let _ = walker_thread.join();
 
         publisher.flush_batch();
-        let (store, summary, errors, final_delta, top_files, top_dirs) = aggregator.finalize();
-        publisher.send_snapshot(final_delta, top_files, top_dirs);
+        let (summary, errors, final_delta, final_view) = aggregator.finalize();
+        publisher.send_snapshot(final_delta, final_view);
         telemetry::record_snapshot();
-        publisher.send_finished(store, summary, errors);
+        publisher.send_finished(summary, errors);
     });
 
     ScanHandle { events: rx, cancel }

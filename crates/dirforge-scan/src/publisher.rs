@@ -1,4 +1,4 @@
-use crate::{BatchEntry, ScanEvent, ScanProgress, ScanStage};
+use crate::{BatchEntry, ScanEvent, ScanProgress, ScanStage, SnapshotView};
 use dirforge_core::{ScanSummary, SnapshotDelta};
 use dirforge_telemetry as telemetry;
 use std::collections::VecDeque;
@@ -12,6 +12,7 @@ pub struct Publisher {
     frontier: VecDeque<String>,
     batch: Vec<BatchEntry>,
     last_snapshot: Instant,
+    publisher_lag: usize,
 }
 
 impl Publisher {
@@ -23,6 +24,7 @@ impl Publisher {
             frontier: VecDeque::new(),
             batch: Vec::with_capacity(batch_size.max(1)),
             last_snapshot: Instant::now(),
+            publisher_lag: 0,
         }
     }
 
@@ -32,10 +34,17 @@ impl Publisher {
             current_path: Some(root),
             summary,
             queue_depth: 0,
+            metadata_backlog: 0,
+            publisher_lag: self.publisher_lag,
         }));
     }
 
-    pub fn on_batch_entry(&mut self, entry: BatchEntry, summary: &ScanSummary) {
+    pub fn on_batch_entry(
+        &mut self,
+        entry: BatchEntry,
+        summary: &ScanSummary,
+        metadata_backlog: usize,
+    ) {
         self.frontier.push_back(entry.path.clone());
         self.batch.push(entry);
 
@@ -48,7 +57,10 @@ impl Publisher {
             let _ = self
                 .tx
                 .send(ScanEvent::Batch(std::mem::take(&mut self.batch)));
+            self.publisher_lag = self.publisher_lag.saturating_sub(size);
             telemetry::record_scan_batch(size, started.elapsed().as_millis() as u64);
+        } else {
+            self.publisher_lag = self.publisher_lag.saturating_add(1);
         }
 
         let _ = self.tx.send(ScanEvent::Progress(ScanProgress {
@@ -56,6 +68,8 @@ impl Publisher {
             current_path: self.frontier.back().cloned(),
             summary: summary.clone(),
             queue_depth: self.frontier.len(),
+            metadata_backlog,
+            publisher_lag: self.publisher_lag,
         }));
     }
 
@@ -63,20 +77,11 @@ impl Publisher {
         self.last_snapshot.elapsed() >= self.snapshot_interval
     }
 
-    pub fn send_snapshot_if_due(
-        &mut self,
-        delta: SnapshotDelta,
-        top_files: Vec<(String, u64)>,
-        top_dirs: Vec<(String, u64)>,
-    ) {
+    pub fn send_snapshot_if_due(&mut self, delta: SnapshotDelta, view: SnapshotView) {
         if !self.should_emit_snapshot() {
             return;
         }
-        let _ = self.tx.send(ScanEvent::Snapshot {
-            delta,
-            top_files,
-            top_dirs,
-        });
+        let _ = self.tx.send(ScanEvent::Snapshot { delta, view });
         self.last_snapshot = Instant::now();
     }
 
@@ -87,33 +92,16 @@ impl Publisher {
             let _ = self
                 .tx
                 .send(ScanEvent::Batch(std::mem::take(&mut self.batch)));
+            self.publisher_lag = self.publisher_lag.saturating_sub(size);
             telemetry::record_scan_batch(size, started.elapsed().as_millis() as u64);
         }
     }
 
-    pub fn send_snapshot(
-        &self,
-        delta: SnapshotDelta,
-        top_files: Vec<(String, u64)>,
-        top_dirs: Vec<(String, u64)>,
-    ) {
-        let _ = self.tx.send(ScanEvent::Snapshot {
-            delta,
-            top_files,
-            top_dirs,
-        });
+    pub fn send_snapshot(&self, delta: SnapshotDelta, view: SnapshotView) {
+        let _ = self.tx.send(ScanEvent::Snapshot { delta, view });
     }
 
-    pub fn send_finished(
-        &self,
-        store: dirforge_core::NodeStore,
-        summary: ScanSummary,
-        errors: Vec<dirforge_core::ScanErrorRecord>,
-    ) {
-        let _ = self.tx.send(ScanEvent::Finished {
-            store,
-            summary,
-            errors,
-        });
+    pub fn send_finished(&self, summary: ScanSummary, errors: Vec<dirforge_core::ScanErrorRecord>) {
+        let _ = self.tx.send(ScanEvent::Finished { summary, errors });
     }
 }
