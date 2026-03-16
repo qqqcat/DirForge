@@ -28,3 +28,10 @@
 - 完成平台与可观测升级：跨平台异常映射扩展、能力矩阵与降级策略、统一 `df.*` 指标命名和采集周期。
 - 新增并更新文档：`docs/production-upgrade-2026-03.md` 与 `README.md` 文档导航。
 - 已完成相关测试回归（scan/platform/actions/telemetry/report/testkit）。
+
+## 2026-03-16（扫描并发升级补充）
+- 按计划完成 `dirforge-scan` 多线程目录扫描重构：由单一 walk 迭代改为 worker 池并发读取目录，并与聚合线程通过有界通道解耦。
+- 聚合器新增乱序事件缓冲逻辑（pending-by-parent），保证并发扫描下父子节点到达顺序不确定时仍可正确建树。
+- 补充聚合器单测，覆盖“子节点先到、父节点后到”的关键场景。
+- 完成文档同步：`README.md`、`docs/production-upgrade-2026-03.md`、`docs/dirforge-comprehensive-assessment.md` 已更新扫描架构描述。
+- 完成扫描模块回归测试，确认事件流与取消/错误处理行为保持兼容。
