@@ -187,6 +187,23 @@ pub fn export_diagnostics_bundle(
     fs::write(manifest_path, bytes)
 }
 
+pub fn export_diagnostics_archive(
+    payload: &str,
+    archive_dir: impl AsRef<Path>,
+    prefix: &str,
+    manifest: &DiagnosticsBundleManifest,
+) -> io::Result<std::path::PathBuf> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let bundle_dir = archive_dir.as_ref().join(format!("{prefix}-{ts}"));
+    fs::create_dir_all(&bundle_dir)?;
+    let payload_path = bundle_dir.join(&manifest.diagnostics_payload_file);
+    export_diagnostics_bundle(payload, &payload_path, manifest)?;
+    Ok(bundle_dir)
+}
+
 pub fn export_text_report(store: &NodeStore, output: impl AsRef<Path>) -> io::Result<()> {
     export_summary_txt(store, output)
 }
@@ -267,5 +284,17 @@ mod tests {
         assert!(content.contains("ok"));
         let _ = std::fs::remove_file(&out);
         let _ = std::fs::remove_file(out.with_extension("manifest.json"));
+    }
+
+    #[test]
+    fn export_diagnostics_archive_smoke() {
+        let mut manifest = default_manifest();
+        manifest.diagnostics_payload_file = "diag.json".into();
+        let archive_root = std::env::temp_dir().join("dirforge_diag_archive");
+        let bundle = export_diagnostics_archive("{\"ok\":true}", &archive_root, "df", &manifest)
+            .expect("archive");
+        let payload = bundle.join("diag.json");
+        assert!(payload.exists());
+        let _ = std::fs::remove_dir_all(&archive_root);
     }
 }

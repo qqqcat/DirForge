@@ -2,11 +2,11 @@ use crate::{BatchEntry, ScanEvent, ScanProgress, ScanStage};
 use dirforge_core::{ScanSummary, SnapshotDelta};
 use dirforge_telemetry as telemetry;
 use std::collections::VecDeque;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
 
 pub struct Publisher {
-    tx: Sender<ScanEvent>,
+    tx: SyncSender<ScanEvent>,
     batch_size: usize,
     snapshot_interval: Duration,
     frontier: VecDeque<String>,
@@ -15,7 +15,7 @@ pub struct Publisher {
 }
 
 impl Publisher {
-    pub fn new(tx: Sender<ScanEvent>, batch_size: usize, snapshot_ms: u64) -> Self {
+    pub fn new(tx: SyncSender<ScanEvent>, batch_size: usize, snapshot_ms: u64) -> Self {
         Self {
             tx,
             batch_size: batch_size.max(1),

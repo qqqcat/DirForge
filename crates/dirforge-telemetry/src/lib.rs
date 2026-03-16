@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const COLLECTION_PERIOD_MS: u64 = 500;
 
@@ -20,6 +21,9 @@ static SNAPSHOT_COMMIT_ELAPSED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUP_HASH_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUP_HASH_CALLS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUP_HASH_ELAPSED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static UI_FRAMES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static UI_DROPPED_BATCH_TOTAL: AtomicU64 = AtomicU64::new(0);
+static UI_DROPPED_SNAPSHOT_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 static ACTION_AUDIT_RING: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
@@ -37,7 +41,18 @@ pub struct TelemetrySnapshot {
     pub avg_snapshot_commit_ms: u64,
     pub duplicate_hash_bytes: u64,
     pub avg_duplicate_hash_ms: u64,
+    pub ui_frames: u64,
+    pub ui_dropped_batches: u64,
+    pub ui_dropped_snapshots: u64,
     pub collection_period_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemSnapshot {
+    pub process_id: u32,
+    pub cpu_parallelism: usize,
+    pub memory_rss_bytes: Option<u64>,
+    pub timestamp_unix_ms: u128,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -150,6 +165,23 @@ pub fn record_action_result(success: bool) {
     }
 }
 
+pub fn record_ui_frame() {
+    UI_FRAMES_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_ui_backpressure(dropped_batches: u64, dropped_snapshots: u64) {
+    UI_DROPPED_BATCH_TOTAL.fetch_add(dropped_batches, Ordering::Relaxed);
+    UI_DROPPED_SNAPSHOT_TOTAL.fetch_add(dropped_snapshots, Ordering::Relaxed);
+    if dropped_batches > 0 || dropped_snapshots > 0 {
+        tracing::warn!(
+            event = "ui.backpressure",
+            dropped_batches,
+            dropped_snapshots,
+            "ui queue pressure detected"
+        );
+    }
+}
+
 pub fn record_action_audit(payload: String) {
     let ring = ACTION_AUDIT_RING.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut r) = ring.lock() {
@@ -211,8 +243,41 @@ pub fn snapshot() -> TelemetrySnapshot {
                 DUP_HASH_ELAPSED_MS_TOTAL.load(Ordering::Relaxed) / hash_calls
             }
         },
+        ui_frames: UI_FRAMES_TOTAL.load(Ordering::Relaxed),
+        ui_dropped_batches: UI_DROPPED_BATCH_TOTAL.load(Ordering::Relaxed),
+        ui_dropped_snapshots: UI_DROPPED_SNAPSHOT_TOTAL.load(Ordering::Relaxed),
         collection_period_ms: COLLECTION_PERIOD_MS,
     }
+}
+
+pub fn system_snapshot() -> SystemSnapshot {
+    SystemSnapshot {
+        process_id: std::process::id(),
+        cpu_parallelism: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
+        memory_rss_bytes: read_memory_rss_bytes(),
+        timestamp_unix_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn read_memory_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+    let kb = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse::<u64>().ok())?;
+    Some(kb * 1024)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_memory_rss_bytes() -> Option<u64> {
+    None
 }
 
 #[cfg(test)]
@@ -229,6 +294,8 @@ mod tests {
         record_snapshot_commit(4);
         record_duplicate_hash(1024, 2);
         record_action_audit("{}".into());
+        record_ui_frame();
+        record_ui_backpressure(1, 2);
         let s = snapshot();
         assert!(s.scan_items >= 1);
         assert!(s.snapshots >= 1);
@@ -237,7 +304,17 @@ mod tests {
         assert!(s.action_failed >= 1);
         assert!(s.scan_batches >= 1);
         assert!(s.duplicate_hash_bytes >= 1024);
+        assert!(s.ui_frames >= 1);
+        assert!(s.ui_dropped_batches >= 1);
+        assert!(s.ui_dropped_snapshots >= 2);
         assert_eq!(s.collection_period_ms, COLLECTION_PERIOD_MS);
         assert!(!action_audit_tail(1).is_empty());
+    }
+
+    #[test]
+    fn system_snapshot_smoke() {
+        let s = system_snapshot();
+        assert!(s.process_id > 0);
+        assert!(s.cpu_parallelism >= 1);
     }
 }
