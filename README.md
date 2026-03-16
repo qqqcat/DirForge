@@ -188,6 +188,11 @@ Adapter     → 记录每次外部调用的入参、响应码、耗时
 > 详细规范见 [`docs/engineering-requirements.md`](docs/engineering-requirements.md)
 
 ---
+## DirForge 参考设计文档
+
+- [DirForge 系统设计说明书（SDD）](docs/dirforge-sdd.md)
+- [DirForge UI 高保真组件规格](docs/dirforge-ui-component-spec.md)
+
 ## 目录结构
 
 ```text
