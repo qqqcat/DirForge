@@ -15,6 +15,7 @@ use dirforge_report::{
 use dirforge_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanHandle};
 use dirforge_telemetry as telemetry;
 use eframe::egui;
+use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -862,7 +863,7 @@ impl eframe::App for DirForgeNativeApp {
 }
 
 fn map_nodes_to_rows(store: &NodeStore, ids: &[NodeId]) -> Vec<(String, u64)> {
-    ids.iter()
+    ids.par_iter()
         .filter_map(|id| store.nodes.get(id.0))
         .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
         .collect()

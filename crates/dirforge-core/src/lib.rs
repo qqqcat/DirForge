@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashMap};
 
@@ -125,12 +126,13 @@ impl NodeStore {
     }
 
     pub fn top_n_largest_files(&self, n: usize) -> Vec<&Node> {
-        let mut heap: BinaryHeap<(u64, usize)> = BinaryHeap::new();
-        for node in &self.nodes {
-            if matches!(node.kind, NodeKind::File) {
-                heap.push((node.size_self, node.id.0));
-            }
-        }
+        let mut heap: BinaryHeap<(u64, usize)> = self
+            .nodes
+            .par_iter()
+            .filter(|node| matches!(node.kind, NodeKind::File))
+            .map(|node| (node.size_self, node.id.0))
+            .collect();
+
         (0..n)
             .filter_map(|_| heap.pop())
             .map(|(_, idx)| &self.nodes[idx])
@@ -138,12 +140,13 @@ impl NodeStore {
     }
 
     pub fn largest_dirs(&self, n: usize) -> Vec<&Node> {
-        let mut heap: BinaryHeap<(u64, usize)> = BinaryHeap::new();
-        for node in &self.nodes {
-            if matches!(node.kind, NodeKind::Dir) {
-                heap.push((node.size_subtree, node.id.0));
-            }
-        }
+        let mut heap: BinaryHeap<(u64, usize)> = self
+            .nodes
+            .par_iter()
+            .filter(|node| matches!(node.kind, NodeKind::Dir))
+            .map(|node| (node.size_subtree, node.id.0))
+            .collect();
+
         (0..n)
             .filter_map(|_| heap.pop())
             .map(|(_, idx)| &self.nodes[idx])

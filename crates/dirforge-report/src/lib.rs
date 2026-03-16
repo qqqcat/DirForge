@@ -1,4 +1,5 @@
 use dirforge_core::{ErrorKind, NodeKind, NodeStore, ScanErrorRecord};
+use rayon::prelude::*;
 use serde::Serialize;
 use std::fs;
 use std::io;
@@ -70,7 +71,7 @@ pub fn default_manifest() -> DiagnosticsBundleManifest {
 pub fn build_summary_report(store: &NodeStore) -> SummaryReport {
     let rows = store
         .nodes
-        .iter()
+        .par_iter()
         .map(|n| SummaryRow {
             path: n.path.clone(),
             kind: if matches!(n.kind, NodeKind::Dir) {
@@ -90,17 +91,21 @@ pub fn build_summary_report(store: &NodeStore) -> SummaryReport {
 }
 
 pub fn build_duplicate_report(groups: &[dirforge_dup::DuplicateGroup]) -> DuplicateReport {
-    let mut rows = Vec::new();
-    for (group_idx, group) in groups.iter().enumerate() {
-        for member in &group.members {
-            rows.push(DuplicateRow {
+    let mut rows: Vec<DuplicateRow> = groups
+        .par_iter()
+        .enumerate()
+        .flat_map_iter(|(group_idx, group)| {
+            group.members.iter().map(move |member| DuplicateRow {
                 group: group_idx,
                 size: group.size,
                 path: member.path.clone(),
                 keeper: member.keeper,
-            });
-        }
-    }
+            })
+        })
+        .collect();
+
+    rows.par_sort_unstable_by(|a, b| a.group.cmp(&b.group).then(a.path.cmp(&b.path)));
+
     DuplicateReport {
         groups: groups.len(),
         rows,
@@ -111,7 +116,7 @@ pub fn build_error_report(errors: &[ScanErrorRecord]) -> ErrorReport {
     ErrorReport {
         count: errors.len(),
         rows: errors
-            .iter()
+            .par_iter()
             .map(|e| ErrorRow {
                 path: e.path.clone(),
                 reason: e.reason.clone(),

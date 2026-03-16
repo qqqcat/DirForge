@@ -16,3 +16,4 @@ dirforge-report = { path = "../dirforge-report" }
 dirforge-telemetry = { path = "../dirforge-telemetry" }
 rusqlite.workspace = true
 serde_json.workspace = true
+rayon.workspace = true
