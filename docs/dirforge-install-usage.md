@@ -1,5 +1,11 @@
 # DirForge 安装与使用指南（2026-03）
 
+## 0. 阶段说明
+
+- 当前：Production Readiness（生产就绪冲刺）
+- 目标：Production（生产级）
+
+
 ## 1. 安装
 
 ```bash
