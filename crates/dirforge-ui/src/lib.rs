@@ -7,7 +7,10 @@ use dirforge_core::{
     SnapshotDelta,
 };
 use dirforge_dup::{detect_duplicates, DupConfig, DuplicateGroup};
-use dirforge_report::{export_diagnostics_bundle, export_text_report};
+use dirforge_report::{
+    export_diagnostics_bundle, export_duplicates_csv, export_errors_csv, export_summary_json,
+    export_text_report, DiagnosticsBundleManifest,
+};
 use dirforge_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanHandle};
 use dirforge_telemetry as telemetry;
 use eframe::egui;
@@ -64,6 +67,19 @@ enum ErrorFilter {
     System,
 }
 
+#[derive(Clone)]
+struct TreemapTile {
+    node_id: NodeId,
+    rect: egui::Rect,
+    label: String,
+}
+
+#[derive(Default, Clone)]
+struct TreemapViewportCache {
+    key: Option<(u32, u32, usize)>,
+    tiles: Vec<TreemapTile>,
+}
+
 pub struct DirForgeNativeApp {
     page: Page,
     root_input: String,
@@ -98,6 +114,7 @@ pub struct DirForgeNativeApp {
     diagnostics_json: String,
     selection: SelectionState,
     error_filter: ErrorFilter,
+    treemap_cache: TreemapViewportCache,
 }
 
 impl DirForgeNativeApp {
@@ -145,6 +162,7 @@ impl DirForgeNativeApp {
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
             error_filter: ErrorFilter::All,
+            treemap_cache: TreemapViewportCache::default(),
         };
 
         let _ = app.reload_history();
@@ -189,6 +207,8 @@ impl DirForgeNativeApp {
                 profile: self.scan_profile,
                 batch_size: self.event_batch_size.max(1),
                 snapshot_ms: self.snapshot_interval_ms.max(50),
+                metadata_parallelism: 4,
+                deep_tasks_throttle: 64,
             },
         ));
         self.page = Page::CurrentScan;
@@ -253,6 +273,9 @@ impl DirForgeNativeApp {
             self.deletion_plan = Some(self.build_deletion_plan_from_duplicates());
 
             let _ = export_text_report(&store, "dirforge_report.txt");
+            let _ = export_summary_json(&store, "dirforge_summary.json");
+            let _ = export_duplicates_csv(&self.duplicates, "dirforge_duplicates.csv");
+            let _ = export_errors_csv(&errors, "dirforge_errors.csv");
             let _ = self.cache.save_snapshot(&self.root_input, &store);
             let history_id = self
                 .cache
@@ -395,52 +418,78 @@ impl DirForgeNativeApp {
         });
     }
 
+    fn treemap_tiles_for_viewport(
+        &mut self,
+        store: &NodeStore,
+        viewport: egui::Rect,
+    ) -> Vec<TreemapTile> {
+        let key = (
+            viewport.width() as u32,
+            viewport.height() as u32,
+            store.nodes.len(),
+        );
+        if self.treemap_cache.key == Some(key) {
+            return self.treemap_cache.tiles.clone();
+        }
+
+        let dirs = store.largest_dirs(40);
+        let mut tiles = Vec::new();
+        layout_treemap_recursive(viewport, &dirs, &mut tiles);
+        self.treemap_cache = TreemapViewportCache {
+            key: Some(key),
+            tiles: tiles.clone(),
+        };
+        tiles
+    }
+
     fn ui_treemap(&mut self, ui: &mut egui::Ui) {
         ui.heading("Treemap");
         let desired = egui::vec2(ui.available_width(), ui.available_height() - 20.0);
         let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
-        if let Some(store) = &self.store {
-            let dirs = store.largest_dirs(20);
-            let total = dirs.iter().map(|d| d.size_subtree).sum::<u64>().max(1);
+        if let Some(store) = self.store.clone() {
             let painter = ui.painter_at(rect);
-            let mut x = rect.left();
-            for d in dirs {
-                let w = (d.size_subtree as f32 / total as f32) * rect.width();
-                let r = egui::Rect::from_min_size(
-                    egui::pos2(x, rect.top()),
-                    egui::vec2(w.max(3.0), rect.height()),
-                );
+            let tiles = self.treemap_tiles_for_viewport(&store, rect);
+
+            for tile in &tiles {
                 let resp = ui.interact(
-                    r,
-                    ui.make_persistent_id(("treemap", d.id.0)),
+                    tile.rect,
+                    ui.make_persistent_id(("treemap", tile.node_id.0)),
                     egui::Sense::click(),
                 );
                 let mut color = egui::Color32::from_rgb(
-                    (d.id.0 as u8).wrapping_mul(29),
-                    (d.id.0 as u8).wrapping_mul(53),
+                    (tile.node_id.0 as u8).wrapping_mul(29),
+                    (tile.node_id.0 as u8).wrapping_mul(53),
                     140,
                 );
-                if self.selection.selected_node == Some(d.id) {
+                if self.selection.selected_node == Some(tile.node_id) {
                     color = egui::Color32::LIGHT_GREEN;
                 }
                 if resp.clicked() {
-                    self.selection.selected_node = Some(d.id);
-                    self.selection.selected_path = Some(d.path.clone());
+                    self.selection.selected_node = Some(tile.node_id);
+                    if let Some(node) = store.nodes.get(tile.node_id.0) {
+                        self.selection.selected_path = Some(node.path.clone());
+                    }
                     self.selection.source = Some(SelectionSource::Treemap);
                 }
-                painter.rect_filled(r, 2.0, color);
+                painter.rect_filled(tile.rect, 2.0, color);
                 painter.text(
-                    r.center(),
+                    tile.rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    &d.name,
+                    &tile.label,
                     egui::FontId::default(),
                     egui::Color32::WHITE,
                 );
-                x += w;
             }
+
+            if let Some(pointer_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if let Some(hit) = treemap_hit_test(&tiles, pointer_pos) {
+                    ui.label(format!("hover: {}", hit.label));
+                }
+            }
+
             ui.label(self.t(
-                "提示：点击块后可跨页面复用选中对象",
-                "Tip: click a block to share selection across pages",
+                "提示：真正 treemap 布局 + 命中测试 + viewport cache 已启用",
+                "Treemap now uses layout engine + hit test + viewport cache",
             ));
         } else {
             ui.label(self.t("暂无数据", "No data"));
@@ -661,7 +710,18 @@ impl DirForgeNativeApp {
             .button(self.t("导出诊断包", "Export diagnostics bundle"))
             .clicked()
         {
-            let _ = export_diagnostics_bundle(&self.diagnostics_json, "dirforge_diagnostics.json");
+            let manifest = DiagnosticsBundleManifest {
+                diagnostics_payload_file: "dirforge_diagnostics.json".to_string(),
+                summary_report_file: "dirforge_summary.json".to_string(),
+                duplicate_report_file: "dirforge_duplicates.csv".to_string(),
+                error_report_file: "dirforge_errors.csv".to_string(),
+                format: "json",
+            };
+            let _ = export_diagnostics_bundle(
+                &self.diagnostics_json,
+                "dirforge_diagnostics.json",
+                &manifest,
+            );
         }
         ui.separator();
         ui.code(&self.diagnostics_json);
@@ -743,6 +803,57 @@ fn map_nodes_to_rows(store: &NodeStore, ids: &[NodeId]) -> Vec<(String, u64)> {
         .filter_map(|id| store.nodes.get(id.0))
         .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
         .collect()
+}
+
+fn layout_treemap_recursive(
+    rect: egui::Rect,
+    dirs: &[&dirforge_core::Node],
+    out: &mut Vec<TreemapTile>,
+) {
+    if dirs.is_empty() {
+        return;
+    }
+    if dirs.len() == 1 {
+        out.push(TreemapTile {
+            node_id: dirs[0].id,
+            rect,
+            label: dirs[0].name.clone(),
+        });
+        return;
+    }
+
+    let total: u64 = dirs.iter().map(|d| d.size_subtree.max(1)).sum();
+    let mut acc = 0u64;
+    let mut split_idx = 0usize;
+    for (i, d) in dirs.iter().enumerate() {
+        acc += d.size_subtree.max(1);
+        if acc * 2 >= total {
+            split_idx = i + 1;
+            break;
+        }
+    }
+    let split_idx = split_idx.clamp(1, dirs.len() - 1);
+    let left = &dirs[..split_idx];
+    let right = &dirs[split_idx..];
+    let left_sum: u64 = left.iter().map(|d| d.size_subtree.max(1)).sum();
+
+    if rect.width() >= rect.height() {
+        let w = rect.width() * (left_sum as f32 / total as f32);
+        let a = egui::Rect::from_min_size(rect.min, egui::vec2(w.max(1.0), rect.height()));
+        let b = egui::Rect::from_min_max(egui::pos2(a.right(), rect.top()), rect.max);
+        layout_treemap_recursive(a, left, out);
+        layout_treemap_recursive(b, right, out);
+    } else {
+        let h = rect.height() * (left_sum as f32 / total as f32);
+        let a = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), h.max(1.0)));
+        let b = egui::Rect::from_min_max(egui::pos2(rect.left(), a.bottom()), rect.max);
+        layout_treemap_recursive(a, left, out);
+        layout_treemap_recursive(b, right, out);
+    }
+}
+
+fn treemap_hit_test(tiles: &[TreemapTile], pos: egui::Pos2) -> Option<&TreemapTile> {
+    tiles.iter().find(|t| t.rect.contains(pos))
 }
 
 fn detect_lang() -> Lang {

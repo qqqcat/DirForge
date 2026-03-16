@@ -15,6 +15,40 @@ impl FixtureTree {
         Ok(Self { root })
     }
 
+    pub fn deep_tree(depth: usize) -> std::io::Result<Self> {
+        let root = unique_root("deep");
+        let mut cur = root.clone();
+        fs::create_dir_all(&cur)?;
+        for i in 0..depth.max(1) {
+            cur = cur.join(format!("d{i}"));
+            fs::create_dir_all(&cur)?;
+            fs::write(cur.join("leaf.bin"), vec![i as u8; 8])?;
+        }
+        Ok(Self { root })
+    }
+
+    pub fn wide_tree(width: usize) -> std::io::Result<Self> {
+        let root = unique_root("wide");
+        fs::create_dir_all(&root)?;
+        for i in 0..width.max(1) {
+            fs::write(root.join(format!("f{i}.bin")), vec![(i % 255) as u8; 64])?;
+        }
+        Ok(Self { root })
+    }
+
+    pub fn duplicate_file_set() -> std::io::Result<Self> {
+        let root = unique_root("dups");
+        fs::create_dir_all(root.join("set"))?;
+        let payload_a = vec![9u8; 512 * 1024];
+        let payload_b = vec![3u8; 128 * 1024];
+        fs::write(root.join("set/a-1.bin"), &payload_a)?;
+        fs::write(root.join("set/a-2.bin"), &payload_a)?;
+        fs::write(root.join("set/b-1.bin"), &payload_b)?;
+        fs::write(root.join("set/b-2.bin"), &payload_b)?;
+        fs::write(root.join("set/unique.bin"), vec![1u8; 33])?;
+        Ok(Self { root })
+    }
+
     pub fn with_symlink() -> std::io::Result<Self> {
         let fixture = Self::sample()?;
         #[cfg(unix)]

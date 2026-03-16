@@ -10,6 +10,8 @@ fn scan_fixture_tree() {
             profile: ScanProfile::Ssd,
             batch_size: 4,
             snapshot_ms: 50,
+            metadata_parallelism: 4,
+            deep_tasks_throttle: 64,
         },
     );
 
@@ -50,6 +52,8 @@ fn scan_can_cancel() {
             profile: ScanProfile::Network,
             batch_size: 1,
             snapshot_ms: 50,
+            metadata_parallelism: 4,
+            deep_tasks_throttle: 64,
         },
     );
 
@@ -117,4 +121,26 @@ fn scan_skips_following_symlink_loops() {
     }
 
     assert!(done, "scan with symlink should finish");
+}
+
+#[test]
+fn scan_deep_and_wide_fixtures() {
+    let deep = dirforge_testkit::FixtureTree::deep_tree(30).expect("deep");
+    let wide = dirforge_testkit::FixtureTree::wide_tree(300).expect("wide");
+
+    for fixture in [deep, wide] {
+        let handle = start_scan(fixture.root.clone(), ScanConfig::default());
+        let mut done = false;
+        for _ in 0..2500 {
+            if let Ok(ScanEvent::Finished { summary, .. }) = handle
+                .events
+                .recv_timeout(std::time::Duration::from_millis(10))
+            {
+                assert!(summary.scanned_files > 0);
+                done = true;
+                break;
+            }
+        }
+        assert!(done, "scan should finish for fixture");
+    }
 }

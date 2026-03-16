@@ -71,6 +71,8 @@ pub struct ScanConfig {
     pub profile: ScanProfile,
     pub batch_size: usize,
     pub snapshot_ms: u64,
+    pub metadata_parallelism: usize,
+    pub deep_tasks_throttle: usize,
 }
 
 impl Default for ScanConfig {
@@ -79,6 +81,33 @@ impl Default for ScanConfig {
             profile: ScanProfile::Ssd,
             batch_size: 256,
             snapshot_ms: 75,
+            metadata_parallelism: 4,
+            deep_tasks_throttle: 64,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProfileTuning {
+    pub batch_size: usize,
+    pub snapshot_ms: u64,
+    pub metadata_parallelism: usize,
+    pub deep_tasks_throttle: usize,
+}
+
+impl ScanConfig {
+    pub(crate) fn tuned(self) -> ProfileTuning {
+        let (batch_mult, snapshot_mult, parallel_cap, deep_divisor) = match self.profile {
+            ScanProfile::Ssd => (1.0, 1.0, 16, 1),
+            ScanProfile::Hdd => (0.75, 1.5, 6, 2),
+            ScanProfile::Network => (0.5, 2.0, 3, 3),
+        };
+
+        ProfileTuning {
+            batch_size: ((self.batch_size.max(1) as f32) * batch_mult).round() as usize,
+            snapshot_ms: ((self.snapshot_ms.max(50) as f32) * snapshot_mult).round() as u64,
+            metadata_parallelism: self.metadata_parallelism.clamp(1, parallel_cap),
+            deep_tasks_throttle: (self.deep_tasks_throttle.max(1) / deep_divisor).max(1),
         }
     }
 }
@@ -100,6 +129,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
     let cancel_clone = Arc::clone(&cancel);
 
     std::thread::spawn(move || {
+        let tuning = config.tuned();
         let root_path = root.display().to_string();
         let root_name = root
             .file_name()
@@ -108,10 +138,10 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             .to_string();
 
         let mut aggregator = Aggregator::new(root_name, root_path.clone());
-        let mut publisher = Publisher::new(tx, config.batch_size, config.snapshot_ms);
+        let mut publisher = Publisher::new(tx, tuning.batch_size.max(1), tuning.snapshot_ms);
         publisher.send_planning(root_path, aggregator.summary.clone());
 
-        walker::walk_events(root, config.profile, cancel_clone, |event| match event {
+        walker::walk_events(root, tuning, cancel_clone, |event| match event {
             WalkerEvent::Error(err) => {
                 aggregator.on_error(err);
                 telemetry::record_scan_error();
