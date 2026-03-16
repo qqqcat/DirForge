@@ -17,6 +17,7 @@ fn scan_fixture_tree() {
 
     let mut finished = false;
     let mut saw_batch = false;
+    let mut snapshot_nodes = 0usize;
     for _ in 0..2000 {
         if let Ok(event) = handle
             .events
@@ -28,9 +29,11 @@ fn scan_fixture_tree() {
                         saw_batch = true;
                     }
                 }
-                ScanEvent::Finished { store, summary, .. } => {
+                ScanEvent::Snapshot { view, .. } => {
+                    snapshot_nodes += view.nodes.len();
+                }
+                ScanEvent::Finished { summary, .. } => {
                     assert!(summary.scanned_files >= 2);
-                    assert!(!store.nodes.is_empty());
                     finished = true;
                     break;
                 }
@@ -40,6 +43,10 @@ fn scan_fixture_tree() {
     }
 
     assert!(saw_batch);
+    assert!(
+        snapshot_nodes > 0,
+        "snapshot view should carry incremental nodes"
+    );
     assert!(finished, "scan should finish in time");
 }
 

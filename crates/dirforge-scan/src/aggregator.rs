@@ -1,5 +1,5 @@
 use crate::walker::EntryEvent;
-use crate::BatchEntry;
+use crate::{BatchEntry, SelectionState, SnapshotView};
 use dirforge_core::{NodeId, NodeKind, NodeStore, ScanErrorRecord, ScanSummary, SnapshotDelta};
 use std::collections::HashMap;
 
@@ -87,9 +87,9 @@ impl Aggregator {
         emitted
     }
 
-    pub fn make_snapshot_data(
-        &mut self,
-    ) -> (SnapshotDelta, Vec<(String, u64)>, Vec<(String, u64)>) {
+    pub fn make_snapshot_data(&mut self, include_full_tree: bool) -> (SnapshotDelta, SnapshotView) {
+        self.store.rollup();
+
         let top_files = self
             .store
             .top_n_largest_files(10)
@@ -112,35 +112,44 @@ impl Aggregator {
             .filter_map(|(path, _)| self.store.path_index.get(path).copied())
             .collect();
 
+        let changed_nodes = std::mem::take(&mut self.changed_since_snapshot);
+        let view_nodes = if include_full_tree {
+            self.store.nodes.clone()
+        } else {
+            changed_nodes
+                .iter()
+                .filter_map(|id| self.store.nodes.get(id.0).cloned())
+                .collect()
+        };
+
         let delta = SnapshotDelta {
-            changed_nodes: std::mem::take(&mut self.changed_since_snapshot),
+            changed_nodes,
             summary: self.summary.clone(),
             top_files_delta,
             top_dirs_delta,
         };
-        (delta, top_files, top_dirs)
+        let view = SnapshotView {
+            nodes: view_nodes,
+            top_files,
+            top_dirs,
+            selection: SelectionState {
+                focused: None,
+                expanded: Vec::new(),
+            },
+        };
+        (delta, view)
     }
 
     pub fn finalize(
         mut self,
     ) -> (
-        NodeStore,
         ScanSummary,
         Vec<ScanErrorRecord>,
         SnapshotDelta,
-        Vec<(String, u64)>,
-        Vec<(String, u64)>,
+        SnapshotView,
     ) {
-        self.store.rollup();
-        let (delta, top_files, top_dirs) = self.make_snapshot_data();
-        (
-            self.store,
-            self.summary,
-            self.errors,
-            delta,
-            top_files,
-            top_dirs,
-        )
+        let (delta, view) = self.make_snapshot_data(true);
+        (self.summary, self.errors, delta, view)
     }
 }
 
@@ -159,6 +168,7 @@ mod tests {
             name: "b.txt".to_string(),
             is_dir: false,
             size: 7,
+            metadata_backlog: 0,
         });
         assert!(child.is_empty());
 
@@ -168,6 +178,7 @@ mod tests {
             name: "a".to_string(),
             is_dir: true,
             size: 0,
+            metadata_backlog: 0,
         });
 
         assert_eq!(parent_batch.len(), 2);

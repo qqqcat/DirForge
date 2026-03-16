@@ -16,6 +16,7 @@ pub struct EntryEvent {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    pub metadata_backlog: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +76,7 @@ pub fn walk_events(
     event_tx: SyncSender<WalkerEvent>,
 ) {
     let worker_count = tuning.metadata_parallelism.max(1);
+    let max_backlog = tuning.deep_tasks_throttle.max(worker_count);
     let root_string = root.display().to_string();
     let queue = DirQueue::new(root);
     let pending_dirs = Arc::new(AtomicUsize::new(1));
@@ -91,6 +93,13 @@ pub fn walk_events(
                 while let Some(current_dir) = queue.pop_wait(&pending_dirs, &cancel) {
                     if cancel.load(Ordering::SeqCst) {
                         break;
+                    }
+
+                    while pending_dirs.load(Ordering::SeqCst) > max_backlog {
+                        if cancel.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(1));
                     }
 
                     process_directory(
@@ -180,6 +189,7 @@ fn process_directory(
             name: entry.file_name().to_string_lossy().to_string(),
             is_dir,
             size: if is_dir { 0 } else { metadata.len() },
+            metadata_backlog: pending_dirs.load(Ordering::SeqCst),
         }));
     }
 }

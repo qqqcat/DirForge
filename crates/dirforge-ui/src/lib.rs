@@ -234,6 +234,7 @@ impl DirForgeNativeApp {
         self.live_files.clear();
         self.live_top_files.clear();
         self.live_top_dirs.clear();
+        self.store = None;
         self.last_coalesce_commit = Instant::now();
 
         self.scan_handle = Some(start_scan(
@@ -258,7 +259,8 @@ impl DirForgeNativeApp {
                 match event {
                     ScanEvent::Progress(p) => {
                         self.summary = p.summary;
-                        self.perf.snapshot_queue_depth = p.queue_depth;
+                        self.perf.snapshot_queue_depth =
+                            p.queue_depth.max(p.metadata_backlog).max(p.publisher_lag);
                     }
                     ScanEvent::Batch(batch) => {
                         self.pending_batch_events.push_back(batch);
@@ -268,25 +270,32 @@ impl DirForgeNativeApp {
                             telemetry::record_ui_backpressure(drop_n as u64, 0);
                         }
                     }
-                    ScanEvent::Snapshot {
-                        delta,
-                        top_files,
-                        top_dirs,
-                    } => {
-                        self.live_top_files = top_files;
-                        self.live_top_dirs = top_dirs;
+                    ScanEvent::Snapshot { delta, view } => {
+                        self.live_top_files = view.top_files;
+                        self.live_top_dirs = view.top_dirs;
                         self.pending_snapshots.push_back(delta);
+                        let store = self.store.get_or_insert_with(NodeStore::default);
+                        for node in view.nodes {
+                            if node.id.0 >= store.nodes.len() {
+                                store.nodes.push(node.clone());
+                            } else {
+                                store.nodes[node.id.0] = node.clone();
+                            }
+                            store.path_index.insert(node.path.clone(), node.id);
+                            if let Some(parent) = node.parent {
+                                let children = store.children.entry(parent).or_default();
+                                if !children.contains(&node.id) {
+                                    children.push(node.id);
+                                }
+                            }
+                        }
                         if self.pending_snapshots.len() > MAX_PENDING_SNAPSHOTS {
                             let drop_n = self.pending_snapshots.len() - MAX_PENDING_SNAPSHOTS;
                             self.pending_snapshots.drain(0..drop_n);
                             telemetry::record_ui_backpressure(0, drop_n as u64);
                         }
                     }
-                    ScanEvent::Finished {
-                        store,
-                        summary,
-                        errors,
-                    } => finished = Some((store, summary, errors)),
+                    ScanEvent::Finished { summary, errors } => finished = Some((summary, errors)),
                 }
             }
         }
@@ -312,9 +321,10 @@ impl DirForgeNativeApp {
             self.last_coalesce_commit = Instant::now();
         }
 
-        if let Some((store, summary, errors)) = finished {
+        if let Some((summary, errors)) = finished {
             self.summary = summary.clone();
             self.status = self.t("完成", "Completed").to_string();
+            let store = self.store.clone().unwrap_or_default();
             self.store = Some(store.clone());
             self.duplicates = detect_duplicates(&store, DupConfig::default());
             self.deletion_plan = Some(self.build_deletion_plan_from_duplicates());

@@ -1,5 +1,5 @@
 use dirforge_core::RiskLevel;
-use dirforge_platform::move_to_recycle_bin;
+use dirforge_platform::{move_to_recycle_bin, PlatformErrorKind};
 use dirforge_telemetry as telemetry;
 use serde::Serialize;
 use std::io;
@@ -32,6 +32,9 @@ pub struct ExecutionResultItem {
     pub message: String,
     pub failure_kind: Option<ActionFailureKind>,
     pub retries: u8,
+    pub platform_kind: Option<String>,
+    pub io_kind: Option<String>,
+    pub path_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -40,13 +43,18 @@ pub enum ActionFailureKind {
     PermissionDenied,
     UnsupportedType,
     Protected,
+    NotSupported,
+    PlatformUnavailable,
     Io,
     PrecheckMismatch,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct TargetMeta {
+    exists: bool,
     is_dir: bool,
+    writable: bool,
+    protected_reason: Option<ActionFailureKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,23 +131,43 @@ fn execute_internal(
         let validation =
             validate_deletion_target(Path::new(&file.path), file.risk, mode, simulated);
 
-        let (success, message, failure_kind, retries) = match validation {
-            Err(kind) => (false, format!("validation failed: {kind:?}"), Some(kind), 0),
-            Ok(meta) => {
-                if config.compare_with_dry_run && dry_run_check.is_some() {
-                    (
-                        false,
-                        "validation mismatch with dry-run".to_string(),
-                        Some(ActionFailureKind::PrecheckMismatch),
-                        0,
-                    )
-                } else if simulated {
-                    (true, format!("simulated {:?}", mode), None, 0)
-                } else {
-                    execute_with_retry(&file.path, mode, meta, config.retries)
+        let (success, message, failure_kind, retries, platform_kind, io_kind, path_kind) =
+            match validation {
+                Err(kind) => (
+                    false,
+                    format!("validation failed: {kind:?}"),
+                    Some(kind),
+                    0,
+                    None,
+                    None,
+                    Some(path_kind(&file.path).to_string()),
+                ),
+                Ok(meta) => {
+                    if config.compare_with_dry_run && dry_run_check.is_some() {
+                        (
+                            false,
+                            "validation mismatch with dry-run".to_string(),
+                            Some(ActionFailureKind::PrecheckMismatch),
+                            0,
+                            None,
+                            None,
+                            Some(path_kind(&file.path).to_string()),
+                        )
+                    } else if simulated {
+                        (
+                            true,
+                            format!("simulated {:?}", mode),
+                            None,
+                            0,
+                            None,
+                            None,
+                            Some(path_kind(&file.path).to_string()),
+                        )
+                    } else {
+                        execute_with_retry(&file.path, mode, meta, config.retries)
+                    }
                 }
-            }
-        };
+            };
 
         telemetry::record_action_result(success);
         if success {
@@ -156,6 +184,9 @@ fn execute_internal(
             "failure": failure_kind,
             "retries": retries,
             "message": message,
+            "platform_kind": platform_kind,
+            "io_kind": io_kind,
+            "path_kind": path_kind,
         });
         telemetry::record_action_audit(audit_payload.to_string());
 
@@ -165,6 +196,9 @@ fn execute_internal(
             message,
             failure_kind,
             retries,
+            platform_kind,
+            io_kind,
+            path_kind,
         });
     }
 
@@ -182,8 +216,17 @@ fn execute_with_retry(
     mode: ExecutionMode,
     meta: TargetMeta,
     retries: u8,
-) -> (bool, String, Option<ActionFailureKind>, u8) {
+) -> (
+    bool,
+    String,
+    Option<ActionFailureKind>,
+    u8,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     let mut attempt = 0u8;
+    let _ = (meta.exists, meta.writable, meta.protected_reason);
     loop {
         let result = match (mode, meta.is_dir) {
             (ExecutionMode::Permanent, false) => std::fs::remove_file(path)
@@ -192,22 +235,32 @@ fn execute_with_retry(
             (ExecutionMode::Permanent, true) => std::fs::remove_dir_all(path)
                 .map(|_| ())
                 .map_err(|e| map_io_error(&e)),
-            (ExecutionMode::RecycleBin, _) => {
-                move_to_recycle_bin(path).map_err(|_| ActionFailureKind::Io)
-            }
+            (ExecutionMode::RecycleBin, _) => move_to_recycle_bin(path).map_err(map_platform_error),
         };
 
         match result {
             Ok(_) => {
-                return (true, "execute ok".to_string(), None, attempt);
+                return (
+                    true,
+                    "execute ok".to_string(),
+                    None,
+                    attempt,
+                    None,
+                    None,
+                    None,
+                );
             }
             Err(kind) => {
                 if attempt >= retries || !matches!(kind, ActionFailureKind::Io) {
+                    let (platform_kind, io_kind) = failure_dimensions(kind, mode);
                     return (
                         false,
                         format!("execute failed after {} attempt(s): {kind:?}", attempt + 1),
                         Some(kind),
                         attempt,
+                        platform_kind,
+                        io_kind,
+                        Some(path_kind(path).to_string()),
                     );
                 }
                 attempt += 1;
@@ -223,13 +276,8 @@ fn validate_deletion_target(
     mode: ExecutionMode,
     simulated: bool,
 ) -> Result<TargetMeta, ActionFailureKind> {
-    if mode == ExecutionMode::Permanent && risk == RiskLevel::High {
-        return Err(ActionFailureKind::Protected);
-    }
-
-    if simulated {
-        return Ok(TargetMeta { is_dir: false });
-    }
+    let protected_reason = (mode == ExecutionMode::Permanent && risk == RiskLevel::High)
+        .then_some(ActionFailureKind::Protected);
 
     if !path.exists() {
         return Err(ActionFailureKind::Missing);
@@ -245,8 +293,21 @@ fn validate_deletion_target(
         return Err(ActionFailureKind::PermissionDenied);
     }
 
+    let writable = !meta.permissions().readonly();
+
+    if let Some(kind) = protected_reason {
+        return Err(kind);
+    }
+
+    if simulated {
+        // dry-run keeps real precheck behavior but skips execution upstream
+    }
+
     Ok(TargetMeta {
+        exists: true,
         is_dir: meta.is_dir(),
+        writable,
+        protected_reason,
     })
 }
 
@@ -258,15 +319,64 @@ fn map_io_error(e: &io::Error) -> ActionFailureKind {
     }
 }
 
+fn failure_dimensions(
+    kind: ActionFailureKind,
+    mode: ExecutionMode,
+) -> (Option<String>, Option<String>) {
+    let platform_kind = if mode == ExecutionMode::RecycleBin {
+        Some(format!("{:?}", kind))
+    } else {
+        None
+    };
+
+    let io_kind = if matches!(
+        kind,
+        ActionFailureKind::Io | ActionFailureKind::Missing | ActionFailureKind::PermissionDenied
+    ) {
+        Some(format!("{:?}", kind))
+    } else {
+        None
+    };
+
+    (platform_kind, io_kind)
+}
+
+fn map_platform_error(err: dirforge_platform::PlatformError) -> ActionFailureKind {
+    match err.kind {
+        PlatformErrorKind::Unsupported => ActionFailureKind::NotSupported,
+        PlatformErrorKind::Permission => ActionFailureKind::PermissionDenied,
+        PlatformErrorKind::NotFound | PlatformErrorKind::InvalidInput => ActionFailureKind::Missing,
+        PlatformErrorKind::PathNormalization => ActionFailureKind::UnsupportedType,
+        PlatformErrorKind::Busy | PlatformErrorKind::Timeout | PlatformErrorKind::Io => {
+            ActionFailureKind::Io
+        }
+        PlatformErrorKind::System => ActionFailureKind::PlatformUnavailable,
+    }
+}
+
+fn path_kind(path: &str) -> &'static str {
+    let p = Path::new(path);
+    if p.extension().is_some() {
+        "file_like"
+    } else {
+        "dir_like"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn plan_and_simulated_execution_smoke() {
+        let root = std::env::temp_dir().join(format!("dirforge-actions-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
+        let low = root.join("a.txt").display().to_string();
+        std::fs::write(&low, b"x").expect("seed file");
+
         let plan = build_deletion_plan(vec![
-            ("a".to_string(), 10, RiskLevel::Low),
-            ("b".to_string(), 20, RiskLevel::High),
+            (low, 10, RiskLevel::Low),
+            (root.display().to_string(), 20, RiskLevel::High),
         ]);
         assert_eq!(plan.reclaimable_bytes, 30);
         assert_eq!(plan.high_risk_count, 1);
