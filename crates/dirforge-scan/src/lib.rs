@@ -93,22 +93,20 @@ pub(crate) struct ProfileTuning {
     pub batch_size: usize,
     pub snapshot_ms: u64,
     pub metadata_parallelism: usize,
-    pub deep_tasks_throttle: usize,
 }
 
 impl ScanConfig {
     pub(crate) fn tuned(self) -> ProfileTuning {
-        let (batch_mult, snapshot_mult, parallel_cap, deep_divisor) = match self.profile {
-            ScanProfile::Ssd => (1.0, 1.0, 16, 1),
-            ScanProfile::Hdd => (0.75, 1.5, 6, 2),
-            ScanProfile::Network => (0.5, 2.0, 3, 3),
+        let (batch_mult, snapshot_mult, parallel_cap) = match self.profile {
+            ScanProfile::Ssd => (1.0, 1.0, 16),
+            ScanProfile::Hdd => (0.75, 1.5, 6),
+            ScanProfile::Network => (0.5, 2.0, 3),
         };
 
         ProfileTuning {
             batch_size: ((self.batch_size.max(1) as f32) * batch_mult).round() as usize,
             snapshot_ms: ((self.snapshot_ms.max(50) as f32) * snapshot_mult).round() as u64,
             metadata_parallelism: self.metadata_parallelism.clamp(1, parallel_cap),
-            deep_tasks_throttle: (self.deep_tasks_throttle.max(1) / deep_divisor).max(1),
         }
     }
 }
@@ -145,9 +143,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         let (walker_tx, walker_rx) = mpsc::sync_channel(tuning.batch_size.max(64) * 4);
         let walker_cancel = Arc::clone(&cancel_clone);
         let walker_thread = std::thread::spawn(move || {
-            walker::walk_events(root, tuning, walker_cancel, |event| {
-                let _ = walker_tx.send(event);
-            });
+            walker::walk_events(root, tuning, walker_cancel, walker_tx);
         });
 
         while let Ok(event) = walker_rx.recv() {
@@ -157,9 +153,11 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                     telemetry::record_scan_error();
                 }
                 WalkerEvent::Entry(entry) => {
-                    let entry = aggregator.on_entry(entry);
-                    publisher.on_batch_entry(entry, &aggregator.summary);
-                    telemetry::record_scan_item();
+                    let entries = aggregator.on_entry(entry);
+                    for entry in entries {
+                        publisher.on_batch_entry(entry, &aggregator.summary);
+                        telemetry::record_scan_item();
+                    }
 
                     if publisher.should_emit_snapshot() {
                         let snapshot_start = Instant::now();
