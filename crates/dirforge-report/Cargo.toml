@@ -8,3 +8,4 @@ dirforge-core = { path = "../dirforge-core" }
 dirforge-dup = { path = "../dirforge-dup" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+rayon.workspace = true

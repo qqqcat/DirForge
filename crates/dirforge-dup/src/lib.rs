@@ -1,4 +1,5 @@
 use dirforge_core::{NodeKind, NodeStore, RiskLevel};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -42,65 +43,80 @@ pub fn detect_duplicates(store: &NodeStore, cfg: DupConfig) -> Vec<DuplicateGrou
         }
     }
 
-    let mut out = Vec::new();
+    by_size
+        .into_par_iter()
+        .filter_map(|(size, paths)| (paths.len() >= 2).then_some((size, paths)))
+        .flat_map_iter(|(size, paths)| {
+            // phase 2: partial fingerprint regroup
+            let partial_entries: Vec<([u8; 32], String)> = paths
+                .into_par_iter()
+                .map(|p| {
+                    let sig = partial_fingerprint(Path::new(&p), cfg.partial_bytes)
+                        .unwrap_or_else(|_| hash_bytes(p.as_bytes()));
+                    (sig, p)
+                })
+                .collect();
 
-    for (size, paths) in by_size {
-        if paths.len() < 2 {
-            continue;
-        }
-
-        // phase 2: partial fingerprint regroup
-        let mut partial_bucket: HashMap<[u8; 32], Vec<String>> = HashMap::new();
-        for p in paths {
-            let sig = partial_fingerprint(Path::new(&p), cfg.partial_bytes)
-                .unwrap_or_else(|_| hash_bytes(p.as_bytes()));
-            partial_bucket.entry(sig).or_default().push(p);
-        }
-
-        for (_, partial_paths) in partial_bucket {
-            if partial_paths.len() < 2 {
-                continue;
+            let mut partial_bucket: HashMap<[u8; 32], Vec<String>> = HashMap::new();
+            for (sig, p) in partial_entries {
+                partial_bucket.entry(sig).or_default().push(p);
             }
 
-            // phase 3: full hash for stronger confirmation
-            let mut full_bucket: HashMap<[u8; 32], Vec<String>> = HashMap::new();
-            for p in partial_paths {
-                let hash = if size >= cfg.full_hash_min_size {
-                    full_hash(Path::new(&p)).unwrap_or_else(|_| hash_bytes(p.as_bytes()))
-                } else {
-                    full_hash(Path::new(&p)).unwrap_or_else(|_| hash_bytes(p.as_bytes()))
-                };
-                full_bucket.entry(hash).or_default().push(p);
-            }
+            let mut groups = Vec::new();
 
-            for (_, final_paths) in full_bucket {
-                if final_paths.len() < 2 {
+            for (_, partial_paths) in partial_bucket {
+                if partial_paths.len() < 2 {
                     continue;
                 }
-                let keeper_idx = recommend_keeper(&final_paths);
-                let members: Vec<DuplicateMember> = final_paths
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| DuplicateMember {
-                        path: p.clone(),
-                        size,
-                        keeper: i == keeper_idx,
+
+                // phase 3: full hash for stronger confirmation
+                let full_entries: Vec<([u8; 32], String)> = partial_paths
+                    .into_par_iter()
+                    .map(|p| {
+                        let hash = if size < cfg.full_hash_min_size {
+                            partial_fingerprint(Path::new(&p), cfg.partial_bytes)
+                                .unwrap_or_else(|_| hash_bytes(p.as_bytes()))
+                        } else {
+                            full_hash(Path::new(&p)).unwrap_or_else(|_| hash_bytes(p.as_bytes()))
+                        };
+                        (hash, p)
                     })
                     .collect();
-                let reclaimable_bytes =
-                    size.saturating_mul((members.len() as u64).saturating_sub(1));
-                let risk = risk_of_group(&members);
-                out.push(DuplicateGroup {
-                    size,
-                    members,
-                    reclaimable_bytes,
-                    risk,
-                });
-            }
-        }
-    }
 
-    out
+                let mut full_bucket: HashMap<[u8; 32], Vec<String>> = HashMap::new();
+                for (hash, p) in full_entries {
+                    full_bucket.entry(hash).or_default().push(p);
+                }
+
+                for (_, final_paths) in full_bucket {
+                    if final_paths.len() < 2 {
+                        continue;
+                    }
+                    let keeper_idx = recommend_keeper(&final_paths);
+                    let members: Vec<DuplicateMember> = final_paths
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| DuplicateMember {
+                            path: p.clone(),
+                            size,
+                            keeper: i == keeper_idx,
+                        })
+                        .collect();
+                    let reclaimable_bytes =
+                        size.saturating_mul((members.len() as u64).saturating_sub(1));
+                    let risk = risk_of_group(&members);
+                    groups.push(DuplicateGroup {
+                        size,
+                        members,
+                        reclaimable_bytes,
+                        risk,
+                    });
+                }
+            }
+
+            groups
+        })
+        .collect()
 }
 
 fn partial_fingerprint(path: &Path, n: usize) -> io::Result<[u8; 32]> {
