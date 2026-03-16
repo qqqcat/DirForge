@@ -1,0 +1,4 @@
+[package]
+name = "dirforge-telemetry"
+version.workspace = true
+edition.workspace = true
