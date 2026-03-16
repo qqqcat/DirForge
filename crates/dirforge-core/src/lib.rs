@@ -94,6 +94,19 @@ impl NodeStore {
             .map(|(_, idx)| &self.nodes[idx])
             .collect()
     }
+
+    pub fn largest_dirs(&self, n: usize) -> Vec<&Node> {
+        let mut heap: BinaryHeap<(u64, usize)> = BinaryHeap::new();
+        for node in &self.nodes {
+            if matches!(node.kind, NodeKind::Dir) {
+                heap.push((node.size_subtree, node.id.0));
+            }
+        }
+        (0..n)
+            .filter_map(|_| heap.pop())
+            .map(|(_, idx)| &self.nodes[idx])
+            .collect()
+    }
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +121,27 @@ pub struct ScanSummary {
 pub struct ScanErrorRecord {
     pub path: String,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScanProfile {
+    Ssd,
+    Hdd,
+    Network,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotDelta {
+    pub changed_nodes: usize,
+    pub scanned_files: u64,
+    pub scanned_dirs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
 }
 
 #[cfg(test)]

@@ -2,6 +2,12 @@
 
 ## 1. 设计基线
 
+## 当前实现映射
+
+- 已提供页面：Dashboard / Current Scan / Treemap / History / Errors / Operations / Diagnostics / Settings。
+- 已实现大列表虚拟化（show_rows）与基础帧预算指标展示。
+- 已实现多语言默认策略（系统语言）与设置持久化。
+
 产品定位：专业、克制、高信息密度、可长时使用。
 
 默认策略：

@@ -1,13 +1,33 @@
+use dirforge_core::RiskLevel;
+
 #[derive(Debug, Clone)]
-pub struct DeletionPlan {
-    pub files: Vec<String>,
-    pub reclaimable_bytes: u64,
+pub struct DeletionItem {
+    pub path: String,
+    pub size: u64,
+    pub risk: RiskLevel,
 }
 
-pub fn build_deletion_plan(files: Vec<(String, u64)>) -> DeletionPlan {
-    let reclaimable_bytes = files.iter().map(|(_, s)| *s).sum();
+#[derive(Debug, Clone)]
+pub struct DeletionPlan {
+    pub files: Vec<DeletionItem>,
+    pub reclaimable_bytes: u64,
+    pub high_risk_count: usize,
+}
+
+pub fn build_deletion_plan(files: Vec<(String, u64, RiskLevel)>) -> DeletionPlan {
+    let mut high = 0usize;
+    let mut reclaimable_bytes = 0u64;
+    let mut out = Vec::new();
+    for (path, size, risk) in files {
+        reclaimable_bytes = reclaimable_bytes.saturating_add(size);
+        if risk == RiskLevel::High {
+            high += 1;
+        }
+        out.push(DeletionItem { path, size, risk });
+    }
     DeletionPlan {
-        files: files.into_iter().map(|(p, _)| p).collect(),
+        files: out,
         reclaimable_bytes,
+        high_risk_count: high,
     }
 }

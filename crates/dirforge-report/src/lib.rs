@@ -15,3 +15,7 @@ pub fn export_text_report(store: &NodeStore, output: impl AsRef<Path>) -> io::Re
     }
     fs::write(output, out)
 }
+
+pub fn export_diagnostics_bundle(payload: &str, output: impl AsRef<Path>) -> io::Result<()> {
+    fs::write(output, payload)
+}

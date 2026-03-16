@@ -2,6 +2,13 @@
 
 ## 1. 目标与范围
 
+## 实现进度（M1~M4）
+
+- 已实现批量扫描事件、快照合并、扫描 profile。
+- 已实现去重 partial/full hash pipeline、keeper 推荐与风险标签。
+- 已实现 Treemap 视图、虚拟化列表、帧预算与队列指标。
+- 已实现 SQLite schema migration、操作中心、诊断页与诊断包导出。
+
 DirForge 是一款 **Windows 优先** 的生产级 Rust 桌面磁盘分析器，目标是支持百万级节点扫描、扫描过程持续可交互、支持增量刷新、重复文件检测与安全清理。
 
 技术基线：

@@ -195,6 +195,13 @@ Adapter     → 记录每次外部调用的入参、响应码、耗时
 - [DirForge 系统设计说明书（SDD）](docs/dirforge-sdd.md)
 - [DirForge UI 高保真组件规格](docs/dirforge-ui-component-spec.md)
 
+## DirForge 生产里程碑状态
+
+- ✅ M1 性能与数据管线：批量扫描事件、snapshot coalescing、scan profile。
+- ✅ M2 去重系统升级：partial/full hash pipeline、keeper 推荐、风险标签。
+- ✅ M3 UI 生产化：treemap、虚拟化列表、帧预算/队列监控。
+- ✅ M4 发布质量收口：schema migration、操作中心、诊断包导出。
+
 ## DirForge 当前状态说明
 
 - 当前仓库已包含可运行的原生 GUI + SQLite 缓存实现，但整体定位仍为预生产原型。

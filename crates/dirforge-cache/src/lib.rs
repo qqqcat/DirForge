@@ -3,6 +3,8 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const SCHEMA_VERSION: i64 = 2;
+
 #[derive(Debug, Clone)]
 pub struct HistoryRecord {
     pub id: i64,
@@ -22,41 +24,83 @@ impl CacheStore {
     pub fn new(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
         let store = Self { conn };
-        store.init_schema()?;
+        store.migrate()?;
         Ok(store)
     }
 
-    fn init_schema(&self) -> rusqlite::Result<()> {
+    fn migrate(&self) -> rusqlite::Result<()> {
         self.conn.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS snapshots (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              root TEXT NOT NULL,
-              created_at INTEGER NOT NULL,
-              payload_json TEXT NOT NULL
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS schema_meta (
+              id INTEGER PRIMARY KEY CHECK(id = 1),
+              version INTEGER NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS scan_history (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              root TEXT NOT NULL,
-              scanned_files INTEGER NOT NULL,
-              scanned_dirs INTEGER NOT NULL,
-              bytes_observed INTEGER NOT NULL,
-              error_count INTEGER NOT NULL,
-              created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS scan_errors (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              history_id INTEGER NOT NULL,
-              path TEXT NOT NULL,
-              reason TEXT NOT NULL,
-              FOREIGN KEY(history_id) REFERENCES scan_history(id)
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-              key TEXT PRIMARY KEY,
-              value TEXT NOT NULL
-            );
+            INSERT INTO schema_meta(id, version)
+            VALUES(1, 1)
+            ON CONFLICT(id) DO NOTHING;
             ",
-        )
+        )?;
+
+        let v: i64 =
+            self.conn
+                .query_row("SELECT version FROM schema_meta WHERE id = 1", [], |r| {
+                    r.get(0)
+                })?;
+
+        if v < 2 {
+            self.conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS snapshots (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  root TEXT NOT NULL,
+                  created_at INTEGER NOT NULL,
+                  payload_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS scan_history (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  root TEXT NOT NULL,
+                  scanned_files INTEGER NOT NULL,
+                  scanned_dirs INTEGER NOT NULL,
+                  bytes_observed INTEGER NOT NULL,
+                  error_count INTEGER NOT NULL,
+                  created_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS scan_errors (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  history_id INTEGER NOT NULL,
+                  path TEXT NOT NULL,
+                  reason TEXT NOT NULL,
+                  FOREIGN KEY(history_id) REFERENCES scan_history(id)
+                );
+                CREATE TABLE IF NOT EXISTS settings (
+                  key TEXT PRIMARY KEY,
+                  value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS operation_audit (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  kind TEXT NOT NULL,
+                  payload TEXT NOT NULL,
+                  created_at INTEGER NOT NULL
+                );
+                UPDATE schema_meta SET version = 2 WHERE id = 1;
+                ",
+            )?;
+        }
+
+        self.conn.execute(
+            "UPDATE schema_meta SET version = ? WHERE id = 1",
+            params![SCHEMA_VERSION],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn schema_version(&self) -> rusqlite::Result<i64> {
+        self.conn
+            .query_row("SELECT version FROM schema_meta WHERE id = 1", [], |r| {
+                r.get(0)
+            })
     }
 
     pub fn save_snapshot(&self, root: &str, store: &NodeStore) -> rusqlite::Result<()> {
@@ -176,6 +220,32 @@ impl CacheStore {
             Ok(None)
         }
     }
+
+    pub fn add_audit_event(&self, kind: &str, payload: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO operation_audit(kind, payload, created_at) VALUES(?, ?, ?)",
+            params![kind, payload, now_ts()],
+        )?;
+        Ok(())
+    }
+
+    pub fn export_diagnostics_json(&self) -> rusqlite::Result<String> {
+        let schema = self.schema_version()?;
+        let history_count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM scan_history", [], |r| r.get(0))?;
+        let error_count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM scan_errors", [], |r| r.get(0))?;
+        let settings_count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))?;
+
+        Ok(format!(
+            r#"{{"schema_version":{},"history_count":{},"error_count":{},"settings_count":{}}}"#,
+            schema, history_count, error_count, settings_count
+        ))
+    }
 }
 
 fn now_ts() -> i64 {
@@ -183,4 +253,25 @@ fn now_ts() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_migrates_and_writes() {
+        let path =
+            std::env::temp_dir().join(format!("dirforge_cache_test_{}.db", std::process::id()));
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+        let cache = CacheStore::new(&path).expect("cache");
+        assert!(cache.schema_version().expect("schema") >= 2);
+
+        cache.set_setting("k", "v").expect("set");
+        assert_eq!(cache.get_setting("k").expect("get"), Some("v".to_string()));
+
+        let _ = std::fs::remove_file(path);
+    }
 }
