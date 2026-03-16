@@ -2,22 +2,26 @@
 
 ## 1. 目标与范围
 
-## 实现进度（M1~M4）
+DirForge 是一款 **本地磁盘分析器工程化原型**，当前目标是稳定“扫描 -> 聚合 -> 展示 -> 去重候选 -> 操作计划”的主链路，并在此基础上逐步补齐平台能力、可观测性与执行安全性。
 
-- 已实现批量扫描事件、快照合并、扫描 profile。
-- 已实现去重 partial/full hash pipeline、keeper 推荐与风险标签。
-- 已实现 Treemap 视图、虚拟化列表、帧预算与队列指标。
-- 已实现 SQLite schema migration、操作中心、诊断页与诊断包导出。
+## 当前实现状态（与代码对齐）
 
-DirForge 是一款 **Windows 优先** 的生产级 Rust 桌面磁盘分析器，目标是支持百万级节点扫描、扫描过程持续可交互、支持增量刷新、重复文件检测与安全清理。
+- 已实现：批量扫描事件、周期性 snapshot delta 事件、扫描 profile、取消扫描。
+- 已实现：`NodeStore` 扁平结构、`rollup` 聚合、Top-N 查询。
+- 已实现：`eframe/egui` UI 壳、历史快照缓存、基础 treemap 与列表展示。
+- 已实现：去重候选、删除计划与模拟执行、文本报告与诊断导出。
+- 进行中：平台深度能力（回收站、卷信息、Explorer 选择）、可观测指标、扫描性能优化。
 
-技术基线：
+> 当前成熟度：pre-alpha（可运行原型，非生产级）。
+
+技术基线（当前依赖）：
 
 - Rust
 - `egui/eframe`（原生桌面 UI）
-- `windows-rs`（Windows API 集成）
-- `rayon`（CPU 并行）
 - `walkdir`（目录遍历）
+- `rusqlite`（缓存）
+- `blake3`（哈希）
+- `tracing`（可观测初始化）
 
 ## 2. 总体架构
 
@@ -33,26 +37,22 @@ Desktop UI (egui/eframe)
 
 ### 模块职责
 
-- **Scan Engine**：只做遍历与轻元数据采集。
-- **Aggregate Engine**：目录回卷、扩展名统计、Top-N。
-- **Dup Engine**：独立去重流水线，不能阻塞基础扫描。
-- **Cache Engine**：快照持久化、增量重扫、失效策略。
-- **UI**：仅消费快照和增量事件，不直接操作扫描内部状态。
+- **Scan Engine**：遍历与轻元数据采集，产出 batch/progress/snapshot delta。
+- **Aggregate Engine**：目录回卷、Top-N 聚合。
+- **Dup Engine**：独立去重流水线，避免阻塞基础扫描。
+- **Cache Engine**：快照持久化、历史与设置管理。
+- **UI**：消费事件流并进行局部重建。
 
-## 3. 线程模型
+## 3. 当前线程模型（现状）
 
-建议分四类执行域：
+当前实现以单后台扫描线程 + UI 主线程为主，具备基础可用性，但尚未落地 IO/CPU 分池。
+
+后续目标：
 
 1. **UI Main Thread**：输入/渲染/命令分发。
 2. **IO Scan Pool（有界）**：目录枚举、metadata 读取。
-3. **CPU Pool（Rayon）**：聚合、排序、哈希、布局。
-4. **Background Service**：缓存落盘、日志批处理、图标预取。
-
-并发原则：
-
-- IO 与 CPU 分池，避免互相污染。
-- 线程间通过消息传递，不共享巨型可变状态。
-- UI 不直接读取扫描期的大锁结构。
+3. **CPU Pool**：聚合、排序、哈希。
+4. **Background Service**：缓存落盘、日志与诊断打包。
 
 ## 4. 扫描流水线
 
@@ -62,36 +62,23 @@ Stage 1 Directory Enumeration
 Stage 2 Metadata Acquisition
 Stage 3 Local Aggregation
 Stage 4 Tree Rollup
-Stage 5 Snapshot Publish
-Stage 6 Deferred Deep Tasks
+Stage 5 Snapshot Delta Publish
+Stage 6 Finished Publish
 ```
 
 设计要点：
 
 - 事件批量化发出，避免逐文件刷 UI。
-- 元数据阶段只采“轻元数据”，不读文件内容。
-- 回卷以目录完成为单位批处理，不做每文件回根锁更新。
-- 快照发布做节流（如 50~100ms coalescing）。
-- 重哈希/缩略图/深探测放入延迟任务。
+- 快照事件只发送 delta，避免频繁克隆整个 `NodeStore`。
+- UI 侧按 batch 做局部重建；最终结果由 Finished 事件携带完整 store。
 
 ## 5. 缓存架构
 
-三层缓存：
+三层缓存规划：
 
-- **L1 内存热缓存**：可见树节点、可见 treemap tile。
-- **L2 会话缓存**：当前扫描索引、扩展名分片统计。
-- **L3 持久化缓存**：卷快照、文件身份、历史清单。
-
-建议持久化 FileIdentity（非仅 path）：
-
-- `volume_id`
-- `file_id`
-- `path_hash`
-- `size`
-- `mtime`
-- `attrs`
-
-失效策略：子树失效、文件失效、卷级失效、schema 失效分层处理。
+- **L1 内存热缓存**：可见列表/treemap 数据。
+- **L2 会话缓存**：当前扫描状态、增量事件缓存。
+- **L3 持久化缓存**：SQLite 历史快照与设置。
 
 ## 6. 重复文件检测架构
 
@@ -102,67 +89,43 @@ Stage 6 Deferred Deep Tasks
 3. strong hash 最终确认
 4. 结果整形（keeper 推荐、风险级别、可回收空间）
 
-约束：
-
-- 禁止全盘直接全量哈希。
-- 去重队列独立，支持吞吐限流与前台交互降权。
-- 输出面向 UX：重复组、风险、推荐保留项、删除模拟收益。
-
 ## 7. UI 刷新策略
 
-UI 目标：扫描期间连续可视、连续可操作。
-
-关键策略：
-
 - 快照合并（coalescing）
-- 局部失效（tree/table/treemap/details 独立）
+- 局部失效（扫描列表优先）
 - 大列表虚拟化
-- treemap 脏子树增量更新
 - 交互优先（拖拽/滚动时降低后台合并频率）
-
-建议帧预算：
-
-- idle：目标 60 FPS
-- scanning：15~30 FPS 视觉刷新，优先输入延迟
-- 重计算分帧切块
 
 ## 8. 关键数据结构
 
-推荐扁平 NodeStore：
+当前使用扁平 `NodeStore`：
 
 ```text
-NodeId -> Node { parent, children-range, kind, size_self, size_subtree, ... }
+NodeId -> Node { parent, kind, size_self, size_subtree, ... }
 Vec<Node>
-HashMap<PathKey, NodeId>
-String Interner
+HashMap<Path, NodeId>
 ```
 
-优势：
+## 9. 平台能力现状与计划
 
-- 更好的 cache locality
-- 并行聚合与排序更友好
-- 序列化/快照持久化简单
+现状：
 
-## 9. Windows 专项设计
+- Explorer 打开/选择
+- 回收站删除入口
+- reparse point/symlink 检测
+- 卷信息查询
+- 统一平台错误模型
 
-- reparse point / junction / symlink 策略化处理，避免循环与重复计数。
-- 权限失败纳入错误中心，不因单点失败中断全局。
-- 使用 `windows-rs` 获取卷属性、稳定文件身份、回收站能力。
+计划：
 
-## 基准与阈值（新增）
-
-- 已引入 benchmark 阈值测试（scan/dup）作为性能回归门禁。
-- 建议将阈值按数据规模分层维护（small/medium/large）。
-
-## 错误分类与执行链路（新增）
-
-- 错误分类采用 User/Transient/System。
-- 操作中心支持回收站/永久删除模拟与批执行结果追踪。
+- Windows 权限与系统目录保护策略
+- 稳定文件身份字段
+- 更完整的失败恢复与审计记录
 
 ## 10. 里程碑建议
 
-1. 高性能扫描基础（IO 池 + NodeStore + 增量快照）
-2. 生产级 UI（虚拟化 + treemap 增量）
-3. 持久缓存（增量重扫 + 崩溃恢复）
-4. 重复文件系统（四阶段 pipeline）
-5. Windows 深度集成（权限/卷/Shell）
+1. 扫描性能与数据流：delta 事件、局部重建、压力基准。
+2. 平台能力：回收站、卷信息、错误分类一致性。
+3. 观测与诊断：吞吐/错误/操作审计指标。
+4. 执行安全：预校验、批执行、部分失败策略。
+5. 回归质量：边界 fixture、取消/错误/symlink 测试。
