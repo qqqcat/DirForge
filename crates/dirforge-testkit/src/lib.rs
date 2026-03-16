@@ -19,7 +19,8 @@ impl FixtureTree {
         let fixture = Self::sample()?;
         #[cfg(unix)]
         {
-            let _ = std::os::unix::fs::symlink(fixture.root.join("a.bin"), fixture.root.join("a.link"));
+            let _ =
+                std::os::unix::fs::symlink(fixture.root.join("a.bin"), fixture.root.join("a.link"));
         }
         #[cfg(windows)]
         {

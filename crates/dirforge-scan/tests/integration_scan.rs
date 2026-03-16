@@ -75,7 +75,9 @@ fn scan_reports_errors_on_restricted_dir() {
     let mut got_errors = false;
 
     for _ in 0..2000 {
-        if let Ok(ScanEvent::Finished { summary, errors, .. }) = handle
+        if let Ok(ScanEvent::Finished {
+            summary, errors, ..
+        }) = handle
             .events
             .recv_timeout(std::time::Duration::from_millis(10))
         {
@@ -89,7 +91,10 @@ fn scan_reports_errors_on_restricted_dir() {
         if nix::unistd::Uid::effective().is_root() {
             assert!(true, "root may bypass restricted permissions");
         } else {
-            assert!(got_errors, "expected permission errors on restricted fixture");
+            assert!(
+                got_errors,
+                "expected permission errors on restricted fixture"
+            );
         }
     }
 }

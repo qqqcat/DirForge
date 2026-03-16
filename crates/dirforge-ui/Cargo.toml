@@ -13,5 +13,6 @@ dirforge-cache = { path = "../dirforge-cache" }
 dirforge-actions = { path = "../dirforge-actions" }
 dirforge-platform = { path = "../dirforge-platform" }
 dirforge-report = { path = "../dirforge-report" }
+dirforge-telemetry = { path = "../dirforge-telemetry" }
 rusqlite.workspace = true
 serde_json.workspace = true
