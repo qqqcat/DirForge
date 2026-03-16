@@ -190,9 +190,15 @@ Adapter     → 记录每次外部调用的入参、响应码、耗时
 ---
 ## DirForge 参考设计文档
 
+- [DirForge 项目综合评估报告](docs/dirforge-comprehensive-assessment.md)
 - [DirForge 安装与使用文档](docs/dirforge-install-usage.md)
 - [DirForge 系统设计说明书（SDD）](docs/dirforge-sdd.md)
 - [DirForge UI 高保真组件规格](docs/dirforge-ui-component-spec.md)
+
+## DirForge 当前状态说明
+
+- 当前仓库已包含可运行的原生 GUI + SQLite 缓存实现，但整体定位仍为预生产原型。
+- 详细评估、风险矩阵和里程碑建议见《DirForge 项目综合评估报告》。
 
 ## 目录结构
 
