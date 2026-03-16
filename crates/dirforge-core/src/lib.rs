@@ -4,6 +4,9 @@ use std::collections::{BinaryHeap, HashMap};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub usize);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StringId(pub usize);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeKind {
     File,
@@ -16,11 +19,14 @@ pub struct Node {
     pub parent: Option<NodeId>,
     pub name: String,
     pub path: String,
+    pub name_id: StringId,
+    pub path_id: StringId,
     pub kind: NodeKind,
     pub size_self: u64,
     pub size_subtree: u64,
     pub file_count: u64,
     pub dir_count: u64,
+    pub dirty: bool,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -28,9 +34,38 @@ pub struct NodeStore {
     pub nodes: Vec<Node>,
     pub children: HashMap<NodeId, Vec<NodeId>>,
     pub path_index: HashMap<String, NodeId>,
+    pub string_pool: Vec<String>,
+    pub string_index: HashMap<String, StringId>,
 }
 
 impl NodeStore {
+    fn intern(&mut self, value: &str) -> StringId {
+        if let Some(id) = self.string_index.get(value) {
+            return *id;
+        }
+        let id = StringId(self.string_pool.len());
+        let owned = value.to_string();
+        self.string_pool.push(owned.clone());
+        self.string_index.insert(owned, id);
+        id
+    }
+
+    pub fn resolve_string(&self, id: StringId) -> Option<&str> {
+        self.string_pool.get(id.0).map(|s| s.as_str())
+    }
+
+    pub fn mark_dirty(&mut self, id: NodeId) {
+        if let Some(node) = self.nodes.get_mut(id.0) {
+            node.dirty = true;
+        }
+    }
+
+    pub fn clear_dirty(&mut self) {
+        for node in &mut self.nodes {
+            node.dirty = false;
+        }
+    }
+
     pub fn add_node(
         &mut self,
         parent: Option<NodeId>,
@@ -43,21 +78,27 @@ impl NodeStore {
             return *id;
         }
         let id = NodeId(self.nodes.len());
+        let name_id = self.intern(&name);
+        let path_id = self.intern(&path);
         let node = Node {
             id,
             parent,
             name,
             path: path.clone(),
+            name_id,
+            path_id,
             kind,
             size_self,
             size_subtree: size_self,
             file_count: u64::from(matches!(kind, NodeKind::File)),
             dir_count: u64::from(matches!(kind, NodeKind::Dir)),
+            dirty: true,
         };
         self.nodes.push(node);
         self.path_index.insert(path, id);
         if let Some(pid) = parent {
             self.children.entry(pid).or_default().push(id);
+            self.mark_dirty(pid);
         }
         id
     }
@@ -80,6 +121,7 @@ impl NodeStore {
                 self.nodes[idx].dir_count = dirs;
             }
         }
+        self.clear_dirty();
     }
 
     pub fn top_n_largest_files(&self, n: usize) -> Vec<&Node> {
@@ -166,6 +208,7 @@ mod tests {
         s.rollup();
         assert_eq!(s.nodes[root.0].size_subtree, 10);
         assert_eq!(s.nodes[root.0].file_count, 2);
+        assert!(!s.nodes[root.0].dirty);
     }
 
     #[test]
@@ -188,5 +231,15 @@ mod tests {
         let top = s.top_n_largest_files(2);
         assert_eq!(top.len(), 2);
         assert!(top[0].size_self >= top[1].size_self);
+    }
+
+    #[test]
+    fn string_pool_reuses_values() {
+        let mut s = NodeStore::default();
+        s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
+        s.add_node(None, "root".into(), "/root-2".into(), NodeKind::Dir, 0);
+        assert!(s.string_pool.len() >= 3);
+        let name_id = s.nodes[0].name_id;
+        assert_eq!(s.resolve_string(name_id), Some("root"));
     }
 }

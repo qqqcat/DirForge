@@ -20,7 +20,6 @@ pub fn export_diagnostics_bundle(payload: &str, output: impl AsRef<Path>) -> io:
     fs::write(output, payload)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,7 +29,13 @@ mod tests {
     fn export_report_smoke() {
         let mut store = NodeStore::default();
         let root = store.add_node(None, "root".into(), "/tmp/root".into(), NodeKind::Dir, 0);
-        store.add_node(Some(root), "a".into(), "/tmp/root/a".into(), NodeKind::File, 42);
+        store.add_node(
+            Some(root),
+            "a".into(),
+            "/tmp/root/a".into(),
+            NodeKind::File,
+            42,
+        );
         store.rollup();
 
         let out = std::env::temp_dir().join("dirforge_report_test.txt");

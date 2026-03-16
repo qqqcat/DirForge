@@ -9,6 +9,7 @@ use dirforge_core::{
 use dirforge_dup::{detect_duplicates, DupConfig, DuplicateGroup};
 use dirforge_report::{export_diagnostics_bundle, export_text_report};
 use dirforge_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanHandle};
+use dirforge_telemetry as telemetry;
 use eframe::egui;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -50,7 +51,17 @@ struct SelectionState {
 struct PerfMetrics {
     frame_ms: f32,
     snapshot_queue_depth: usize,
+    avg_snapshot_commit_ms: u64,
+    avg_scan_batch_size: u64,
     last_update: Option<Instant>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ErrorFilter {
+    All,
+    User,
+    Transient,
+    System,
 }
 
 pub struct DirForgeNativeApp {
@@ -86,6 +97,7 @@ pub struct DirForgeNativeApp {
     perf: PerfMetrics,
     diagnostics_json: String,
     selection: SelectionState,
+    error_filter: ErrorFilter,
 }
 
 impl DirForgeNativeApp {
@@ -132,6 +144,7 @@ impl DirForgeNativeApp {
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
+            error_filter: ErrorFilter::All,
         };
 
         let _ = app.reload_history();
@@ -262,6 +275,9 @@ impl DirForgeNativeApp {
             self.scan_handle = None;
         }
 
+        let t = telemetry::snapshot();
+        self.perf.avg_snapshot_commit_ms = t.avg_snapshot_commit_ms;
+        self.perf.avg_scan_batch_size = t.avg_scan_batch_size;
         self.perf.frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
         self.perf.last_update = Some(Instant::now());
     }
@@ -338,8 +354,11 @@ impl DirForgeNativeApp {
     fn ui_current_scan(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.t("当前扫描", "Current Scan"));
         ui.label(format!(
-            "frame_ms={:.2} queue_depth={}",
-            self.perf.frame_ms, self.perf.snapshot_queue_depth
+            "frame_ms={:.2} queue_depth={} avg_snapshot_commit_ms={} avg_scan_batch_size={}",
+            self.perf.frame_ms,
+            self.perf.snapshot_queue_depth,
+            self.perf.avg_snapshot_commit_ms,
+            self.perf.avg_scan_batch_size
         ));
 
         ui.label(self.t("扫描中 Top Files", "Top Files During Scan"));
@@ -433,6 +452,25 @@ impl DirForgeNativeApp {
         if ui.button(self.t("刷新", "Refresh")).clicked() {
             let _ = self.reload_history();
         }
+
+        let selected = self
+            .selected_history_id
+            .and_then(|id| self.history.iter().find(|h| h.id == id))
+            .cloned();
+
+        if let Some(h) = selected {
+            ui.group(|ui| {
+                ui.heading(self.t("快照详情", "Snapshot Detail"));
+                ui.label(format!("id={} root={}", h.id, h.root));
+                ui.label(format!(
+                    "files={} dirs={} bytes={} errors={}",
+                    h.scanned_files, h.scanned_dirs, h.bytes_observed, h.error_count
+                ));
+                ui.label(format!("created_at={}", h.created_at));
+            });
+            ui.separator();
+        }
+
         egui::ScrollArea::vertical().show_rows(ui, 22.0, self.history.len(), |ui, range| {
             for i in range {
                 if let Some(h) = self.history.get(i) {
@@ -477,9 +515,30 @@ impl DirForgeNativeApp {
             user, transient, system
         ));
 
-        egui::ScrollArea::vertical().show_rows(ui, 24.0, self.errors.len(), |ui, range| {
+        let filter_label = self.t("全部", "All").to_string();
+        ui.horizontal(|ui| {
+            ui.label(self.t("过滤", "Filter"));
+            ui.selectable_value(&mut self.error_filter, ErrorFilter::All, filter_label);
+            ui.selectable_value(&mut self.error_filter, ErrorFilter::User, "User");
+            ui.selectable_value(&mut self.error_filter, ErrorFilter::Transient, "Transient");
+            ui.selectable_value(&mut self.error_filter, ErrorFilter::System, "System");
+        });
+
+        let filtered: Vec<_> = self
+            .errors
+            .iter()
+            .filter(|e| match self.error_filter {
+                ErrorFilter::All => true,
+                ErrorFilter::User => matches!(e.kind, ErrorKind::User),
+                ErrorFilter::Transient => matches!(e.kind, ErrorKind::Transient),
+                ErrorFilter::System => matches!(e.kind, ErrorKind::System),
+            })
+            .cloned()
+            .collect();
+
+        egui::ScrollArea::vertical().show_rows(ui, 24.0, filtered.len(), |ui, range| {
             for i in range {
-                if let Some(e) = self.errors.get(i) {
+                if let Some(e) = filtered.get(i) {
                     ui.group(|ui| {
                         if ui
                             .selectable_label(
@@ -490,6 +549,10 @@ impl DirForgeNativeApp {
                         {
                             self.selection.selected_path = Some(e.path.clone());
                             self.selection.source = Some(SelectionSource::Error);
+                        }
+                        if ui.button(self.t("跳转路径", "Jump to path")).clicked() {
+                            self.selection.selected_path = Some(e.path.clone());
+                            self.page = Page::Operations;
                         }
                         ui.label(&e.reason);
                     });
@@ -504,55 +567,34 @@ impl DirForgeNativeApp {
             self.deletion_plan = Some(self.build_deletion_plan_from_duplicates());
         }
         if let Some(plan) = self.deletion_plan.clone() {
-            if let Some(path) = &self.selection.selected_path {
-                ui.label(format!("selected={}", path));
-            }
-            ui.label(format!(
-                "files={} reclaim={} high_risk={}",
-                plan.files.len(),
-                plan.reclaimable_bytes,
-                plan.high_risk_count
-            ));
-
-            ui.horizontal(|ui| {
-                if ui
-                    .button(self.t("模拟回收站删除", "Simulate recycle delete"))
-                    .clicked()
-                {
-                    self.execution_report =
-                        Some(execute_plan_simulated(&plan, ExecutionMode::RecycleBin));
+            ui.group(|ui| {
+                ui.heading(self.t("待执行", "Pending"));
+                if let Some(path) = &self.selection.selected_path {
+                    ui.label(format!("selected={}", path));
                 }
-                if ui
-                    .button(self.t("模拟永久删除", "Simulate permanent delete"))
-                    .clicked()
-                {
-                    self.execution_report =
-                        Some(execute_plan_simulated(&plan, ExecutionMode::Permanent));
-                }
-            });
-
-            if let Some(report) = &self.execution_report {
                 ui.label(format!(
-                    "mode={:?} attempted={} ok={} failed={}",
-                    report.mode, report.attempted, report.succeeded, report.failed
+                    "files={} reclaim={} high_risk={}",
+                    plan.files.len(),
+                    plan.reclaimable_bytes,
+                    plan.high_risk_count
                 ));
-                if ui
-                    .button(self.t("记录批执行审计", "Record execution audit"))
-                    .clicked()
-                {
-                    let payload = serde_json::json!({
-                        "mode": format!("{:?}", report.mode),
-                        "attempted": report.attempted,
-                        "succeeded": report.succeeded,
-                        "failed": report.failed,
-                    })
-                    .to_string();
-                    let _ = self
-                        .cache
-                        .add_audit_event("delete_execute_simulated", &payload);
-                    self.refresh_diagnostics();
-                }
-            }
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(self.t("模拟回收站删除", "Simulate recycle delete"))
+                        .clicked()
+                    {
+                        self.execution_report =
+                            Some(execute_plan_simulated(&plan, ExecutionMode::RecycleBin));
+                    }
+                    if ui
+                        .button(self.t("模拟永久删除", "Simulate permanent delete"))
+                        .clicked()
+                    {
+                        self.execution_report =
+                            Some(execute_plan_simulated(&plan, ExecutionMode::Permanent));
+                    }
+                });
+            });
 
             ui.separator();
             egui::ScrollArea::vertical().show_rows(ui, 22.0, plan.files.len(), |ui, range| {
@@ -563,9 +605,31 @@ impl DirForgeNativeApp {
                 }
             });
 
-            if let Some(report) = &self.execution_report {
+            if let Some(report) = self.execution_report.clone() {
                 ui.separator();
-                ui.label(self.t("批执行结果", "Batch execution results"));
+                ui.group(|ui| {
+                    ui.heading(self.t("执行结果", "Result"));
+                    ui.label(format!(
+                        "mode={:?} attempted={} ok={} failed={}",
+                        report.mode, report.attempted, report.succeeded, report.failed
+                    ));
+                    if ui
+                        .button(self.t("记录批执行审计", "Record execution audit"))
+                        .clicked()
+                    {
+                        let payload = serde_json::json!({
+                            "mode": format!("{:?}", report.mode),
+                            "attempted": report.attempted,
+                            "succeeded": report.succeeded,
+                            "failed": report.failed,
+                        })
+                        .to_string();
+                        let _ = self
+                            .cache
+                            .add_audit_event("delete_execute_simulated", &payload);
+                        self.refresh_diagnostics();
+                    }
+                });
                 egui::ScrollArea::vertical().show_rows(
                     ui,
                     22.0,
