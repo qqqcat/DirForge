@@ -1,0 +1,17 @@
+[package]
+name = "dirforge-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+dirforge-core = { path = "../dirforge-core" }
+dirforge-scan = { path = "../dirforge-scan" }
+dirforge-dup = { path = "../dirforge-dup" }
+dirforge-cache = { path = "../dirforge-cache" }
+dirforge-actions = { path = "../dirforge-actions" }
+dirforge-platform = { path = "../dirforge-platform" }
+dirforge-report = { path = "../dirforge-report" }
+rusqlite.workspace = true
+serde_json.workspace = true

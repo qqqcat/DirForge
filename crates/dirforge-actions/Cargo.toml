@@ -1,0 +1,7 @@
+[package]
+name = "dirforge-actions"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirforge-core = { path = "../dirforge-core" }

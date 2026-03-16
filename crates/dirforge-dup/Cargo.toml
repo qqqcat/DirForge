@@ -1,0 +1,8 @@
+[package]
+name = "dirforge-dup"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirforge-core = { path = "../dirforge-core" }
+blake3.workspace = true
