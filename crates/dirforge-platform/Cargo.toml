@@ -2,3 +2,7 @@
 name = "dirforge-platform"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+sysinfo = "0.30"
+trash = "5"

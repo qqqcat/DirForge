@@ -49,7 +49,8 @@ pub struct DirForgeNativeApp {
     event_batch_size: usize,
 
     pending_batch_events: Vec<Vec<BatchEntry>>,
-    pending_snapshots: Vec<(NodeStore, SnapshotDelta)>,
+    pending_snapshots: Vec<SnapshotDelta>,
+    live_files: Vec<(String, u64)>,
     last_coalesce_commit: Instant,
 
     duplicates: Vec<DuplicateGroup>,
@@ -96,6 +97,7 @@ impl DirForgeNativeApp {
             event_batch_size: 256,
             pending_batch_events: Vec::new(),
             pending_snapshots: Vec::new(),
+            live_files: Vec::new(),
             last_coalesce_commit: Instant::now(),
             duplicates: Vec::new(),
             deletion_plan: None,
@@ -141,6 +143,7 @@ impl DirForgeNativeApp {
         self.status = self.t("扫描中", "Scanning").to_string();
         self.pending_batch_events.clear();
         self.pending_snapshots.clear();
+        self.live_files.clear();
         self.last_coalesce_commit = Instant::now();
 
         self.scan_handle = Some(start_scan(
@@ -166,9 +169,7 @@ impl DirForgeNativeApp {
                         self.perf.snapshot_queue_depth = p.queue_depth;
                     }
                     ScanEvent::Batch(batch) => self.pending_batch_events.push(batch),
-                    ScanEvent::Snapshot { store, delta } => {
-                        self.pending_snapshots.push((store, delta))
-                    }
+                    ScanEvent::Snapshot { delta } => self.pending_snapshots.push(delta),
                     ScanEvent::Finished {
                         store,
                         summary,
@@ -182,11 +183,18 @@ impl DirForgeNativeApp {
         if self.last_coalesce_commit.elapsed()
             >= Duration::from_millis(self.snapshot_interval_ms.max(50))
         {
-            if let Some((store, _delta)) = self.pending_snapshots.pop() {
-                self.store = Some(store);
-                self.pending_snapshots.clear();
+            for batch in self.pending_batch_events.drain(..) {
+                for item in batch {
+                    if !item.is_dir {
+                        self.live_files.push((item.path, item.size));
+                    }
+                }
             }
-            self.pending_batch_events.clear();
+            if self.live_files.len() > 20_000 {
+                let drop_n = self.live_files.len() - 20_000;
+                self.live_files.drain(0..drop_n);
+            }
+            self.pending_snapshots.clear();
             self.last_coalesce_commit = Instant::now();
         }
 
@@ -300,29 +308,18 @@ impl DirForgeNativeApp {
             self.perf.frame_ms, self.perf.snapshot_queue_depth
         ));
 
-        if let Some(store) = &self.store {
-            let rows = store
-                .nodes
-                .iter()
-                .filter(|n| n.kind == dirforge_core::NodeKind::File)
-                .count();
-            egui::ScrollArea::vertical().show_rows(ui, 22.0, rows, |ui, row_range| {
-                let files: Vec<_> = store
-                    .nodes
-                    .iter()
-                    .filter(|n| n.kind == dirforge_core::NodeKind::File)
-                    .collect();
-                for row in row_range {
-                    if let Some(n) = files.get(row) {
-                        ui.horizontal(|ui| {
-                            ui.label(&n.path);
-                            ui.separator();
-                            ui.label(n.size_self.to_string());
-                        });
-                    }
+        let rows = self.live_files.len();
+        egui::ScrollArea::vertical().show_rows(ui, 22.0, rows, |ui, row_range| {
+            for row in row_range {
+                if let Some((path, size)) = self.live_files.get(row) {
+                    ui.horizontal(|ui| {
+                        ui.label(path);
+                        ui.separator();
+                        ui.label(size.to_string());
+                    });
                 }
-            });
-        }
+            }
+        });
     }
 
     fn ui_treemap(&mut self, ui: &mut egui::Ui) {

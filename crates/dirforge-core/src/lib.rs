@@ -166,4 +166,27 @@ mod tests {
         assert_eq!(s.nodes[root.0].size_subtree, 10);
         assert_eq!(s.nodes[root.0].file_count, 2);
     }
+
+
+    #[test]
+    fn duplicate_path_returns_existing_node() {
+        let mut s = NodeStore::default();
+        let root = s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
+        let first = s.add_node(Some(root), "a".into(), "/root/a".into(), NodeKind::File, 1);
+        let second = s.add_node(Some(root), "a".into(), "/root/a".into(), NodeKind::File, 99);
+        assert_eq!(first, second);
+        assert_eq!(s.nodes.len(), 2);
+    }
+
+    #[test]
+    fn top_n_largest_files_respects_limit() {
+        let mut s = NodeStore::default();
+        let root = s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
+        s.add_node(Some(root), "a".into(), "/root/a".into(), NodeKind::File, 1);
+        s.add_node(Some(root), "b".into(), "/root/b".into(), NodeKind::File, 20);
+        s.add_node(Some(root), "c".into(), "/root/c".into(), NodeKind::File, 10);
+        let top = s.top_n_largest_files(2);
+        assert_eq!(top.len(), 2);
+        assert!(top[0].size_self >= top[1].size_self);
+    }
 }

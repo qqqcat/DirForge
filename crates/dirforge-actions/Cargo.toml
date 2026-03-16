@@ -5,3 +5,5 @@ edition.workspace = true
 
 [dependencies]
 dirforge-core = { path = "../dirforge-core" }
+dirforge-platform = { path = "../dirforge-platform" }
+dirforge-telemetry = { path = "../dirforge-telemetry" }

@@ -1,6 +1,7 @@
 use dirforge_core::{
     ErrorKind, NodeKind, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
 };
+use dirforge_telemetry as telemetry;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -38,10 +39,7 @@ pub struct BatchEntry {
 pub enum ScanEvent {
     Progress(ScanProgress),
     Batch(Vec<BatchEntry>),
-    Snapshot {
-        store: NodeStore,
-        delta: SnapshotDelta,
-    },
+    Snapshot { delta: SnapshotDelta },
     Finished {
         store: NodeStore,
         summary: ScanSummary,
@@ -132,8 +130,13 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                 Ok(v) => v,
                 Err(e) => {
                     summary.error_count += 1;
+                    telemetry::record_scan_error();
+                    let path = e
+                        .path()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| root.display().to_string());
                     errors.push(ScanErrorRecord {
-                        path: root.display().to_string(),
+                        path,
                         reason: format!("walkdir: {e}"),
                         kind: classify_error(&format!("walkdir: {e}")),
                     });
@@ -152,6 +155,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                 Ok(v) => v,
                 Err(e) => {
                     summary.error_count += 1;
+                    telemetry::record_scan_error();
                     errors.push(ScanErrorRecord {
                         path: path.clone(),
                         reason: format!("metadata: {e}"),
@@ -198,6 +202,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                     size: meta.len(),
                 });
             }
+            telemetry::record_scan_item();
             changed_since_snapshot += 1;
 
             while frontier.len() > 32 {
@@ -217,20 +222,18 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             let _ = tx.send(ScanEvent::Progress(progress));
 
             if last_snapshot.elapsed() >= Duration::from_millis(config.snapshot_ms.max(50)) {
-                store.rollup();
                 let _ = tx.send(ScanEvent::Snapshot {
-                    store: store.clone(),
                     delta: SnapshotDelta {
                         changed_nodes: changed_since_snapshot,
                         scanned_files: summary.scanned_files,
                         scanned_dirs: summary.scanned_dirs,
                     },
                 });
+                telemetry::record_snapshot();
                 changed_since_snapshot = 0;
                 last_snapshot = Instant::now();
             }
 
-            // profile throttling
             match config.profile {
                 ScanProfile::Ssd => {}
                 ScanProfile::Hdd => std::thread::sleep(Duration::from_millis(1)),
@@ -243,13 +246,13 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         }
         store.rollup();
         let _ = tx.send(ScanEvent::Snapshot {
-            store: store.clone(),
             delta: SnapshotDelta {
                 changed_nodes: changed_since_snapshot,
                 scanned_files: summary.scanned_files,
                 scanned_dirs: summary.scanned_dirs,
             },
         });
+        telemetry::record_snapshot();
         let _ = tx.send(ScanEvent::Finished {
             store,
             summary,
