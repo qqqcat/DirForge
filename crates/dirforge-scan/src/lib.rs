@@ -123,7 +123,7 @@ fn classify_error(reason: &str) -> ErrorKind {
 }
 
 pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::sync_channel(config.batch_size.max(64) * 4);
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_clone = Arc::clone(&cancel);
 

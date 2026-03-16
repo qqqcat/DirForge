@@ -8,14 +8,19 @@ use dirforge_core::{
 };
 use dirforge_dup::{detect_duplicates, DupConfig, DuplicateGroup};
 use dirforge_report::{
-    default_manifest, export_diagnostics_bundle, export_duplicates_csv, export_errors_csv,
-    export_summary_json, export_text_report,
+    default_manifest, export_diagnostics_archive, export_diagnostics_bundle, export_duplicates_csv,
+    export_errors_csv, export_summary_json, export_text_report,
 };
 use dirforge_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanHandle};
 use dirforge_telemetry as telemetry;
 use eframe::egui;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+const MAX_PENDING_BATCH_EVENTS: usize = 32;
+const MAX_PENDING_SNAPSHOTS: usize = 8;
+const MAX_LIVE_FILES: usize = 20_000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -91,8 +96,8 @@ pub struct DirForgeNativeApp {
     snapshot_interval_ms: u64,
     event_batch_size: usize,
 
-    pending_batch_events: Vec<Vec<BatchEntry>>,
-    pending_snapshots: Vec<SnapshotDelta>,
+    pending_batch_events: VecDeque<Vec<BatchEntry>>,
+    pending_snapshots: VecDeque<SnapshotDelta>,
     live_files: Vec<(String, u64)>,
     live_top_files: Vec<(String, u64)>,
     live_top_dirs: Vec<(String, u64)>,
@@ -143,8 +148,8 @@ impl DirForgeNativeApp {
             scan_profile: ScanProfile::Ssd,
             snapshot_interval_ms: 75,
             event_batch_size: 256,
-            pending_batch_events: Vec::new(),
-            pending_snapshots: Vec::new(),
+            pending_batch_events: VecDeque::new(),
+            pending_snapshots: VecDeque::new(),
             live_files: Vec::new(),
             live_top_files: Vec::new(),
             live_top_dirs: Vec::new(),
@@ -186,8 +191,21 @@ impl DirForgeNativeApp {
             .export_diagnostics_json()
             .unwrap_or_else(|_| "{}".to_string());
         let telemetry_snapshot = telemetry::snapshot();
+        let system_snapshot = telemetry::system_snapshot();
         let metrics = telemetry::metric_descriptors();
         let audit = telemetry::action_audit_tail(32);
+        let path_access = dirforge_platform::assess_path_access(&self.root_input)
+            .map(|a| {
+                serde_json::json!({
+                    "normalized_path": a.normalized_path,
+                    "is_dir": a.is_dir,
+                    "is_reparse_point": a.is_reparse_point,
+                    "boundary": format!("{:?}", a.boundary),
+                })
+            })
+            .unwrap_or_else(
+                |e| serde_json::json!({"error": format!("{:?}: {}", e.kind, e.message)}),
+            );
 
         let cache_json = serde_json::from_str::<serde_json::Value>(&cache_payload)
             .unwrap_or_else(|_| serde_json::json!({"raw": cache_payload}));
@@ -196,8 +214,10 @@ impl DirForgeNativeApp {
             "bundle_structure_version": 2,
             "cache": cache_json,
             "telemetry_snapshot": telemetry_snapshot,
+            "system_snapshot": system_snapshot,
             "metrics": metrics,
             "action_audit_tail": audit,
+            "path_access": path_access,
         }))
         .unwrap_or_else(|_| "{}".to_string());
     }
@@ -240,7 +260,14 @@ impl DirForgeNativeApp {
                         self.summary = p.summary;
                         self.perf.snapshot_queue_depth = p.queue_depth;
                     }
-                    ScanEvent::Batch(batch) => self.pending_batch_events.push(batch),
+                    ScanEvent::Batch(batch) => {
+                        self.pending_batch_events.push_back(batch);
+                        if self.pending_batch_events.len() > MAX_PENDING_BATCH_EVENTS {
+                            let drop_n = self.pending_batch_events.len() - MAX_PENDING_BATCH_EVENTS;
+                            self.pending_batch_events.drain(0..drop_n);
+                            telemetry::record_ui_backpressure(drop_n as u64, 0);
+                        }
+                    }
                     ScanEvent::Snapshot {
                         delta,
                         top_files,
@@ -248,7 +275,12 @@ impl DirForgeNativeApp {
                     } => {
                         self.live_top_files = top_files;
                         self.live_top_dirs = top_dirs;
-                        self.pending_snapshots.push(delta)
+                        self.pending_snapshots.push_back(delta);
+                        if self.pending_snapshots.len() > MAX_PENDING_SNAPSHOTS {
+                            let drop_n = self.pending_snapshots.len() - MAX_PENDING_SNAPSHOTS;
+                            self.pending_snapshots.drain(0..drop_n);
+                            telemetry::record_ui_backpressure(0, drop_n as u64);
+                        }
                     }
                     ScanEvent::Finished {
                         store,
@@ -263,19 +295,18 @@ impl DirForgeNativeApp {
         if self.last_coalesce_commit.elapsed()
             >= Duration::from_millis(self.snapshot_interval_ms.max(50))
         {
-            for batch in self.pending_batch_events.drain(..) {
+            while let Some(batch) = self.pending_batch_events.pop_front() {
                 for item in batch {
                     if !item.is_dir {
                         self.live_files.push((item.path, item.size));
                     }
                 }
             }
-            if self.live_files.len() > 20_000 {
-                let drop_n = self.live_files.len() - 20_000;
+            if self.live_files.len() > MAX_LIVE_FILES {
+                let drop_n = self.live_files.len() - MAX_LIVE_FILES;
                 self.live_files.drain(0..drop_n);
             }
-            let snapshots: Vec<_> = self.pending_snapshots.drain(..).collect();
-            for snapshot in snapshots {
+            while let Some(snapshot) = self.pending_snapshots.pop_front() {
                 self.summary = snapshot.summary;
             }
             self.last_coalesce_commit = Instant::now();
@@ -319,6 +350,7 @@ impl DirForgeNativeApp {
         self.perf.avg_scan_batch_size = t.avg_scan_batch_size;
         self.perf.frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
         self.perf.last_update = Some(Instant::now());
+        telemetry::record_ui_frame();
     }
 
     fn build_deletion_plan_from_duplicates(&self) -> DeletionPlan {
@@ -734,6 +766,12 @@ impl DirForgeNativeApp {
             let _ = export_diagnostics_bundle(
                 &self.diagnostics_json,
                 "dirforge_diagnostics.json",
+                &manifest,
+            );
+            let _ = export_diagnostics_archive(
+                &self.diagnostics_json,
+                "diagnostics",
+                "dirforge",
                 &manifest,
             );
         }

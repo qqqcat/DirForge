@@ -19,6 +19,43 @@ pub struct PlatformCapabilities {
     pub volume_info: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionBoundary {
+    Allowed,
+    ReadOnly,
+    Denied,
+    NotFound,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathAccessAssessment {
+    pub normalized_path: String,
+    pub is_dir: bool,
+    pub is_reparse_point: bool,
+    pub boundary: PermissionBoundary,
+}
+
+pub fn assess_path_access(path: &str) -> Result<PathAccessAssessment, PlatformError> {
+    let normalized = normalize_path(path)?;
+    let meta = std::fs::metadata(&normalized).map_err(|e| PlatformError {
+        kind: map_io_error(&e),
+        message: e.to_string(),
+    })?;
+
+    let boundary = if !meta.permissions().readonly() {
+        PermissionBoundary::Allowed
+    } else {
+        PermissionBoundary::ReadOnly
+    };
+
+    Ok(PathAccessAssessment {
+        normalized_path: normalized.clone(),
+        is_dir: meta.is_dir(),
+        is_reparse_point: is_reparse_point(&normalized).unwrap_or(false),
+        boundary,
+    })
+}
+
 pub fn capabilities() -> PlatformCapabilities {
     #[cfg(target_os = "windows")]
     {
@@ -84,5 +121,20 @@ mod tests {
         let c = capabilities();
         assert!(c.reveal_in_explorer);
         assert!(c.volume_info);
+    }
+
+    #[test]
+    fn assess_path_access_current_dir() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let assessment = assess_path_access(&cwd.display().to_string()).expect("assessment");
+        assert!(assessment.is_dir);
+        assert!(!assessment.normalized_path.is_empty());
+    }
+
+    #[test]
+    fn assess_path_access_missing_path_error() {
+        let missing = "/definitely/missing/dirforge/nope";
+        let err = assess_path_access(missing).expect_err("must fail");
+        assert_eq!(err.kind, PlatformErrorKind::InvalidInput);
     }
 }
