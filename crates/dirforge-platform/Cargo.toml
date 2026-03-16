@@ -1,0 +1,4 @@
+[package]
+name = "dirforge-platform"
+version.workspace = true
+edition.workspace = true

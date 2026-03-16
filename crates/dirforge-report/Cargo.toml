@@ -1,0 +1,7 @@
+[package]
+name = "dirforge-report"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirforge-core = { path = "../dirforge-core" }
