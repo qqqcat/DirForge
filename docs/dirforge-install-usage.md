@@ -1,10 +1,9 @@
-# DirForge 安装与使用指南（2026-03）
+# DirForge 安装与使用指南（2026-03-16）
 
 ## 0. 阶段说明
 
-- 当前：Production Readiness（生产就绪冲刺）
+- 当前：Production Readiness（生产就绪冲刺后期）
 - 目标：Production（生产级）
-
 
 ## 1. 安装
 
@@ -37,7 +36,7 @@ cargo run -p dirforge-app
    - 重复文件候选
    - 错误分类（User/Transient/System）
 5. 在 Operations 中生成删除计划并执行模拟动作。
-6. 导出报告和诊断文件。
+6. 导出报告和诊断文件（含诊断归档目录）。
 
 ## 5. 性能阈值测试
 
@@ -47,21 +46,24 @@ cargo run -p dirforge-app
 cargo test -p dirforge-testkit --test benchmark_thresholds
 ```
 
-当前默认阈值（小规模基准）：
+当前默认阈值（`crates/dirforge-testkit/perf/baseline.json`）：
 
-- 扫描阈值：4000ms
-- 去重阈值：1200ms
+- 小规模扫描阈值：500ms
+- 大规模扫描阈值：3500ms
+- 小规模去重阈值：300ms
 
 ## 6. 产物说明
 
-- `dirforge.db`：SQLite 缓存（快照/设置/历史）
+- `dirforge.db`：SQLite 缓存（快照/设置/历史/审计）
 - `dirforge_report.txt`：文本报告
 - `dirforge_summary.json`：摘要 JSON
 - `dirforge_duplicates.csv`：重复候选导出
 - `dirforge_errors.csv`：错误导出
 - `dirforge_diagnostics.json`：诊断导出
+- `diagnostics-<timestamp>/`：诊断归档目录（含 manifest）
 
 ## 7. 注意事项
 
-- 删除相关功能当前以“模拟执行”优先，属于安全策略的一部分。
+- 删除相关功能仍建议以“模拟执行优先”作为默认安全策略。
 - 大体量目录扫描时，首次运行可能出现较高 CPU/内存占用。
+- 若 GUI 无法启动，请确认运行环境具备桌面窗口支持。

@@ -35,3 +35,10 @@
 - 补充聚合器单测，覆盖“子节点先到、父节点后到”的关键场景。
 - 完成文档同步：`README.md`、`docs/production-upgrade-2026-03.md`、`docs/dirforge-comprehensive-assessment.md` 已更新扫描架构描述。
 - 完成扫描模块回归测试，确认事件流与取消/错误处理行为保持兼容。
+
+## 2026-03-16（项目综合评估与文档同步）
+- 执行全量验证：`cargo check --workspace` 与 `cargo test --workspace` 均通过。
+- 完成项目现状综合评估，重写 `docs/dirforge-comprehensive-assessment.md`，更新结论、风险矩阵与 2~4 周优先级建议。
+- 同步更新 `README.md` 项目现状摘要，确保与最新测试和架构状态一致。
+- 更新 `docs/dirforge-sdd.md`，修正线程模型为并发流水线（worker 池 + 聚合线程 + 有界发布通道）。
+- 更新 `docs/dirforge-install-usage.md`，补齐当前性能阈值与诊断归档产物说明。
