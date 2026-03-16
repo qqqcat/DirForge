@@ -2,6 +2,7 @@ use dirforge_core::RiskLevel;
 use dirforge_platform::{move_to_recycle_bin, PlatformErrorKind};
 use dirforge_telemetry as telemetry;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -12,11 +13,30 @@ pub struct DeletionItem {
     pub risk: RiskLevel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum SelectionOrigin {
+    Duplicates,
+    TopFiles,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationWarning {
+    pub path: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct DeletionPlan {
     pub files: Vec<DeletionItem>,
     pub reclaimable_bytes: u64,
     pub high_risk_count: usize,
+    pub protected_count: usize,
+    pub dir_count: usize,
+    pub file_count: usize,
+    pub risk_breakdown: BTreeMap<String, usize>,
+    pub validation_warnings: Vec<ValidationWarning>,
+    pub selection_origin: SelectionOrigin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,20 +102,57 @@ impl Default for ExecutionConfig {
 }
 
 pub fn build_deletion_plan(files: Vec<(String, u64, RiskLevel)>) -> DeletionPlan {
+    build_deletion_plan_with_origin(files, SelectionOrigin::Manual)
+}
+
+pub fn build_deletion_plan_with_origin(
+    files: Vec<(String, u64, RiskLevel)>,
+    selection_origin: SelectionOrigin,
+) -> DeletionPlan {
     let mut high = 0usize;
     let mut reclaimable_bytes = 0u64;
     let mut out = Vec::new();
+    let mut protected_count = 0usize;
+    let mut dir_count = 0usize;
+    let mut file_count = 0usize;
+    let mut risk_breakdown: BTreeMap<String, usize> = BTreeMap::new();
+    let mut validation_warnings = Vec::new();
     for (path, size, risk) in files {
         reclaimable_bytes = reclaimable_bytes.saturating_add(size);
         if risk == RiskLevel::High {
             high += 1;
+            protected_count += 1;
         }
+
+        let risk_key = format!("{:?}", risk);
+        *risk_breakdown.entry(risk_key).or_insert(0) += 1;
+
+        let kind = path_kind(&path);
+        if kind == "dir_like" {
+            dir_count += 1;
+        } else {
+            file_count += 1;
+        }
+
+        if size == 0 {
+            validation_warnings.push(ValidationWarning {
+                path: path.clone(),
+                message: "item has zero-size reclaim estimate".to_string(),
+            });
+        }
+
         out.push(DeletionItem { path, size, risk });
     }
     DeletionPlan {
         files: out,
         reclaimable_bytes,
         high_risk_count: high,
+        protected_count,
+        dir_count,
+        file_count,
+        risk_breakdown,
+        validation_warnings,
+        selection_origin,
     }
 }
 
@@ -374,12 +431,18 @@ mod tests {
         let low = root.join("a.txt").display().to_string();
         std::fs::write(&low, b"x").expect("seed file");
 
-        let plan = build_deletion_plan(vec![
-            (low, 10, RiskLevel::Low),
-            (root.display().to_string(), 20, RiskLevel::High),
-        ]);
+        let plan = build_deletion_plan_with_origin(
+            vec![
+                (low, 10, RiskLevel::Low),
+                (root.display().to_string(), 20, RiskLevel::High),
+            ],
+            SelectionOrigin::Duplicates,
+        );
         assert_eq!(plan.reclaimable_bytes, 30);
         assert_eq!(plan.high_risk_count, 1);
+        assert_eq!(plan.protected_count, 1);
+        assert_eq!(plan.selection_origin, SelectionOrigin::Duplicates);
+        assert_eq!(plan.file_count + plan.dir_count, plan.files.len());
 
         let report = execute_plan_simulated(&plan, ExecutionMode::Permanent);
         assert_eq!(report.attempted, 2);

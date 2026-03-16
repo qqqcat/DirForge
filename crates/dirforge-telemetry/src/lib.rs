@@ -24,6 +24,17 @@ static DUP_HASH_ELAPSED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static UI_FRAMES_TOTAL: AtomicU64 = AtomicU64::new(0);
 static UI_DROPPED_BATCH_TOTAL: AtomicU64 = AtomicU64::new(0);
 static UI_DROPPED_SNAPSHOT_TOTAL: AtomicU64 = AtomicU64::new(0);
+static WALKER_RECV_BLOCKED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static WALKER_RECV_BLOCKED_SAMPLES: AtomicU64 = AtomicU64::new(0);
+static AGGREGATOR_PROCESSING_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static AGGREGATOR_PROCESSING_SAMPLES: AtomicU64 = AtomicU64::new(0);
+static BATCH_FLUSH_ITEMS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static BATCH_FLUSH_EVENTS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static CANCELLED_SCAN_LATENCY_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static CANCELLED_SCAN_TOTAL: AtomicU64 = AtomicU64::new(0);
+static FINISHED_PAYLOAD_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static FINISHED_NODE_COUNT_TOTAL: AtomicU64 = AtomicU64::new(0);
+static FINISHED_SCAN_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 static ACTION_AUDIT_RING: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
@@ -44,6 +55,14 @@ pub struct TelemetrySnapshot {
     pub ui_frames: u64,
     pub ui_dropped_batches: u64,
     pub ui_dropped_snapshots: u64,
+    pub avg_walker_recv_blocked_ms: u64,
+    pub avg_aggregator_processing_ms: u64,
+    pub avg_batch_flush_size: u64,
+    pub cancelled_scans: u64,
+    pub avg_cancelled_scan_latency_ms: u64,
+    pub finished_scans: u64,
+    pub avg_finished_payload_bytes: u64,
+    pub avg_finished_node_count: u64,
     pub collection_period_ms: u64,
 }
 
@@ -182,6 +201,32 @@ pub fn record_ui_backpressure(dropped_batches: u64, dropped_snapshots: u64) {
     }
 }
 
+pub fn record_walker_recv_blocked(elapsed_ms: u64) {
+    WALKER_RECV_BLOCKED_MS_TOTAL.fetch_add(elapsed_ms, Ordering::Relaxed);
+    WALKER_RECV_BLOCKED_SAMPLES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_aggregator_processing(elapsed_ms: u64) {
+    AGGREGATOR_PROCESSING_MS_TOTAL.fetch_add(elapsed_ms, Ordering::Relaxed);
+    AGGREGATOR_PROCESSING_SAMPLES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_batch_flush_size(size: usize) {
+    BATCH_FLUSH_ITEMS_TOTAL.fetch_add(size as u64, Ordering::Relaxed);
+    BATCH_FLUSH_EVENTS_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_cancelled_scan_latency(elapsed_ms: u64) {
+    CANCELLED_SCAN_TOTAL.fetch_add(1, Ordering::Relaxed);
+    CANCELLED_SCAN_LATENCY_MS_TOTAL.fetch_add(elapsed_ms, Ordering::Relaxed);
+}
+
+pub fn record_scan_finished(node_count: u64, payload_bytes: u64) {
+    FINISHED_SCAN_TOTAL.fetch_add(1, Ordering::Relaxed);
+    FINISHED_NODE_COUNT_TOTAL.fetch_add(node_count, Ordering::Relaxed);
+    FINISHED_PAYLOAD_BYTES_TOTAL.fetch_add(payload_bytes, Ordering::Relaxed);
+}
+
 pub fn record_action_audit(payload: String) {
     let ring = ACTION_AUDIT_RING.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut r) = ring.lock() {
@@ -210,6 +255,11 @@ pub fn snapshot() -> TelemetrySnapshot {
     let batch_elapsed = SCAN_BATCH_ELAPSED_MS_TOTAL.load(Ordering::Relaxed);
     let snapshot_commits = SNAPSHOT_COMMITS_TOTAL.load(Ordering::Relaxed);
     let snapshot_elapsed = SNAPSHOT_COMMIT_ELAPSED_MS_TOTAL.load(Ordering::Relaxed);
+    let walker_recv_samples = WALKER_RECV_BLOCKED_SAMPLES.load(Ordering::Relaxed);
+    let aggregator_samples = AGGREGATOR_PROCESSING_SAMPLES.load(Ordering::Relaxed);
+    let batch_flushes = BATCH_FLUSH_EVENTS_TOTAL.load(Ordering::Relaxed);
+    let cancelled = CANCELLED_SCAN_TOTAL.load(Ordering::Relaxed);
+    let finished = FINISHED_SCAN_TOTAL.load(Ordering::Relaxed);
 
     TelemetrySnapshot {
         scan_items: SCAN_ITEMS_TOTAL.load(Ordering::Relaxed),
@@ -246,6 +296,38 @@ pub fn snapshot() -> TelemetrySnapshot {
         ui_frames: UI_FRAMES_TOTAL.load(Ordering::Relaxed),
         ui_dropped_batches: UI_DROPPED_BATCH_TOTAL.load(Ordering::Relaxed),
         ui_dropped_snapshots: UI_DROPPED_SNAPSHOT_TOTAL.load(Ordering::Relaxed),
+        avg_walker_recv_blocked_ms: if walker_recv_samples == 0 {
+            0
+        } else {
+            WALKER_RECV_BLOCKED_MS_TOTAL.load(Ordering::Relaxed) / walker_recv_samples
+        },
+        avg_aggregator_processing_ms: if aggregator_samples == 0 {
+            0
+        } else {
+            AGGREGATOR_PROCESSING_MS_TOTAL.load(Ordering::Relaxed) / aggregator_samples
+        },
+        avg_batch_flush_size: if batch_flushes == 0 {
+            0
+        } else {
+            BATCH_FLUSH_ITEMS_TOTAL.load(Ordering::Relaxed) / batch_flushes
+        },
+        cancelled_scans: cancelled,
+        avg_cancelled_scan_latency_ms: if cancelled == 0 {
+            0
+        } else {
+            CANCELLED_SCAN_LATENCY_MS_TOTAL.load(Ordering::Relaxed) / cancelled
+        },
+        finished_scans: finished,
+        avg_finished_payload_bytes: if finished == 0 {
+            0
+        } else {
+            FINISHED_PAYLOAD_BYTES_TOTAL.load(Ordering::Relaxed) / finished
+        },
+        avg_finished_node_count: if finished == 0 {
+            0
+        } else {
+            FINISHED_NODE_COUNT_TOTAL.load(Ordering::Relaxed) / finished
+        },
         collection_period_ms: COLLECTION_PERIOD_MS,
     }
 }
@@ -296,6 +378,11 @@ mod tests {
         record_action_audit("{}".into());
         record_ui_frame();
         record_ui_backpressure(1, 2);
+        record_walker_recv_blocked(3);
+        record_aggregator_processing(4);
+        record_batch_flush_size(12);
+        record_cancelled_scan_latency(20);
+        record_scan_finished(100, 2048);
         let s = snapshot();
         assert!(s.scan_items >= 1);
         assert!(s.snapshots >= 1);
@@ -307,6 +394,14 @@ mod tests {
         assert!(s.ui_frames >= 1);
         assert!(s.ui_dropped_batches >= 1);
         assert!(s.ui_dropped_snapshots >= 2);
+        assert!(s.avg_walker_recv_blocked_ms >= 1);
+        assert!(s.avg_aggregator_processing_ms >= 1);
+        assert!(s.avg_batch_flush_size >= 1);
+        assert!(s.cancelled_scans >= 1);
+        assert!(s.avg_cancelled_scan_latency_ms >= 1);
+        assert!(s.finished_scans >= 1);
+        assert!(s.avg_finished_payload_bytes >= 1);
+        assert!(s.avg_finished_node_count >= 1);
         assert_eq!(s.collection_period_ms, COLLECTION_PERIOD_MS);
         assert!(!action_audit_tail(1).is_empty());
     }

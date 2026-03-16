@@ -1,5 +1,6 @@
 use dirforge_actions::{
-    build_deletion_plan, execute_plan_simulated, DeletionPlan, ExecutionMode, ExecutionReport,
+    build_deletion_plan_with_origin, execute_plan_simulated, DeletionPlan, ExecutionMode,
+    ExecutionReport, SelectionOrigin,
 };
 use dirforge_cache::{CacheStore, HistoryRecord};
 use dirforge_core::{
@@ -375,7 +376,7 @@ impl DirForgeNativeApp {
                     .collect::<Vec<_>>()
             })
             .collect();
-        build_deletion_plan(candidates)
+        build_deletion_plan_with_origin(candidates, SelectionOrigin::Duplicates)
     }
 
     fn ui_nav(&mut self, ui: &mut egui::Ui) {
