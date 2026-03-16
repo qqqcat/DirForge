@@ -1,0 +1,4 @@
+[package]
+name = "dirforge-actions"
+version.workspace = true
+edition.workspace = true

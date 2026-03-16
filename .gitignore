@@ -1,0 +1,4 @@
+/target
+Cargo.lock
+dirforge_report.txt
+dirforge_snapshot.tsv
