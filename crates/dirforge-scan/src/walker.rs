@@ -1,11 +1,10 @@
-use crate::classify_error;
-use dirforge_core::{ScanErrorRecord, ScanProfile};
+use crate::{classify_error, ProfileTuning};
+use dirforge_core::ScanErrorRecord;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Duration;
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
@@ -25,13 +24,18 @@ pub enum WalkerEvent {
 
 pub fn walk_events(
     root: PathBuf,
-    profile: ScanProfile,
+    tuning: ProfileTuning,
     cancel: Arc<AtomicBool>,
     mut on_event: impl FnMut(WalkerEvent),
 ) {
     let root_string = root.display().to_string();
 
-    for entry in WalkDir::new(&root).follow_links(false).into_iter() {
+    let mut processed = 0usize;
+    for entry in WalkDir::new(&root)
+        .follow_links(false)
+        .max_open(tuning.metadata_parallelism.max(1))
+        .into_iter()
+    {
         if cancel.load(Ordering::SeqCst) {
             break;
         }
@@ -85,10 +89,9 @@ pub fn walk_events(
             size: if meta.is_dir() { 0 } else { meta.len() },
         }));
 
-        match profile {
-            ScanProfile::Ssd => {}
-            ScanProfile::Hdd => std::thread::sleep(Duration::from_millis(1)),
-            ScanProfile::Network => std::thread::sleep(Duration::from_millis(2)),
+        processed += 1;
+        if processed % tuning.deep_tasks_throttle.max(1) == 0 {
+            std::thread::yield_now();
         }
     }
 }

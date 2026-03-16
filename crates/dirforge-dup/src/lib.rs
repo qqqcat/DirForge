@@ -187,4 +187,35 @@ mod tests {
         // paths don't exist; still grouped by fallback hashing
         assert!(d.len() <= 1);
     }
+
+    #[test]
+    fn duplicate_detection_with_real_files() {
+        let fixture = dirforge_testkit::FixtureTree::duplicate_file_set().expect("fixture");
+        let mut s = NodeStore::default();
+        let root = s.add_node(
+            None,
+            "r".into(),
+            fixture.root.display().to_string(),
+            NodeKind::Dir,
+            0,
+        );
+
+        for ent in std::fs::read_dir(fixture.root.join("set")).expect("readdir") {
+            let ent = ent.expect("entry");
+            let meta = ent.metadata().expect("meta");
+            if meta.is_file() {
+                s.add_node(
+                    Some(root),
+                    ent.file_name().to_string_lossy().to_string(),
+                    ent.path().display().to_string(),
+                    NodeKind::File,
+                    meta.len(),
+                );
+            }
+        }
+
+        let groups = detect_duplicates(&s, DupConfig::default());
+        assert!(groups.len() >= 2, "expected at least two duplicate groups");
+        assert!(groups.iter().all(|g| g.members.len() >= 2));
+    }
 }

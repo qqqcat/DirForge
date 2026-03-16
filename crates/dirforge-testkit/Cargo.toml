@@ -9,3 +9,5 @@ edition.workspace = true
 dirforge-core = { path = "../dirforge-core" }
 dirforge-scan = { path = "../dirforge-scan" }
 dirforge-dup = { path = "../dirforge-dup" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
