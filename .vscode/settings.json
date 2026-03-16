@@ -1,0 +1,9 @@
+{
+  "github.copilot.chat.agent.enabled": true,
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+  "github.copilot.chat.followUps": true,
+  "github.copilot.chat.scopeSelection": true,
+  "github.copilot.chat.agent.autoFix": true,
+  "github.copilot.chat.agent.autoPlan": true,
+  "github.copilot.chat.localeOverride": "zh-CN"
+}

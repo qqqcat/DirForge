@@ -1,0 +1,19 @@
+name: Template Validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  validate-template:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run template validation
+        shell: pwsh
+        run: ./scripts/validate-template.ps1
