@@ -39,6 +39,7 @@ const PRIMARY_BUTTON_HEIGHT: f32 = 40.0;
 const NAV_ITEM_HEIGHT: f32 = 36.0;
 const STATUS_BADGE_HEIGHT: f32 = 32.0;
 const CONTROL_MIN_WIDTH: f32 = 56.0;
+const PAGE_MAX_WIDTH: f32 = 1360.0;
 const MIN_TREEMAP_TILE_EDGE: f32 = 16.0;
 const MIN_TREEMAP_LABEL_WIDTH: f32 = 84.0;
 const MIN_TREEMAP_LABEL_HEIGHT: f32 = 30.0;
@@ -59,6 +60,17 @@ enum Page {
 enum Lang {
     En,
     Zh,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppStatus {
+    Idle,
+    Scanning,
+    Completed,
+    Deleting,
+    DeleteExecuted,
+    DeleteFailed,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -211,7 +223,7 @@ pub struct DirOtterNativeApp {
     page: Page,
     available_volumes: Vec<dirotter_platform::VolumeInfo>,
     root_input: String,
-    status: String,
+    status: AppStatus,
     summary: ScanSummary,
     store: Option<NodeStore>,
     scan_session: Option<ScanSession>,
@@ -278,7 +290,7 @@ impl DirOtterNativeApp {
             page: Page::Dashboard,
             available_volumes,
             root_input: initial_root,
-            status: "Idle".into(),
+            status: AppStatus::Idle,
             summary: ScanSummary::default(),
             store: None,
             scan_session: None,
@@ -329,6 +341,18 @@ impl DirOtterNativeApp {
         match self.language {
             Lang::Zh => zh,
             Lang::En => en,
+        }
+    }
+
+    fn status_text(&self) -> &'static str {
+        match self.status {
+            AppStatus::Idle => self.t("空闲", "Idle"),
+            AppStatus::Scanning => self.t("扫描中", "Scanning"),
+            AppStatus::Completed => self.t("完成", "Completed"),
+            AppStatus::Deleting => self.t("删除中", "Deleting"),
+            AppStatus::DeleteExecuted => self.t("删除已执行", "Delete executed"),
+            AppStatus::DeleteFailed => self.t("删除失败", "Delete failed"),
+            AppStatus::Cancelled => self.t("已取消", "Cancelled"),
         }
     }
 
@@ -753,7 +777,7 @@ impl DirOtterNativeApp {
         self.pending_delete_confirmation = None;
         self.execution_report = None;
         self.explorer_feedback = None;
-        self.status = self.t("删除中", "Deleting").to_string();
+        self.status = AppStatus::Deleting;
         self.delete_session = Some(DeleteSession { relay });
         self.egui_ctx.request_repaint();
 
@@ -796,9 +820,9 @@ impl DirOtterNativeApp {
         let _ = self.cache.add_audit_event("delete_execute", &audit_payload);
         if report.succeeded > 0 {
             self.prune_deleted_target(&payload.target);
-            self.status = self.t("删除已执行", "Delete executed").to_string();
+            self.status = AppStatus::DeleteExecuted;
         } else {
-            self.status = self.t("删除失败", "Delete failed").to_string();
+            self.status = AppStatus::DeleteFailed;
         }
         self.execution_report = Some(report);
         self.delete_session = None;
@@ -1040,7 +1064,7 @@ impl DirOtterNativeApp {
 
     fn start_scan(&mut self) {
         self.page = Page::CurrentScan;
-        self.status = self.t("扫描中", "Scanning").to_string();
+        self.status = AppStatus::Scanning;
         self.scan_current_path = None;
         self.scan_last_event_at = Some(Instant::now());
         self.scan_dropped_batches = 0;
@@ -1225,7 +1249,7 @@ impl DirOtterNativeApp {
 
         if let Some(finished) = finished {
             self.summary = finished.summary.clone();
-            self.status = self.t("完成", "Completed").to_string();
+            self.status = AppStatus::Completed;
             self.scan_current_path = None;
             self.scan_last_event_at = None;
             self.completed_top_files = finished.top_files;
@@ -1269,6 +1293,14 @@ impl DirOtterNativeApp {
                 .color(ui.visuals().weak_text_color()),
         );
         ui.heading("DirOtter");
+        ui.label(
+            egui::RichText::new(self.t(
+                "冷静地理解目录树，而不是急着清理一切。",
+                "A calmer way to understand your file tree.",
+            ))
+            .text_style(egui::TextStyle::Small)
+            .color(ui.visuals().weak_text_color()),
+        );
         ui.add_space(12.0);
 
         ui.label(
@@ -1312,7 +1344,30 @@ impl DirOtterNativeApp {
                 "Like mainstream disk analyzers: start with volume space, then inspect the largest folders and files.",
             ),
         );
-        ui.add_space(8.0);
+        ui.add_space(10.0);
+        if !self.scan_active() {
+            let preferred_scope = if self.root_input.trim().is_empty() {
+                self.t("先选一个盘符开始扫描。", "Pick a drive to begin scanning.")
+            } else {
+                self.t(
+                    "用快速盘符立刻开始，或调整路径后再扫描。",
+                    "Start from a quick-drive button, or refine the path before scanning.",
+                )
+            };
+            tone_banner(
+                ui,
+                self.t("准备开始一次目录巡检", "Ready for a New Pass"),
+                &format!(
+                    "{} {}",
+                    preferred_scope,
+                    self.t(
+                        "完成后，这个页面会优先给出卷空间、最大目录和最大文件。",
+                        "When the scan completes, this page will surface volume usage, largest folders, and largest files first.",
+                    )
+                ),
+            );
+            ui.add_space(12.0);
+        }
         if self.scan_active() {
             let current_path = self
                 .scan_current_path
@@ -1335,215 +1390,22 @@ impl DirOtterNativeApp {
             ui.add_space(10.0);
         }
 
-        ui.columns(2, |columns| {
-            surface_frame(&columns[0]).show(&mut columns[0], |ui| {
-                let root_hint = self
-                    .t("输入目录，例如 D:\\", "Enter a folder, e.g. D:\\")
-                    .to_string();
-                ui.label(
-                    egui::RichText::new(self.t("扫描目标", "Scan Target"))
-                        .text_style(egui::TextStyle::Name("title".into())),
-                );
-                ui.add_space(6.0);
-                ui.label(self.t("根目录", "Root path"));
-                ui.add_sized(
-                    [ui.available_width(), CONTROL_HEIGHT],
-                    egui::TextEdit::singleline(&mut self.root_input)
-                        .desired_width(f32::INFINITY)
-                        .hint_text(root_hint),
-                );
-                ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new(self.t("快速盘符", "Quick Drives"))
-                        .text_style(egui::TextStyle::Small)
-                        .color(ui.visuals().weak_text_color()),
-                );
-                if self.available_volumes.is_empty() {
-                    ui.label(self.t(
-                        "未检测到可用卷，仍可手动输入任意目录。",
-                        "No mounted volumes were detected. You can still enter any path manually.",
-                    ));
-                } else {
-                    let volumes = self.available_volumes.clone();
-                    ui.horizontal_wrapped(|ui| {
-                        for volume in volumes {
-                            let used = volume.total_bytes.saturating_sub(volume.available_bytes);
-                            let selected = self.root_input == volume.mount_point;
-                            let label = format!(
-                                "{}  {} / {}",
-                                short_volume_label(&volume),
-                                format_bytes(used),
-                                format_bytes(volume.total_bytes)
-                            );
-                            let response = ui
-                                .add_enabled_ui(!self.scan_active(), |ui| {
-                                    sized_selectable(ui, 144.0, selected, label.clone())
-                                })
-                                .inner
-                                .on_hover_text(format!(
-                                    "{}\n{} {}\n{} {}",
-                                    volume.name,
-                                    self.t("已用", "Used"),
-                                    format_bytes(used),
-                                    self.t("总量", "Total"),
-                                    format_bytes(volume.total_bytes)
-                                ));
-                            if response.clicked() {
-                                self.start_scan_for_root(volume.mount_point.clone());
-                            }
-                        }
-                    });
-                    ui.label(
-                        egui::RichText::new(self.t(
-                            "点击盘符按钮可直接开始扫描；文本框仍可输入任意目录。",
-                            "Click a drive button to scan it immediately, or type any custom path in the field above.",
-                        ))
-                        .text_style(egui::TextStyle::Small)
-                        .color(ui.visuals().weak_text_color()),
-                    );
-                }
-                ui.add_space(10.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(self.t("扫描策略", "Profile"));
-                    let ssd = ui
-                        .add_sized(
-                            [72.0, CONTROL_HEIGHT],
-                            egui::SelectableLabel::new(self.scan_profile == ScanProfile::Ssd, "SSD"),
-                        )
-                        .clicked();
-                    let hdd = ui
-                        .add_sized(
-                            [72.0, CONTROL_HEIGHT],
-                            egui::SelectableLabel::new(self.scan_profile == ScanProfile::Hdd, "HDD"),
-                        )
-                        .clicked();
-                    let network = ui
-                        .add_sized(
-                            [84.0, CONTROL_HEIGHT],
-                            egui::SelectableLabel::new(self.scan_profile == ScanProfile::Network, "Network"),
-                        )
-                        .clicked();
-                    if ssd {
-                        self.scan_profile = ScanProfile::Ssd;
-                    }
-                    if hdd {
-                        self.scan_profile = ScanProfile::Hdd;
-                    }
-                    if network {
-                        self.scan_profile = ScanProfile::Network;
-                    }
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(self.t("批大小", "Batch size"));
-                        ui.add_sized(
-                            [CONTROL_MIN_WIDTH, CONTROL_HEIGHT],
-                            egui::DragValue::new(&mut self.event_batch_size)
-                                .range(32..=4096)
-                                .speed(8),
-                        );
-                    });
-                    ui.vertical(|ui| {
-                        ui.label(self.t("快照间隔", "Snapshot interval"));
-                        ui.add_sized(
-                            [CONTROL_MIN_WIDTH + 20.0, CONTROL_HEIGHT],
-                            egui::DragValue::new(&mut self.snapshot_interval_ms)
-                                .range(50..=1000)
-                                .suffix(" ms")
-                                .speed(5),
-                        );
-                    });
-                });
-                ui.add_space(14.0);
-                let start_label = if self.scan_active() {
-                    self.t("扫描进行中", "Scanning")
-                } else {
-                    self.t("开始扫描", "Start Scan")
-                };
-                if ui
-                    .add_enabled_ui(!self.scan_active(), |ui| {
-                        sized_primary_button(ui, ui.available_width(), start_label)
-                    })
-                    .inner
-                    .on_hover_text(self.t(
-                        "扫描进行中时请使用右上角的停止按钮。",
-                        "Use the top-right stop button while a scan is running.",
-                    ))
-                    .clicked()
-                {
-                    self.start_scan();
-                }
-            });
-
-            surface_frame(&columns[1]).show(&mut columns[1], |ui| {
-                ui.label(
-                    egui::RichText::new(self.t("卷空间摘要", "Volume Summary"))
-                        .text_style(egui::TextStyle::Name("title".into())),
-                );
-                ui.add_space(10.0);
-                status_badge(ui, &self.status, self.scan_active());
-                ui.add_space(12.0);
-
-                if let Some((used, free, total)) = self.volume_numbers() {
-                    stat_row(
-                        ui,
-                        self.t("磁盘已用", "Used"),
-                        &format_bytes(used),
-                        &format!("{} {}", format_bytes(total), self.t("总容量", "total")),
-                    );
-                    stat_row(
-                        ui,
-                        self.t("磁盘可用", "Free"),
-                        &format_bytes(free),
-                        self.t("系统卷信息", "System volume info"),
-                    );
-                    stat_row(
-                        ui,
-                        self.t("已扫描", "Scanned"),
-                        &format_bytes(self.summary.bytes_observed),
-                        self.t(
-                            "本次已遍历到的文件总大小",
-                            "Total file bytes scanned so far",
-                        ),
-                    );
-
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new(self.t("扫描覆盖率", "Scan Coverage"))
-                            .text_style(egui::TextStyle::Small),
-                    );
-                    ui.add(
-                        egui::ProgressBar::new(self.scanned_coverage_ratio().unwrap_or_default())
-                            .text(format!(
-                                "{} / {}",
-                                format_bytes(self.summary.bytes_observed),
-                                format_bytes(used)
-                            ))
-                            .desired_width(ui.available_width().max(120.0)),
-                    );
-                }
-
-                ui.add_space(10.0);
-                stat_row(
-                    ui,
-                    self.t("文件数", "Files"),
-                    &format_count(self.summary.scanned_files),
-                    self.t("当前已统计文件", "Files counted"),
-                );
-                stat_row(
-                    ui,
-                    self.t("目录数", "Folders"),
-                    &format_count(self.summary.scanned_dirs),
-                    self.t("当前已遍历目录", "Folders traversed"),
-                );
-                stat_row(
-                    ui,
-                    self.t("错误", "Errors"),
-                    &format_count(self.summary.error_count),
-                    self.t("无法读取或被跳过的路径", "Unreadable or skipped paths"),
-                );
-            });
+        let gap = 14.0;
+        let usable_width = (ui.available_width() - gap).max(0.0);
+        let left_width = (usable_width * 0.50).round();
+        let right_width = (usable_width - left_width).max(0.0);
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(left_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| self.render_scan_target_card(ui),
+            );
+            ui.add_space(gap);
+            ui.allocate_ui_with_layout(
+                egui::vec2(right_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| self.render_volume_summary_card(ui),
+            );
         });
 
         ui.add_space(14.0);
@@ -1563,27 +1425,274 @@ impl DirOtterNativeApp {
                 "These are usually the quickest wins for reclaiming space.",
             )
             .to_string();
-        ui.columns(2, |columns| {
-            render_ranked_size_list(
-                &mut columns[0],
-                &folders_title,
-                &folders_subtitle,
-                &ranked_dirs,
-                self.summary.bytes_observed,
-                420.0,
-                &mut self.selection,
-                &mut self.execution_report,
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(left_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    render_ranked_size_list(
+                        ui,
+                        &folders_title,
+                        &folders_subtitle,
+                        &ranked_dirs,
+                        self.summary.bytes_observed,
+                        &mut self.selection,
+                        &mut self.execution_report,
+                    )
+                },
             );
-            render_ranked_size_list(
-                &mut columns[1],
-                &files_title,
-                &files_subtitle,
-                &ranked_files,
-                self.summary.bytes_observed,
-                420.0,
-                &mut self.selection,
-                &mut self.execution_report,
+            ui.add_space(gap);
+            ui.allocate_ui_with_layout(
+                egui::vec2(right_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    render_ranked_size_list(
+                        ui,
+                        &files_title,
+                        &files_subtitle,
+                        &ranked_files,
+                        self.summary.bytes_observed,
+                        &mut self.selection,
+                        &mut self.execution_report,
+                    )
+                },
             );
+        });
+    }
+
+    fn render_scan_target_card(&mut self, ui: &mut egui::Ui) {
+        surface_frame(ui).show(ui, |ui| {
+            let root_hint = self
+                .t("输入目录，例如 D:\\", "Enter a folder, e.g. D:\\")
+                .to_string();
+            ui.label(
+                egui::RichText::new(self.t("扫描目标", "Scan Target"))
+                    .text_style(egui::TextStyle::Name("title".into())),
+            );
+            ui.label(
+                egui::RichText::new(self.t(
+                    "先确定扫描范围，再决定性能策略。",
+                    "Set the scan scope first, then tune the performance profile.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(8.0);
+            ui.label(self.t("根目录", "Root path"));
+            ui.add_sized(
+                [ui.available_width(), CONTROL_HEIGHT],
+                egui::TextEdit::singleline(&mut self.root_input)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(root_hint),
+            );
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new(self.t("快速盘符", "Quick Drives"))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+            );
+            if self.available_volumes.is_empty() {
+                ui.label(self.t(
+                    "未检测到可用卷，仍可手动输入任意目录。",
+                    "No mounted volumes were detected. You can still enter any path manually.",
+                ));
+            } else {
+                let volumes = self.available_volumes.clone();
+                ui.horizontal_wrapped(|ui| {
+                    for volume in volumes {
+                        let used = volume.total_bytes.saturating_sub(volume.available_bytes);
+                        let selected = self.root_input == volume.mount_point;
+                        let label = format!(
+                            "{}  {} / {}",
+                            short_volume_label(&volume),
+                            format_bytes(used),
+                            format_bytes(volume.total_bytes)
+                        );
+                        let response = ui
+                            .add_enabled_ui(!self.scan_active(), |ui| {
+                                sized_selectable(ui, 144.0, selected, label.clone())
+                            })
+                            .inner
+                            .on_hover_text(format!(
+                                "{}\n{} {}\n{} {}",
+                                volume.name,
+                                self.t("已用", "Used"),
+                                format_bytes(used),
+                                self.t("总量", "Total"),
+                                format_bytes(volume.total_bytes)
+                            ));
+                        if response.clicked() {
+                            self.start_scan_for_root(volume.mount_point.clone());
+                        }
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "点击盘符按钮可直接开始扫描；文本框仍可输入任意目录。",
+                        "Click a drive button to scan it immediately, or type any custom path in the field above.",
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+            }
+            ui.add_space(12.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(self.t("扫描策略", "Profile"));
+                let ssd = ui
+                    .add_sized(
+                        [72.0, CONTROL_HEIGHT],
+                        egui::SelectableLabel::new(self.scan_profile == ScanProfile::Ssd, "SSD"),
+                    )
+                    .clicked();
+                let hdd = ui
+                    .add_sized(
+                        [72.0, CONTROL_HEIGHT],
+                        egui::SelectableLabel::new(self.scan_profile == ScanProfile::Hdd, "HDD"),
+                    )
+                    .clicked();
+                let network = ui
+                    .add_sized(
+                        [84.0, CONTROL_HEIGHT],
+                        egui::SelectableLabel::new(self.scan_profile == ScanProfile::Network, "Network"),
+                    )
+                    .clicked();
+                if ssd {
+                    self.scan_profile = ScanProfile::Ssd;
+                }
+                if hdd {
+                    self.scan_profile = ScanProfile::Hdd;
+                }
+                if network {
+                    self.scan_profile = ScanProfile::Network;
+                }
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(self.t("批大小", "Batch size"));
+                    ui.add_sized(
+                        [CONTROL_MIN_WIDTH, CONTROL_HEIGHT],
+                        egui::DragValue::new(&mut self.event_batch_size)
+                            .range(32..=4096)
+                            .speed(8),
+                    );
+                });
+                ui.vertical(|ui| {
+                    ui.label(self.t("快照间隔", "Snapshot interval"));
+                    ui.add_sized(
+                        [CONTROL_MIN_WIDTH + 20.0, CONTROL_HEIGHT],
+                        egui::DragValue::new(&mut self.snapshot_interval_ms)
+                            .range(50..=1000)
+                            .suffix(" ms")
+                            .speed(5),
+                    );
+                });
+            });
+            ui.add_space(16.0);
+            let start_label = if self.scan_active() {
+                self.t("扫描进行中", "Scanning")
+            } else {
+                self.t("开始扫描", "Start Scan")
+            };
+            if ui
+                .add_enabled_ui(!self.scan_active(), |ui| {
+                    sized_primary_button(ui, ui.available_width(), start_label)
+                })
+                .inner
+                .on_hover_text(self.t(
+                    "扫描进行中时请使用右上角的停止按钮。",
+                    "Use the top-right stop button while a scan is running.",
+                ))
+                .clicked()
+            {
+                self.start_scan();
+            }
+        });
+    }
+
+    fn render_volume_summary_card(&mut self, ui: &mut egui::Ui) {
+        surface_frame(ui).show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(self.t("卷空间摘要", "Volume Summary"))
+                    .text_style(egui::TextStyle::Name("title".into())),
+            );
+            ui.label(
+                egui::RichText::new(self.t(
+                    "先用卷级别摘要确认空间方向，再决定接下来要展开哪些目录。",
+                    "Use the volume-level summary to orient yourself before drilling into directories.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(8.0);
+            status_badge(ui, self.status_text(), self.scan_active());
+            ui.add_space(12.0);
+
+            if let Some((used, free, total)) = self.volume_numbers() {
+                ui.columns(2, |columns| {
+                    compact_metric_block(
+                        &mut columns[0],
+                        self.t("磁盘已用", "Used"),
+                        &format_bytes(used),
+                        &format!("{} {}", format_bytes(total), self.t("总容量", "total")),
+                    );
+                    compact_metric_block(
+                        &mut columns[1],
+                        self.t("磁盘可用", "Free"),
+                        &format_bytes(free),
+                        self.t("系统卷信息", "System volume info"),
+                    );
+                });
+                ui.add_space(8.0);
+                ui.columns(2, |columns| {
+                    compact_metric_block(
+                        &mut columns[0],
+                        self.t("已扫描", "Scanned"),
+                        &format_bytes(self.summary.bytes_observed),
+                        self.t(
+                            "本次已遍历到的文件总大小",
+                            "Total file bytes scanned so far",
+                        ),
+                    );
+                    compact_metric_block(
+                        &mut columns[1],
+                        self.t("错误", "Errors"),
+                        &format_count(self.summary.error_count),
+                        self.t("无法读取或被跳过的路径", "Unreadable or skipped paths"),
+                    );
+                });
+
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new(self.t("扫描覆盖率", "Scan Coverage"))
+                        .text_style(egui::TextStyle::Small),
+                );
+                ui.add(
+                    egui::ProgressBar::new(self.scanned_coverage_ratio().unwrap_or_default())
+                        .text(format!(
+                            "{} / {}",
+                            format_bytes(self.summary.bytes_observed),
+                            format_bytes(used)
+                        ))
+                        .desired_width(ui.available_width().max(120.0)),
+                );
+            }
+
+            ui.add_space(12.0);
+            ui.columns(2, |columns| {
+                compact_metric_block(
+                    &mut columns[0],
+                    self.t("文件数", "Files"),
+                    &format_count(self.summary.scanned_files),
+                    self.t("当前已统计文件", "Files counted"),
+                );
+                compact_metric_block(
+                    &mut columns[1],
+                    self.t("目录数", "Folders"),
+                    &format_count(self.summary.scanned_dirs),
+                    self.t("当前已遍历目录", "Folders traversed"),
+                );
+            });
         });
     }
 
@@ -1658,7 +1767,6 @@ impl DirOtterNativeApp {
                 &live_folders_subtitle,
                 &ranked_dirs,
                 self.summary.bytes_observed,
-                460.0,
                 &mut self.selection,
                 &mut self.execution_report,
             );
@@ -1668,7 +1776,6 @@ impl DirOtterNativeApp {
                 &live_files_subtitle,
                 &ranked_files,
                 self.summary.bytes_observed,
-                460.0,
                 &mut self.selection,
                 &mut self.execution_report,
             );
@@ -2268,7 +2375,7 @@ impl DirOtterNativeApp {
                     .color(ui.visuals().text_color()),
             );
             ui.add_space(10.0);
-            status_badge(ui, &self.status, self.scan_active() || self.delete_active());
+            status_badge(ui, self.status_text(), self.scan_active() || self.delete_active());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let active = self.scan_active();
                 let deleting = self.delete_active();
@@ -2284,7 +2391,7 @@ impl DirOtterNativeApp {
                 {
                     if let Some(session) = &self.scan_session {
                         session.cancel.store(true, Ordering::SeqCst);
-                        self.status = self.t("已取消", "Cancelled").to_string();
+                        self.status = AppStatus::Cancelled;
                         self.scan_current_path = None;
                     }
                 }
@@ -2761,7 +2868,7 @@ impl eframe::App for DirOtterNativeApp {
         let delete_active = self.delete_active();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "DirOtter {}",
-            self.status
+            self.status_text()
         )));
         if self.scan_active() || delete_active {
             ctx.request_repaint_after(Duration::from_millis(50));
@@ -2806,13 +2913,25 @@ impl eframe::App for DirOtterNativeApp {
                     ui.add_space(12.0);
                 }
                 match self.page {
-                    Page::Dashboard => self.ui_dashboard(ui),
-                    Page::CurrentScan => self.ui_current_scan(ui),
+                    Page::Dashboard => {
+                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH, |ui| self.ui_dashboard(ui))
+                    }
+                    Page::CurrentScan => with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 40.0, |ui| {
+                        self.ui_current_scan(ui)
+                    }),
                     Page::Treemap => self.ui_treemap(ui),
-                    Page::History => self.ui_history(ui),
-                    Page::Errors => self.ui_errors(ui),
-                    Page::Diagnostics => self.ui_diagnostics(ui),
-                    Page::Settings => self.ui_settings(ui, ctx),
+                    Page::History => {
+                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_history(ui))
+                    }
+                    Page::Errors => {
+                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_errors(ui))
+                    }
+                    Page::Diagnostics => {
+                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_diagnostics(ui))
+                    }
+                    Page::Settings => {
+                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH, |ui| self.ui_settings(ui, ctx))
+                    }
                 }
             });
 
@@ -3086,12 +3205,58 @@ fn border_color(visuals: &egui::Visuals) -> egui::Color32 {
     }
 }
 
+fn with_page_width<R>(
+    ui: &mut egui::Ui,
+    max_width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let available = ui.available_width();
+    let width = (available - 24.0).max(320.0).min(max_width);
+    let left_space = ((available - width) / 2.0).floor().max(0.0);
+    let right_space = (available - width - left_space).max(0.0);
+    ui.horizontal(|ui| {
+        if left_space > 0.0 {
+            ui.add_space(left_space);
+        }
+        let inner = ui
+            .allocate_ui_with_layout(
+            egui::vec2(width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            add_contents,
+        )
+            .inner;
+        if right_space > 0.0 {
+            ui.add_space(right_space);
+        }
+        inner
+    })
+    .inner
+}
+
+fn with_scrollable_page_width<R>(
+    ui: &mut egui::Ui,
+    max_width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| with_page_width(ui, max_width, add_contents))
+        .inner
+}
+
 fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.label(
+        egui::RichText::new("DirOtter Workspace")
+            .text_style(egui::TextStyle::Small)
+            .color(river_teal()),
+    );
+    ui.add_space(2.0);
     ui.label(
         egui::RichText::new(title)
             .text_style(egui::TextStyle::Heading)
             .strong(),
     );
+    ui.add_space(2.0);
     ui.label(
         egui::RichText::new(subtitle)
             .text_style(egui::TextStyle::Small)
@@ -3152,7 +3317,6 @@ fn render_ranked_size_list(
     subtitle: &str,
     items: &[(String, u64)],
     total: u64,
-    max_height: f32,
     selection: &mut SelectionState,
     execution_report: &mut Option<ExecutionReport>,
 ) {
@@ -3167,57 +3331,88 @@ fn render_ranked_size_list(
             ui.add_space(8.0);
 
             if items.is_empty() {
-                ui.label("No data");
+                empty_state_panel(
+                    ui,
+                    title,
+                    if title.contains("Folder") || title.contains("文件夹") {
+                        "Start a scan to see which directories consume the most space."
+                    } else {
+                        "Start a scan to surface the largest files worth reviewing first."
+                    },
+                );
                 return;
             }
 
             let denom = total.max(items.iter().map(|(_, size)| *size).max().unwrap_or(1));
-            egui::ScrollArea::vertical()
-                .id_source(("ranked-scroll", title))
-                .auto_shrink([false; 2])
-                .max_height(max_height)
-                .show(ui, |ui| {
-                    for (idx, (path, size)) in items.iter().enumerate() {
-                        let ratio = (*size as f32 / denom as f32).clamp(0.0, 1.0);
-                        let label = format!("{}. {}", idx + 1, truncate_middle(path, 52));
-                        let row_width = (ui.available_width() - 150.0).max(120.0);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_sized(
-                                    [row_width, 22.0],
-                                    egui::SelectableLabel::new(
-                                        selection.selected_path.as_deref() == Some(path.as_str()),
-                                        label,
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                selection.selected_path = Some(path.clone());
-                                selection.source = Some(SelectionSource::Table);
-                                selection.selected_node = None;
-                                *execution_report = None;
-                            }
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(format_bytes(*size));
-                                },
-                            );
-                        });
-                        ui.add(
-                            egui::ProgressBar::new(ratio)
-                                .desired_width(ui.available_width().max(120.0))
-                                .text(format!("{:.1}%", ratio * 100.0)),
-                        );
-                        ui.add_space(4.0);
+            for (idx, (path, size)) in items.iter().enumerate() {
+                let ratio = (*size as f32 / denom as f32).clamp(0.0, 1.0);
+                let label = format!("{}. {}", idx + 1, truncate_middle(path, 52));
+                let row_width = (ui.available_width() - 150.0).max(120.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_sized(
+                            [row_width, 22.0],
+                            egui::SelectableLabel::new(
+                                selection.selected_path.as_deref() == Some(path.as_str()),
+                                label,
+                            ),
+                        )
+                        .clicked()
+                    {
+                        selection.selected_path = Some(path.clone());
+                        selection.source = Some(SelectionSource::Table);
+                        selection.selected_node = None;
+                        *execution_report = None;
                     }
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            ui.label(format_bytes(*size));
+                        },
+                    );
                 });
+                ui.add(
+                    egui::ProgressBar::new(ratio)
+                        .desired_width(ui.available_width().max(120.0))
+                        .text(format!("{:.1}%", ratio * 100.0)),
+                );
+                if idx + 1 < items.len() {
+                    ui.add_space(6.0);
+                }
+            }
         });
     });
 }
 
+fn empty_state_panel(ui: &mut egui::Ui, title: &str, body: &str) {
+    let visuals = ui.visuals();
+    egui::Frame::default()
+        .fill(if visuals.dark_mode {
+            egui::Color32::from_rgb(0x1A, 0x24, 0x29)
+        } else {
+            egui::Color32::from_rgb(0xEC, 0xF1, 0xEF)
+        })
+        .rounding(egui::Rounding::same(12.0))
+        .inner_margin(egui::Margin::same(14.0))
+        .stroke(egui::Stroke::new(1.0, border_color(visuals)))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .text_style(egui::TextStyle::Small)
+                    .color(river_teal()),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(body)
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+            );
+        });
+}
+
 fn tone_banner(ui: &mut egui::Ui, title: &str, body: &str) {
     let visuals = ui.visuals();
+    let width = ui.available_width();
     egui::Frame::default()
         .fill(if visuals.dark_mode {
             egui::Color32::from_rgb(0x1D, 0x2A, 0x30)
@@ -3235,6 +3430,7 @@ fn tone_banner(ui: &mut egui::Ui, title: &str, body: &str) {
             },
         ))
         .show(ui, |ui| {
+            ui.set_min_width(width);
             ui.label(egui::RichText::new(title).strong().color(river_teal()));
             ui.label(body);
         });
@@ -3279,6 +3475,18 @@ fn status_badge(ui: &mut egui::Ui, status: &str, active: bool) {
         .show(ui, |ui: &mut egui::Ui| {
             ui.label(text);
         });
+}
+
+fn compact_metric_block(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
+    ui.vertical(|ui| {
+        ui.label(egui::RichText::new(title).strong());
+        ui.label(egui::RichText::new(value).size(16.0).strong());
+        ui.label(
+            egui::RichText::new(subtitle)
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+        );
+    });
 }
 
 fn stat_row(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
