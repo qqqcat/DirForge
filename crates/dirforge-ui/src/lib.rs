@@ -1,20 +1,18 @@
 use dirforge_actions::{
-    build_deletion_plan_with_origin, execute_plan_simulated, DeletionPlan, ExecutionMode,
-    ExecutionReport, SelectionOrigin,
+    build_deletion_plan_with_origin, execute_plan, ExecutionMode, ExecutionReport, SelectionOrigin,
 };
 use dirforge_cache::{CacheStore, HistoryRecord};
 use dirforge_core::{
     ErrorKind, Node, NodeId, NodeKind, NodeStore, RiskLevel, ScanErrorRecord, ScanProfile,
     ScanSummary, SnapshotDelta,
 };
-use dirforge_dup::DuplicateGroup;
 use dirforge_report::{
     default_manifest, export_diagnostics_archive, export_diagnostics_bundle, export_errors_csv,
 };
 use dirforge_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent};
 use dirforge_telemetry as telemetry;
 use eframe::egui;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{
@@ -43,7 +41,6 @@ enum Page {
     Treemap,
     History,
     Errors,
-    Operations,
     Diagnostics,
     Settings,
 }
@@ -124,6 +121,16 @@ struct FinishedPayload {
     top_dirs: Vec<(String, u64)>,
 }
 
+#[derive(Clone)]
+struct SelectedTarget {
+    name: String,
+    path: String,
+    size_bytes: u64,
+    kind: NodeKind,
+    file_count: u64,
+    dir_count: u64,
+}
+
 impl Default for ScanRelayState {
     fn default() -> Self {
         Self {
@@ -165,8 +172,6 @@ pub struct DirForgeNativeApp {
     completed_top_dirs: Vec<(String, u64)>,
     last_coalesce_commit: Instant,
 
-    duplicates: Vec<DuplicateGroup>,
-    deletion_plan: Option<DeletionPlan>,
     execution_report: Option<ExecutionReport>,
 
     history: Vec<HistoryRecord>,
@@ -225,8 +230,6 @@ impl DirForgeNativeApp {
             completed_top_files: Vec::new(),
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
-            duplicates: Vec::new(),
-            deletion_plan: None,
             execution_report: None,
             history: Vec::new(),
             errors: Vec::new(),
@@ -354,6 +357,234 @@ impl DirForgeNativeApp {
         store.nodes.get(node_id.0)
     }
 
+    fn selected_target(&self) -> Option<SelectedTarget> {
+        if let Some(node) = self.selected_node() {
+            return Some(SelectedTarget {
+                name: node.name.clone(),
+                path: node.path.clone(),
+                size_bytes: node.size_subtree.max(node.size_self),
+                kind: node.kind,
+                file_count: node.file_count,
+                dir_count: node.dir_count,
+            });
+        }
+
+        let path = self.selection.selected_path.clone()?;
+        let metadata = fs::metadata(&path).ok();
+        let kind = if metadata.as_ref().is_some_and(|meta| meta.is_dir()) {
+            NodeKind::Dir
+        } else {
+            NodeKind::File
+        };
+        let size_bytes = metadata
+            .as_ref()
+            .map(|meta| if meta.is_file() { meta.len() } else { 0 })
+            .unwrap_or(0);
+        let name = PathBuf::from(&path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| path.clone());
+        Some(SelectedTarget {
+            name,
+            path,
+            size_bytes,
+            kind,
+            file_count: if kind == NodeKind::File { 1 } else { 0 },
+            dir_count: if kind == NodeKind::Dir { 1 } else { 0 },
+        })
+    }
+
+    fn selection_origin(&self) -> SelectionOrigin {
+        match self.selection.source {
+            Some(SelectionSource::Table | SelectionSource::Treemap) => SelectionOrigin::TopFiles,
+            Some(SelectionSource::History | SelectionSource::Error) | None => {
+                SelectionOrigin::Manual
+            }
+        }
+    }
+
+    fn risk_for_path(&self, path: &str) -> RiskLevel {
+        let lower = path.to_ascii_lowercase();
+        if lower.contains("\\windows")
+            || lower.contains("\\program files")
+            || lower.contains("\\programdata")
+            || lower.contains("\\system volume information")
+            || lower.contains("\\$recycle.bin")
+        {
+            RiskLevel::High
+        } else if lower.contains("\\appdata") || lower.ends_with(":\\") {
+            RiskLevel::Medium
+        } else {
+            RiskLevel::Low
+        }
+    }
+
+    fn path_matches_target(path: &str, target: &SelectedTarget) -> bool {
+        if path == target.path {
+            return true;
+        }
+        if target.kind != NodeKind::Dir {
+            return false;
+        }
+        let Some(rest) = path.strip_prefix(&target.path) else {
+            return false;
+        };
+        rest.starts_with('\\') || rest.starts_with('/')
+    }
+
+    fn retain_existing_ranked_items(
+        items: &[(String, u64)],
+        limit: usize,
+        include_dirs: bool,
+    ) -> Vec<(String, u64)> {
+        items
+            .iter()
+            .filter(|(path, _)| {
+                fs::metadata(path)
+                    .map(|meta| {
+                        if include_dirs {
+                            meta.is_dir()
+                        } else {
+                            meta.is_file()
+                        }
+                    })
+                    .unwrap_or(false)
+            })
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    fn rebuild_store_without_target(
+        store: &NodeStore,
+        target: &SelectedTarget,
+    ) -> Option<NodeStore> {
+        let mut next = NodeStore::default();
+        let mut id_map: HashMap<NodeId, NodeId> = HashMap::new();
+
+        for node in &store.nodes {
+            if Self::path_matches_target(&node.path, target) {
+                continue;
+            }
+            let parent = node.parent.and_then(|old_id| id_map.get(&old_id).copied());
+            let new_id = next.add_node(
+                parent,
+                node.name.clone(),
+                node.path.clone(),
+                node.kind,
+                node.size_self,
+            );
+            id_map.insert(node.id, new_id);
+        }
+
+        if next.nodes.is_empty() {
+            return None;
+        }
+
+        next.rollup();
+        Some(next)
+    }
+
+    fn sync_summary_from_store(&mut self) {
+        if let Some(store) = self.store.as_ref() {
+            if let Some(root) = store.nodes.iter().find(|node| node.parent.is_none()) {
+                self.summary.scanned_files = root.file_count;
+                self.summary.scanned_dirs = root.dir_count;
+                self.summary.bytes_observed = root.size_subtree.max(root.size_self);
+            }
+        } else {
+            self.summary.scanned_files = 0;
+            self.summary.scanned_dirs = 0;
+            self.summary.bytes_observed = 0;
+        }
+    }
+
+    fn sync_rankings_from_store(&mut self) {
+        let Some(store) = self.store.as_ref() else {
+            self.live_top_files.clear();
+            self.live_top_dirs.clear();
+            self.completed_top_files.clear();
+            self.completed_top_dirs.clear();
+            return;
+        };
+
+        let top_files: Vec<(String, u64)> = store
+            .top_n_largest_files(32)
+            .into_iter()
+            .map(|node| (node.path.clone(), node.size_self))
+            .collect();
+        let top_dirs: Vec<(String, u64)> = store
+            .largest_dirs(32)
+            .into_iter()
+            .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
+            .collect();
+
+        self.live_top_files = top_files.clone();
+        self.live_top_dirs = top_dirs.clone();
+        self.completed_top_files = top_files;
+        self.completed_top_dirs = top_dirs;
+    }
+
+    fn prune_deleted_target(&mut self, target: &SelectedTarget) {
+        let matches_target = |path: &str| -> bool { Self::path_matches_target(path, target) };
+
+        self.live_files.retain(|(path, _)| !matches_target(path));
+        self.live_top_files
+            .retain(|(path, _)| !matches_target(path));
+        self.live_top_dirs.retain(|(path, _)| !matches_target(path));
+        self.completed_top_files
+            .retain(|(path, _)| !matches_target(path));
+        self.completed_top_dirs
+            .retain(|(path, _)| !matches_target(path));
+        self.errors.retain(|error| !matches_target(&error.path));
+        if let Some(store) = self.store.clone() {
+            self.store = Self::rebuild_store_without_target(&store, target);
+            self.sync_summary_from_store();
+            self.sync_rankings_from_store();
+            self.treemap_cache = TreemapViewportCache::default();
+        } else {
+            self.summary.bytes_observed = self
+                .summary
+                .bytes_observed
+                .saturating_sub(target.size_bytes);
+            self.summary.scanned_files =
+                self.summary.scanned_files.saturating_sub(target.file_count);
+            self.summary.scanned_dirs = self.summary.scanned_dirs.saturating_sub(target.dir_count);
+        }
+        self.selection = SelectionState::default();
+    }
+
+    fn execute_selected_delete(&mut self, mode: ExecutionMode) {
+        let Some(target) = self.selected_target() else {
+            return;
+        };
+        let plan = build_deletion_plan_with_origin(
+            vec![(
+                target.path.clone(),
+                target.size_bytes,
+                self.risk_for_path(&target.path),
+            )],
+            self.selection_origin(),
+        );
+        let report = execute_plan(&plan, mode);
+        let payload = serde_json::json!({
+            "path": target.path,
+            "mode": format!("{:?}", report.mode),
+            "attempted": report.attempted,
+            "succeeded": report.succeeded,
+            "failed": report.failed,
+        })
+        .to_string();
+        let _ = self.cache.add_audit_event("delete_execute", &payload);
+        if report.succeeded > 0 {
+            self.prune_deleted_target(&target);
+            self.status = self.t("删除已执行", "Delete executed").to_string();
+        }
+        self.execution_report = Some(report);
+        self.refresh_diagnostics();
+    }
+
     fn source_label(&self, source: SelectionSource) -> &'static str {
         match source {
             SelectionSource::Treemap => self.t("矩形树图", "Treemap"),
@@ -370,6 +601,7 @@ impl DirForgeNativeApp {
             .store
             .as_ref()
             .and_then(|store| store.path_index.get(path).copied());
+        self.execution_report = None;
     }
 
     fn current_volume_info(&self) -> Option<dirforge_platform::VolumeInfo> {
@@ -432,15 +664,10 @@ impl DirForgeNativeApp {
 
     fn current_ranked_dirs(&self, limit: usize) -> Vec<(String, u64)> {
         if self.scan_active() && !self.live_top_dirs.is_empty() {
-            return self.live_top_dirs.iter().take(limit).cloned().collect();
+            return Self::retain_existing_ranked_items(&self.live_top_dirs, limit, true);
         }
         if !self.scan_active() && !self.completed_top_dirs.is_empty() {
-            return self
-                .completed_top_dirs
-                .iter()
-                .take(limit)
-                .cloned()
-                .collect();
+            return Self::retain_existing_ranked_items(&self.completed_top_dirs, limit, true);
         }
 
         self.store
@@ -449,7 +676,13 @@ impl DirForgeNativeApp {
                 store
                     .largest_dirs(limit)
                     .into_iter()
+                    .filter(|node| {
+                        fs::metadata(&node.path)
+                            .map(|meta| meta.is_dir())
+                            .unwrap_or(false)
+                    })
                     .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
+                    .take(limit)
                     .collect()
             })
             .unwrap_or_default()
@@ -457,15 +690,10 @@ impl DirForgeNativeApp {
 
     fn current_ranked_files(&self, limit: usize) -> Vec<(String, u64)> {
         if self.scan_active() && !self.live_top_files.is_empty() {
-            return self.live_top_files.iter().take(limit).cloned().collect();
+            return Self::retain_existing_ranked_items(&self.live_top_files, limit, false);
         }
         if !self.scan_active() && !self.completed_top_files.is_empty() {
-            return self
-                .completed_top_files
-                .iter()
-                .take(limit)
-                .cloned()
-                .collect();
+            return Self::retain_existing_ranked_items(&self.completed_top_files, limit, false);
         }
 
         self.store
@@ -474,7 +702,13 @@ impl DirForgeNativeApp {
                 store
                     .top_n_largest_files(limit)
                     .into_iter()
+                    .filter(|node| {
+                        fs::metadata(&node.path)
+                            .map(|meta| meta.is_file())
+                            .unwrap_or(false)
+                    })
                     .map(|node| (node.path.clone(), node.size_self))
+                    .take(limit)
                     .collect()
             })
             .unwrap_or_default()
@@ -723,8 +957,7 @@ impl DirForgeNativeApp {
                 .ok();
 
             self.errors = finished.errors;
-            self.duplicates.clear();
-            self.deletion_plan = None;
+            self.execution_report = None;
             if let Some(id) = history_id {
                 self.selected_history_id = Some(id);
             }
@@ -739,21 +972,6 @@ impl DirForgeNativeApp {
         self.perf.frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
         self.perf.last_update = Some(Instant::now());
         telemetry::record_ui_frame();
-    }
-
-    fn build_deletion_plan_from_duplicates(&self) -> DeletionPlan {
-        let candidates: Vec<(String, u64, RiskLevel)> = self
-            .duplicates
-            .iter()
-            .flat_map(|g| {
-                g.members
-                    .iter()
-                    .filter(|m| !m.keeper)
-                    .map(|m| (m.path.clone(), m.size, g.risk))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        build_deletion_plan_with_origin(candidates, SelectionOrigin::Duplicates)
     }
 
     fn ui_nav(&mut self, ui: &mut egui::Ui) {
@@ -784,7 +1002,6 @@ impl DirForgeNativeApp {
             (Page::Treemap, "矩形树图", "Treemap"),
             (Page::History, "历史记录", "History"),
             (Page::Errors, "错误中心", "Errors"),
-            (Page::Operations, "操作中心", "Operations"),
             (Page::Diagnostics, "诊断导出", "Diagnostics"),
             (Page::Settings, "偏好设置", "Settings"),
         ] {
@@ -880,11 +1097,18 @@ impl DirForgeNativeApp {
                     });
                 });
                 ui.add_space(14.0);
+                let start_label = if self.scan_active() {
+                    self.t("扫描进行中", "Scanning")
+                } else {
+                    self.t("开始扫描", "Start Scan")
+                };
+                let start_button = egui::Button::new(start_label);
                 if ui
-                    .add_sized(
-                        [140.0, 36.0],
-                        egui::Button::new(self.t("开始扫描", "Start Scan")),
-                    )
+                    .add_enabled(!self.scan_active(), start_button)
+                    .on_hover_text(self.t(
+                        "扫描进行中时请使用右上角的停止按钮。",
+                        "Use the top-right stop button while a scan is running.",
+                    ))
                     .clicked()
                 {
                     self.start_scan();
@@ -985,7 +1209,9 @@ impl DirForgeNativeApp {
                 &folders_subtitle,
                 &ranked_dirs,
                 self.summary.bytes_observed,
+                420.0,
                 &mut self.selection,
+                &mut self.execution_report,
             );
             render_ranked_size_list(
                 &mut columns[1],
@@ -993,7 +1219,9 @@ impl DirForgeNativeApp {
                 &files_subtitle,
                 &ranked_files,
                 self.summary.bytes_observed,
+                420.0,
                 &mut self.selection,
+                &mut self.execution_report,
             );
         });
     }
@@ -1077,7 +1305,9 @@ impl DirForgeNativeApp {
                 &live_folders_subtitle,
                 &ranked_dirs,
                 self.summary.bytes_observed,
+                460.0,
                 &mut self.selection,
+                &mut self.execution_report,
             );
             render_ranked_size_list(
                 &mut columns[1],
@@ -1085,7 +1315,9 @@ impl DirForgeNativeApp {
                 &live_files_subtitle,
                 &ranked_files,
                 self.summary.bytes_observed,
+                460.0,
                 &mut self.selection,
+                &mut self.execution_report,
             );
         });
 
@@ -1198,6 +1430,7 @@ impl DirForgeNativeApp {
                         self.selection.selected_path = Some(node.path.clone());
                     }
                     self.selection.source = Some(SelectionSource::Treemap);
+                    self.execution_report = None;
                 }
                 if resp.hovered() {
                     resp = resp.on_hover_ui(|ui| {
@@ -1326,6 +1559,7 @@ impl DirForgeNativeApp {
                             self.errors = e;
                         }
                         self.selection.source = Some(SelectionSource::History);
+                        self.execution_report = None;
                     }
                 }
             }
@@ -1410,13 +1644,11 @@ impl DirForgeNativeApp {
                             )
                             .clicked()
                         {
-                            self.selection.selected_path = Some(e.path.clone());
-                            self.selection.source = Some(SelectionSource::Error);
+                            self.select_path(&e.path, SelectionSource::Error);
                         }
                         ui.horizontal(|ui| {
-                            if ui.button(self.t("跳转路径", "Jump to path")).clicked() {
-                                self.selection.selected_path = Some(e.path.clone());
-                                self.page = Page::Operations;
+                            if ui.button(self.t("选中查看", "Inspect")).clicked() {
+                                self.select_path(&e.path, SelectionSource::Error);
                             }
                             ui.label(
                                 egui::RichText::new(&e.reason)
@@ -1427,153 +1659,6 @@ impl DirForgeNativeApp {
                 }
             }
         });
-    }
-
-    fn ui_operations(&mut self, ui: &mut egui::Ui) {
-        page_header(
-            ui,
-            self.t("操作中心", "Operations"),
-            self.t(
-                "将建议回收量、风险和模拟执行结果集中到一处，避免关键数字难以辨认。",
-                "Consolidate reclaimable size, risk, and simulated execution results into a readable workflow.",
-            ),
-        );
-        ui.add_space(8.0);
-        if self.deletion_plan.is_none() {
-            self.deletion_plan = Some(self.build_deletion_plan_from_duplicates());
-        }
-        if let Some(plan) = self.deletion_plan.clone() {
-            surface_frame(ui).show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(self.t("待执行计划", "Pending Plan"))
-                        .text_style(egui::TextStyle::Name("title".into())),
-                );
-                if let Some(path) = &self.selection.selected_path {
-                    ui.label(format!(
-                        "{}: {}",
-                        self.t("当前选中", "Selected"),
-                        truncate_middle(path, 56)
-                    ));
-                }
-                ui.add_space(8.0);
-                stat_row(
-                    ui,
-                    self.t("文件数", "Files"),
-                    &format_count(plan.files.len() as u64),
-                    self.t("候选删除文件", "Candidate deletions"),
-                );
-                stat_row(
-                    ui,
-                    self.t("可回收", "Reclaimable"),
-                    &format_bytes(plan.reclaimable_bytes),
-                    self.t("预计释放空间", "Expected reclaimed size"),
-                );
-                stat_row(
-                    ui,
-                    self.t("高风险", "High Risk"),
-                    &format_count(plan.high_risk_count as u64),
-                    self.t("需重点复核", "Needs careful review"),
-                );
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(self.t("模拟回收站删除", "Simulate recycle delete"))
-                        .clicked()
-                    {
-                        self.execution_report =
-                            Some(execute_plan_simulated(&plan, ExecutionMode::RecycleBin));
-                    }
-                    if ui
-                        .button(self.t("模拟永久删除", "Simulate permanent delete"))
-                        .clicked()
-                    {
-                        self.execution_report =
-                            Some(execute_plan_simulated(&plan, ExecutionMode::Permanent));
-                    }
-                });
-            });
-
-            ui.separator();
-            egui::ScrollArea::vertical().show_rows(ui, 28.0, plan.files.len(), |ui, range| {
-                for i in range {
-                    if let Some(item) = plan.files.get(i) {
-                        data_row(
-                            ui,
-                            &format!("{:?}  {}", item.risk, truncate_middle(&item.path, 72)),
-                            &format_bytes(item.size),
-                        );
-                    }
-                }
-            });
-
-            if let Some(report) = self.execution_report.clone() {
-                ui.separator();
-                surface_frame(ui).show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(self.t("执行结果", "Execution Result"))
-                            .text_style(egui::TextStyle::Name("title".into())),
-                    );
-                    ui.add_space(8.0);
-                    stat_row(
-                        ui,
-                        self.t("模式", "Mode"),
-                        &format!("{:?}", report.mode),
-                        self.t("本次为模拟执行", "Simulation only"),
-                    );
-                    stat_row(
-                        ui,
-                        self.t("尝试", "Attempted"),
-                        &format_count(report.attempted as u64),
-                        &format!(
-                            "{} {} / {} {}",
-                            format_count(report.succeeded as u64),
-                            self.t("成功", "succeeded"),
-                            format_count(report.failed as u64),
-                            self.t("失败", "failed")
-                        ),
-                    );
-                    if ui
-                        .button(self.t("记录批执行审计", "Record execution audit"))
-                        .clicked()
-                    {
-                        let payload = serde_json::json!({
-                            "mode": format!("{:?}", report.mode),
-                            "attempted": report.attempted,
-                            "succeeded": report.succeeded,
-                            "failed": report.failed,
-                        })
-                        .to_string();
-                        let _ = self
-                            .cache
-                            .add_audit_event("delete_execute_simulated", &payload);
-                        self.refresh_diagnostics();
-                    }
-                });
-                egui::ScrollArea::vertical().show_rows(
-                    ui,
-                    28.0,
-                    report.items.len(),
-                    |ui, range| {
-                        for i in range {
-                            if let Some(it) = report.items.get(i) {
-                                data_row(
-                                    ui,
-                                    &format!(
-                                        "{}  {}",
-                                        if it.success {
-                                            self.t("成功", "OK")
-                                        } else {
-                                            self.t("失败", "Failed")
-                                        },
-                                        truncate_middle(&it.path, 72)
-                                    ),
-                                    &it.message,
-                                );
-                            }
-                        }
-                    },
-                );
-            }
-        }
     }
 
     fn ui_diagnostics(&mut self, ui: &mut egui::Ui) {
@@ -1696,15 +1781,29 @@ impl DirForgeNativeApp {
             ui.add_space(10.0);
             status_badge(ui, &self.status, self.scan_active());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(self.t("取消", "Cancel")).clicked() {
+                let active = self.scan_active();
+                let stop_label = if active {
+                    self.t("停止扫描", "Stop Scan")
+                } else {
+                    self.t("取消", "Cancel")
+                };
+                if ui
+                    .add_enabled(active, egui::Button::new(stop_label))
+                    .clicked()
+                {
                     if let Some(session) = &self.scan_session {
                         session.cancel.store(true, Ordering::SeqCst);
                         self.status = self.t("已取消", "Cancelled").to_string();
                         self.scan_current_path = None;
                     }
                 }
+                let start_label = if active {
+                    self.t("扫描中", "Scanning")
+                } else {
+                    self.t("开始扫描", "Start Scan")
+                };
                 if ui
-                    .add(egui::Button::new(self.t("开始扫描", "Start Scan")))
+                    .add_enabled(!active, egui::Button::new(start_label))
                     .clicked()
                 {
                     self.start_scan();
@@ -1714,6 +1813,7 @@ impl DirForgeNativeApp {
     }
 
     fn ui_inspector(&mut self, ui: &mut egui::Ui) {
+        let selected_target = self.selected_target();
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(self.t("检查器", "Inspector"))
@@ -1727,12 +1827,12 @@ impl DirForgeNativeApp {
         ui.add_space(10.0);
 
         surface_frame(ui).show(ui, |ui| {
-            if let Some(node) = self.selected_node() {
+            if let Some(target) = selected_target.as_ref() {
                 stat_row(
                     ui,
                     self.t("名称", "Name"),
-                    &node.name,
-                    match node.kind {
+                    &target.name,
+                    match target.kind {
                         NodeKind::Dir => self.t("目录", "Directory"),
                         NodeKind::File => self.t("文件", "File"),
                     },
@@ -1740,33 +1840,107 @@ impl DirForgeNativeApp {
                 stat_row(
                     ui,
                     self.t("路径", "Path"),
-                    &truncate_middle(&node.path, 34),
+                    &truncate_middle(&target.path, 34),
                     self.t("完整路径可在悬浮提示中查看", "Full path available on hover"),
                 );
                 stat_row(
                     ui,
                     self.t("大小", "Size"),
-                    &format_bytes(node.size_subtree.max(node.size_self)),
+                    &format_bytes(target.size_bytes),
                     &format!(
                         "{} {} / {} {}",
-                        format_count(node.file_count),
+                        format_count(target.file_count),
                         self.t("文件", "files"),
-                        format_count(node.dir_count),
+                        format_count(target.dir_count),
                         self.t("目录", "dirs")
                     ),
-                );
-            } else if let Some(path) = &self.selection.selected_path {
-                stat_row(
-                    ui,
-                    self.t("路径", "Path"),
-                    &truncate_middle(path, 34),
-                    self.t("来自外部列表选择", "Selected from an external list"),
                 );
             } else {
                 ui.label(self.t(
                     "尚未选择任何文件或目录。可以从实时列表、历史、错误页或 treemap 中点选对象。",
                     "No file or folder selected yet. Pick one from the live list, history, errors, or treemap.",
                 ));
+            }
+        });
+
+        ui.add_space(10.0);
+        surface_frame(ui).show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(self.t("快速操作", "Quick Actions"))
+                    .text_style(egui::TextStyle::Name("title".into())),
+            );
+            ui.label(
+                egui::RichText::new(self.t(
+                    "直接在右侧完成清理，不再跳到单独的操作页。",
+                    "Delete directly from the inspector instead of jumping to a separate page.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(8.0);
+            let has_selection = selected_target.is_some();
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        has_selection,
+                        egui::Button::new(self.t("移到回收站", "Move to Recycle Bin")),
+                    )
+                    .clicked()
+                {
+                    self.execute_selected_delete(ExecutionMode::RecycleBin);
+                }
+                let permanent = egui::Button::new(self.t("永久删除", "Delete Permanently"))
+                    .fill(egui::Color32::from_rgb(157, 53, 53));
+                if ui.add_enabled(has_selection, permanent).clicked() {
+                    self.execute_selected_delete(ExecutionMode::Permanent);
+                }
+            });
+            if !has_selection {
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "先从列表、树图、历史或错误列表里选中一个文件或文件夹。",
+                        "Select a file or folder from a list, treemap, history, or errors first.",
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+            }
+            if let Some(report) = self.execution_report.as_ref() {
+                ui.add_space(10.0);
+                stat_row(
+                    ui,
+                    self.t("最近执行", "Last Action"),
+                    match report.mode {
+                        ExecutionMode::RecycleBin => self.t("移到回收站", "Moved to recycle bin"),
+                        ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
+                    },
+                    &format!(
+                        "{} {} / {} {}",
+                        format_count(report.succeeded as u64),
+                        self.t("成功", "succeeded"),
+                        format_count(report.failed as u64),
+                        self.t("失败", "failed")
+                    ),
+                );
+                if let Some(item) = report.items.first() {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{}: {}",
+                            if item.success {
+                                self.t("结果", "Result")
+                            } else {
+                                self.t("失败原因", "Failure")
+                            },
+                            item.message
+                        ))
+                        .text_style(egui::TextStyle::Small)
+                        .color(if item.success {
+                            ui.visuals().text_color()
+                        } else {
+                            egui::Color32::from_rgb(231, 111, 81)
+                        }),
+                    );
+                }
             }
         });
 
@@ -1882,7 +2056,6 @@ impl eframe::App for DirForgeNativeApp {
                 Page::Treemap => self.ui_treemap(ui),
                 Page::History => self.ui_history(ui),
                 Page::Errors => self.ui_errors(ui),
-                Page::Operations => self.ui_operations(ui),
                 Page::Diagnostics => self.ui_diagnostics(ui),
                 Page::Settings => self.ui_settings(ui, ctx),
             });
@@ -2117,53 +2290,67 @@ fn render_ranked_size_list(
     subtitle: &str,
     items: &[(String, u64)],
     total: u64,
+    max_height: f32,
     selection: &mut SelectionState,
+    execution_report: &mut Option<ExecutionReport>,
 ) {
     surface_frame(ui).show(ui, |ui| {
-        ui.label(egui::RichText::new(title).text_style(egui::TextStyle::Name("title".into())));
-        ui.label(
-            egui::RichText::new(subtitle)
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
-        );
-        ui.add_space(8.0);
-
-        if items.is_empty() {
-            ui.label("No data");
-            return;
-        }
-
-        let denom = total.max(items.iter().map(|(_, size)| *size).max().unwrap_or(1));
-        for (idx, (path, size)) in items.iter().enumerate() {
-            let ratio = (*size as f32 / denom as f32).clamp(0.0, 1.0);
-            let label = format!("{}. {}", idx + 1, truncate_middle(path, 52));
-            let row_width = (ui.available_width() - 150.0).max(120.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .add_sized(
-                        [row_width, 22.0],
-                        egui::SelectableLabel::new(
-                            selection.selected_path.as_deref() == Some(path.as_str()),
-                            label,
-                        ),
-                    )
-                    .clicked()
-                {
-                    selection.selected_path = Some(path.clone());
-                    selection.source = Some(SelectionSource::Table);
-                    selection.selected_node = None;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(format_bytes(*size));
-                });
-            });
-            ui.add(
-                egui::ProgressBar::new(ratio)
-                    .desired_width(ui.available_width().max(120.0))
-                    .text(format!("{:.1}%", ratio * 100.0)),
+        ui.push_id(("ranked-panel", title), |ui| {
+            ui.label(egui::RichText::new(title).text_style(egui::TextStyle::Name("title".into())));
+            ui.label(
+                egui::RichText::new(subtitle)
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
             );
-            ui.add_space(4.0);
-        }
+            ui.add_space(8.0);
+
+            if items.is_empty() {
+                ui.label("No data");
+                return;
+            }
+
+            let denom = total.max(items.iter().map(|(_, size)| *size).max().unwrap_or(1));
+            egui::ScrollArea::vertical()
+                .id_source(("ranked-scroll", title))
+                .auto_shrink([false; 2])
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    for (idx, (path, size)) in items.iter().enumerate() {
+                        let ratio = (*size as f32 / denom as f32).clamp(0.0, 1.0);
+                        let label = format!("{}. {}", idx + 1, truncate_middle(path, 52));
+                        let row_width = (ui.available_width() - 150.0).max(120.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_sized(
+                                    [row_width, 22.0],
+                                    egui::SelectableLabel::new(
+                                        selection.selected_path.as_deref() == Some(path.as_str()),
+                                        label,
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                selection.selected_path = Some(path.clone());
+                                selection.source = Some(SelectionSource::Table);
+                                selection.selected_node = None;
+                                *execution_report = None;
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(format_bytes(*size));
+                                },
+                            );
+                        });
+                        ui.add(
+                            egui::ProgressBar::new(ratio)
+                                .desired_width(ui.available_width().max(120.0))
+                                .text(format!("{:.1}%", ratio * 100.0)),
+                        );
+                        ui.add_space(4.0);
+                    }
+                });
+        });
     });
 }
 
@@ -2213,15 +2400,6 @@ fn stat_row(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(egui::RichText::new(value).strong());
-        });
-    });
-}
-
-fn data_row(ui: &mut egui::Ui, left: &str, right: &str) {
-    ui.horizontal(|ui| {
-        ui.label(left);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(egui::RichText::new(right).color(ui.visuals().weak_text_color()));
         });
     });
 }
