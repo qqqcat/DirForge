@@ -116,7 +116,7 @@ struct TreemapTile {
 
 #[derive(Default, Clone)]
 struct TreemapViewportCache {
-    key: Option<(u32, u32, usize)>,
+    key: Option<(u32, u32, usize, usize)>,
     tiles: Vec<TreemapTile>,
 }
 
@@ -1838,17 +1838,19 @@ impl DirOtterNativeApp {
         &mut self,
         store: &NodeStore,
         viewport: egui::Rect,
+        scope_id: NodeId,
     ) -> Vec<TreemapTile> {
         let key = (
             viewport.width() as u32,
             viewport.height() as u32,
             store.nodes.len(),
+            scope_id.0,
         );
         if self.treemap_cache.key == Some(key) {
             return self.treemap_cache.tiles.clone();
         }
 
-        let dirs = store.largest_dirs(TREEMAP_TILE_LIMIT);
+        let dirs = self.treemap_entries_for_scope(store, scope_id);
         let mut tiles = Vec::new();
         layout_treemap_recursive(viewport, &dirs, &mut tiles);
         self.treemap_cache = TreemapViewportCache {
@@ -1856,6 +1858,89 @@ impl DirOtterNativeApp {
             tiles: tiles.clone(),
         };
         tiles
+    }
+
+    fn treemap_entries_for_scope<'a>(
+        &self,
+        store: &'a NodeStore,
+        scope_id: NodeId,
+    ) -> Vec<&'a Node> {
+        let mut nodes: Vec<&Node> = store
+            .children
+            .get(&scope_id)
+            .into_iter()
+            .flat_map(|ids| ids.iter())
+            .filter_map(|id| store.nodes.get(id.0))
+            .collect();
+
+        nodes.sort_by(|a, b| {
+            b.size_subtree
+                .max(b.size_self)
+                .cmp(&a.size_subtree.max(a.size_self))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        nodes.truncate(TREEMAP_TILE_LIMIT);
+
+        if nodes.is_empty() {
+            store
+                .nodes
+                .get(scope_id.0)
+                .map(|node| vec![node])
+                .unwrap_or_default()
+        } else {
+            nodes
+        }
+    }
+
+    fn root_node_id(&self, store: &NodeStore) -> Option<NodeId> {
+        store.nodes.iter().find(|node| node.parent.is_none()).map(|node| node.id)
+    }
+
+    fn nearest_store_node_for_path(&self, store: &NodeStore, path: &str) -> Option<NodeId> {
+        let mut current = Some(path.to_string());
+        while let Some(candidate) = current {
+            if let Some(id) = store.path_index.get(&candidate).copied() {
+                return Some(id);
+            }
+            current = PathBuf::from(&candidate)
+                .parent()
+                .map(|parent| parent.display().to_string());
+        }
+        None
+    }
+
+    fn treemap_scope_node_id(&self, store: &NodeStore) -> Option<NodeId> {
+        let root_id = self.root_node_id(store)?;
+        let Some(target) = self.selected_target() else {
+            return Some(root_id);
+        };
+
+        let scope_path = match target.kind {
+            NodeKind::Dir => target.path,
+            NodeKind::File => PathBuf::from(&target.path)
+                .parent()
+                .map(|parent| parent.display().to_string())
+                .unwrap_or_else(|| target.path),
+        };
+
+        self.nearest_store_node_for_path(store, &scope_path)
+            .or(Some(root_id))
+    }
+
+    fn select_node_from_store(
+        &mut self,
+        store: &NodeStore,
+        node_id: NodeId,
+        source: SelectionSource,
+    ) {
+        self.selection.selected_node = Some(node_id);
+        if let Some(node) = store.nodes.get(node_id.0) {
+            self.selection.selected_path = Some(node.path.clone());
+        }
+        self.selection.source = Some(source);
+        self.execution_report = None;
+        self.pending_delete_confirmation = None;
+        self.explorer_feedback = None;
     }
 
     fn ui_treemap(&mut self, ui: &mut egui::Ui) {
@@ -1868,11 +1953,42 @@ impl DirOtterNativeApp {
             ),
         );
         ui.add_space(8.0);
-        let desired = egui::vec2(ui.available_width(), ui.available_height() - 12.0);
-        let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
         if let Some(store) = self.store.clone() {
+            let Some(scope_id) = self.treemap_scope_node_id(&store) else {
+                return;
+            };
+            let Some(scope_node) = store.nodes.get(scope_id.0) else {
+                return;
+            };
+            let root_id = self.root_node_id(&store).unwrap_or(scope_id);
+
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}: {}",
+                        self.t("当前范围", "Current scope"),
+                        truncate_middle(&scope_node.path, 60)
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+                if scope_node.parent.is_some() {
+                    if ui.button(self.t("上一级", "Up")).clicked() {
+                        if let Some(parent_id) = scope_node.parent {
+                            self.select_node_from_store(&store, parent_id, SelectionSource::Treemap);
+                        }
+                    }
+                    if scope_id != root_id && ui.button(self.t("回到根目录", "Reset to Root")).clicked()
+                    {
+                        self.select_node_from_store(&store, root_id, SelectionSource::Treemap);
+                    }
+                }
+            });
+            ui.add_space(8.0);
+            let desired = egui::vec2(ui.available_width(), ui.available_height() - 12.0);
+            let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
             let painter = ui.painter_at(rect);
-            let tiles = self.treemap_tiles_for_viewport(&store, rect);
+            let tiles = self.treemap_tiles_for_viewport(&store, rect, scope_id);
 
             for tile in &tiles {
                 let mut resp = ui.interact(
@@ -1885,12 +2001,7 @@ impl DirOtterNativeApp {
                     color = egui::Color32::from_rgb(0x4B, 0xA3, 0xAC);
                 }
                 if resp.clicked() {
-                    self.selection.selected_node = Some(tile.node_id);
-                    if let Some(node) = store.nodes.get(tile.node_id.0) {
-                        self.selection.selected_path = Some(node.path.clone());
-                    }
-                    self.selection.source = Some(SelectionSource::Treemap);
-                    self.execution_report = None;
+                    self.select_node_from_store(&store, tile.node_id, SelectionSource::Treemap);
                 }
                 if resp.hovered() {
                     resp = resp.on_hover_ui(|ui| {
@@ -3990,5 +4101,140 @@ mod ui_tests {
         assert_eq!(app.selection.selected_node, None);
         assert_eq!(target.path, "c:\\$Recycle.Bin\\S-1-5-18");
         assert_eq!(target.name, "S-1-5-18");
+    }
+
+    #[test]
+    fn treemap_scope_uses_selected_directory_or_file_parent() {
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "c:\\".into(), "c:\\".into(), NodeKind::Dir, 0);
+        let users = store.add_node(Some(root), "Users".into(), "c:\\Users".into(), NodeKind::Dir, 0);
+        let alice = store.add_node(
+            Some(users),
+            "alice".into(),
+            "c:\\Users\\alice".into(),
+            NodeKind::Dir,
+            0,
+        );
+        let note = store.add_node(
+            Some(alice),
+            "note.txt".into(),
+            "c:\\Users\\alice\\note.txt".into(),
+            NodeKind::File,
+            12,
+        );
+        store.rollup();
+
+        let mut app = DirOtterNativeApp {
+            egui_ctx: egui::Context::default(),
+            page: Page::Treemap,
+            available_volumes: Vec::new(),
+            root_input: "c:\\".into(),
+            status: AppStatus::Completed,
+            summary: ScanSummary::default(),
+            store: Some(store),
+            scan_session: None,
+            delete_session: None,
+            scan_profile: ScanProfile::Ssd,
+            snapshot_interval_ms: 75,
+            event_batch_size: 256,
+            scan_current_path: None,
+            scan_last_event_at: None,
+            scan_dropped_batches: 0,
+            scan_dropped_snapshots: 0,
+            scan_dropped_progress: 0,
+            pending_batch_events: VecDeque::new(),
+            pending_snapshots: VecDeque::new(),
+            live_files: Vec::new(),
+            live_top_files: Vec::new(),
+            live_top_dirs: Vec::new(),
+            completed_top_files: Vec::new(),
+            completed_top_dirs: Vec::new(),
+            last_coalesce_commit: Instant::now(),
+            execution_report: None,
+            pending_delete_confirmation: None,
+            queued_delete: None,
+            explorer_feedback: None,
+            history: Vec::new(),
+            errors: Vec::new(),
+            selected_history_id: None,
+            language: Lang::En,
+            theme_dark: true,
+            cache: CacheStore::new(":memory:").expect("cache"),
+            perf: PerfMetrics::default(),
+            diagnostics_json: String::new(),
+            selection: SelectionState {
+                selected_node: Some(users),
+                selected_path: Some("c:\\Users".into()),
+                source: Some(SelectionSource::Table),
+            },
+            error_filter: ErrorFilter::All,
+            treemap_cache: TreemapViewportCache::default(),
+        };
+
+        let store_ref = app.store.as_ref().expect("store");
+        assert_eq!(app.treemap_scope_node_id(store_ref), Some(users));
+
+        app.selection.selected_node = Some(note);
+        app.selection.selected_path = Some("c:\\Users\\alice\\note.txt".into());
+        let store_ref = app.store.as_ref().expect("store");
+        assert_eq!(app.treemap_scope_node_id(store_ref), Some(alice));
+    }
+
+    #[test]
+    fn treemap_scope_falls_back_to_nearest_existing_ancestor() {
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "c:\\".into(), "c:\\".into(), NodeKind::Dir, 0);
+        let users = store.add_node(Some(root), "Users".into(), "c:\\Users".into(), NodeKind::Dir, 0);
+        store.rollup();
+
+        let app = DirOtterNativeApp {
+            egui_ctx: egui::Context::default(),
+            page: Page::Treemap,
+            available_volumes: Vec::new(),
+            root_input: "c:\\".into(),
+            status: AppStatus::Completed,
+            summary: ScanSummary::default(),
+            store: Some(store),
+            scan_session: None,
+            delete_session: None,
+            scan_profile: ScanProfile::Ssd,
+            snapshot_interval_ms: 75,
+            event_batch_size: 256,
+            scan_current_path: None,
+            scan_last_event_at: None,
+            scan_dropped_batches: 0,
+            scan_dropped_snapshots: 0,
+            scan_dropped_progress: 0,
+            pending_batch_events: VecDeque::new(),
+            pending_snapshots: VecDeque::new(),
+            live_files: Vec::new(),
+            live_top_files: Vec::new(),
+            live_top_dirs: Vec::new(),
+            completed_top_files: Vec::new(),
+            completed_top_dirs: Vec::new(),
+            last_coalesce_commit: Instant::now(),
+            execution_report: None,
+            pending_delete_confirmation: None,
+            queued_delete: None,
+            explorer_feedback: None,
+            history: Vec::new(),
+            errors: Vec::new(),
+            selected_history_id: None,
+            language: Lang::En,
+            theme_dark: true,
+            cache: CacheStore::new(":memory:").expect("cache"),
+            perf: PerfMetrics::default(),
+            diagnostics_json: String::new(),
+            selection: SelectionState {
+                selected_node: None,
+                selected_path: Some("c:\\Users\\missing\\nested".into()),
+                source: Some(SelectionSource::Error),
+            },
+            error_filter: ErrorFilter::All,
+            treemap_cache: TreemapViewportCache::default(),
+        };
+
+        let store_ref = app.store.as_ref().expect("store");
+        assert_eq!(app.treemap_scope_node_id(store_ref), Some(users));
     }
 }
