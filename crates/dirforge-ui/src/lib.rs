@@ -2006,9 +2006,10 @@ impl DirForgeNativeApp {
                     .color(ui.visuals().text_color()),
             );
             ui.add_space(10.0);
-            status_badge(ui, &self.status, self.scan_active());
+            status_badge(ui, &self.status, self.scan_active() || self.delete_active());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let active = self.scan_active();
+                let deleting = self.delete_active();
                 let stop_label = if active {
                     self.t("停止扫描", "Stop Scan")
                 } else {
@@ -2026,11 +2027,13 @@ impl DirForgeNativeApp {
                 }
                 let start_label = if active {
                     self.t("扫描中", "Scanning")
+                } else if deleting {
+                    self.t("删除中", "Deleting")
                 } else {
                     self.t("开始扫描", "Start Scan")
                 };
                 if ui
-                    .add_enabled(!active, egui::Button::new(start_label))
+                    .add_enabled(!active && !deleting, egui::Button::new(start_label))
                     .clicked()
                 {
                     self.start_scan();
@@ -2106,10 +2109,11 @@ impl DirForgeNativeApp {
             );
             ui.add_space(8.0);
             let has_selection = selected_target.is_some();
+            let delete_active = self.delete_active();
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(
-                        has_selection,
+                        has_selection && !delete_active,
                         egui::Button::new(self.t("移到回收站", "Move to Recycle Bin")),
                     )
                     .clicked()
@@ -2118,7 +2122,10 @@ impl DirForgeNativeApp {
                 }
                 let permanent = egui::Button::new(self.t("永久删除", "Delete Permanently"))
                     .fill(egui::Color32::from_rgb(157, 53, 53));
-                if ui.add_enabled(has_selection, permanent).clicked() {
+                if ui
+                    .add_enabled(has_selection && !delete_active, permanent)
+                    .clicked()
+                {
                     if let Some(target) = selected_target.clone() {
                         self.pending_delete_confirmation = Some(PendingDeleteConfirmation {
                             risk: self.risk_for_path(&target.path),
@@ -2127,7 +2134,16 @@ impl DirForgeNativeApp {
                     }
                 }
             });
-            if !has_selection {
+            if delete_active {
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "删除正在后台执行，完成前会暂时锁定新的删除操作。",
+                        "Delete is running in the background. New delete actions stay locked until it finishes.",
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+            } else if !has_selection {
                 ui.label(
                     egui::RichText::new(self.t(
                         "先从列表、树图、历史或错误列表里选中一个文件或文件夹。",
@@ -2271,6 +2287,92 @@ impl DirForgeNativeApp {
         }
     }
 
+    fn ui_delete_progress_dialog(&mut self, ctx: &egui::Context) {
+        let Some(session) = self.delete_session.as_ref() else {
+            return;
+        };
+        let snapshot = session.snapshot();
+        let screen_rect = ctx.screen_rect();
+
+        egui::Area::new("delete_progress_overlay".into())
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen_rect.min)
+            .show(ctx, |ui| {
+                let (_, response) =
+                    ui.allocate_exact_size(screen_rect.size(), egui::Sense::click());
+                ui.painter().rect_filled(
+                    response.rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(7, 9, 14, 190),
+                );
+
+                let dialog_size = egui::vec2(460.0, 220.0);
+                let dialog_rect =
+                    egui::Align2::CENTER_CENTER.align_size_within_rect(dialog_size, response.rect);
+
+                ui.allocate_ui_at_rect(dialog_rect, |ui| {
+                    egui::Frame::window(ui.style())
+                        .rounding(egui::Rounding::same(CARD_RADIUS as f32))
+                        .show(ui, |ui| {
+                            ui.set_min_size(dialog_size);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    egui::RichText::new(match snapshot.mode {
+                                        ExecutionMode::RecycleBin => self
+                                            .t("正在移到回收站", "Moving to Recycle Bin"),
+                                        ExecutionMode::Permanent => {
+                                            self.t("正在永久删除", "Deleting Permanently")
+                                        }
+                                    })
+                                    .text_style(egui::TextStyle::Name("title".into()))
+                                    .strong(),
+                                );
+                            });
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new(self.t(
+                                    "删除会在后台继续执行。界面会保持响应，但在完成前暂时锁定新的删除操作。",
+                                    "Deletion continues in the background. The UI stays responsive, but new delete actions are locked until completion.",
+                                ))
+                                .text_style(egui::TextStyle::Small)
+                                .color(ui.visuals().weak_text_color()),
+                            );
+                            ui.add_space(12.0);
+                            stat_row(
+                                ui,
+                                self.t("目标", "Target"),
+                                &truncate_middle(&snapshot.target_path, 46),
+                                self.t("当前正在处理的路径", "Path currently being processed"),
+                            );
+                            stat_row(
+                                ui,
+                                self.t("已耗时", "Elapsed"),
+                                &format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
+                                match snapshot.mode {
+                                    ExecutionMode::RecycleBin => {
+                                        self.t("回收站删除", "Recycle-bin delete")
+                                    }
+                                    ExecutionMode::Permanent => {
+                                        self.t("永久删除", "Permanent delete")
+                                    }
+                                },
+                            );
+                            ui.add_space(10.0);
+                            ui.add(egui::Spinner::new().size(28.0));
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new(self.t(
+                                    "大目录和大文件删除可能持续数秒到数分钟，请等待提示完成。",
+                                    "Deleting large folders or files can take seconds or minutes. Wait for the completion message.",
+                                ))
+                                .text_style(egui::TextStyle::Small)
+                                .color(ui.visuals().weak_text_color()),
+                            );
+                        });
+                });
+            });
+    }
+
     fn ui_statusbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(
@@ -2309,6 +2411,20 @@ impl DirForgeNativeApp {
                         .color(ui.visuals().weak_text_color()),
                 );
             }
+            if let Some(session) = self.delete_session.as_ref() {
+                let snapshot = session.snapshot();
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {:.1}s  |  {}",
+                        self.t("删除中", "Deleting"),
+                        snapshot.started_at.elapsed().as_secs_f32(),
+                        truncate_middle(&snapshot.target_path, 42)
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+            }
         });
     }
 }
@@ -2316,12 +2432,13 @@ impl DirForgeNativeApp {
 impl eframe::App for DirForgeNativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_scan_events();
+        self.process_delete_events();
         self.apply_theme(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "DirForge [relay-1] {}",
             self.status
         )));
-        if self.scan_active() {
+        if self.scan_active() || self.delete_active() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
 
@@ -2364,6 +2481,7 @@ impl eframe::App for DirForgeNativeApp {
             });
 
         self.ui_delete_confirm_dialog(ctx);
+        self.ui_delete_progress_dialog(ctx);
     }
 }
 
