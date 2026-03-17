@@ -118,8 +118,35 @@
 
 - 默认依据系统语言环境推断语言
 - 设置页手动选择优先级高于自动检测
-- Windows 优先加载 `Microsoft YaHei / DengXian / SimHei / SimSun`
+- Windows UI 字体优先采用 `Segoe UI / Segoe UI Variable` 风格，中文继续回退到 `Microsoft YaHei / DengXian / SimHei / SimSun`
 - 浅色与深色主题都必须保持完整 panel/surface 对比度，不能出现浅色控件叠黑底
+
+### DirOtter 色彩语义
+
+- 主品牌色：`River Teal`
+  - `#2F7F86`
+  - Hover：`#276D73`
+  - Active：`#1F5C61`
+- 深色基础色：`Deep Slate`
+  - App background：`#11181C`
+  - Panel background：`#182227`
+  - Elevated panel：`#1F2C32`
+  - Text primary：`#EAF2F4`
+  - Text secondary：`#A8BBC1`
+  - Accent：`#4BA3AC`
+- 浅色基础色：
+  - Window background：偏灰白，避免纯白刺眼
+  - Surface / divider 基础：`Mist Gray` `#E8EEF0`
+  - 主文本：`Deep Slate` `#1E2A30`
+- 轻暖辅助色：`Sand Accent` `#D8C6A5`
+  - 仅用于空状态、少量品牌点缀或说明性元素，不得大面积覆盖分析界面
+
+### 功能色
+
+- Success：`#2E8B57`
+- Warning：`#C98B2E`
+- Danger：`#C94F4F`
+- Info：`#4B7BEC`
 
 ## 10. 仍待补强的交互
 

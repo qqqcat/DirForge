@@ -27,9 +27,18 @@ const MAX_PENDING_SNAPSHOTS: usize = 8;
 const MAX_LIVE_FILES: usize = 20_000;
 const NAV_WIDTH: f32 = 188.0;
 const INSPECTOR_WIDTH: f32 = 300.0;
-const TOOLBAR_HEIGHT: f32 = 44.0;
+const TOOLBAR_HEIGHT: f32 = 56.0;
 const STATUSBAR_HEIGHT: f32 = 26.0;
+const SHELL_RADIUS: u8 = 0;
 const CARD_RADIUS: u8 = 14;
+const CONTROL_RADIUS: u8 = 10;
+const CARD_PADDING: f32 = 14.0;
+const CARD_STROKE_WIDTH: f32 = 1.0;
+const CONTROL_HEIGHT: f32 = 34.0;
+const PRIMARY_BUTTON_HEIGHT: f32 = 40.0;
+const NAV_ITEM_HEIGHT: f32 = 36.0;
+const STATUS_BADGE_HEIGHT: f32 = 32.0;
+const CONTROL_MIN_WIDTH: f32 = 56.0;
 const MIN_TREEMAP_TILE_EDGE: f32 = 16.0;
 const MIN_TREEMAP_LABEL_WIDTH: f32 = 84.0;
 const MIN_TREEMAP_LABEL_HEIGHT: f32 = 30.0;
@@ -336,6 +345,17 @@ impl DirOtterNativeApp {
         } else {
             build_light_visuals()
         };
+        style.visuals.widgets.noninteractive.rounding =
+            egui::Rounding::same(CONTROL_RADIUS as f32);
+        style.visuals.widgets.inactive.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
+        style.visuals.widgets.hovered.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
+        style.visuals.widgets.active.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
+        style.visuals.widgets.open.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
+        style.visuals.widgets.noninteractive.expansion = 0.0;
+        style.visuals.widgets.inactive.expansion = 0.0;
+        style.visuals.widgets.hovered.expansion = 0.0;
+        style.visuals.widgets.active.expansion = 0.0;
+        style.visuals.widgets.open.expansion = 0.0;
         style.text_styles = [
             (
                 egui::TextStyle::Heading,
@@ -1273,7 +1293,7 @@ impl DirOtterNativeApp {
                 .strong();
             if ui
                 .add_sized(
-                    [ui.available_width(), 32.0],
+                    [ui.available_width(), NAV_ITEM_HEIGHT],
                     egui::SelectableLabel::new(selected, text),
                 )
                 .clicked()
@@ -1326,7 +1346,8 @@ impl DirOtterNativeApp {
                 );
                 ui.add_space(6.0);
                 ui.label(self.t("根目录", "Root path"));
-                ui.add(
+                ui.add_sized(
+                    [ui.available_width(), CONTROL_HEIGHT],
                     egui::TextEdit::singleline(&mut self.root_input)
                         .desired_width(f32::INFINITY)
                         .hint_text(root_hint),
@@ -1348,17 +1369,17 @@ impl DirOtterNativeApp {
                         for volume in volumes {
                             let used = volume.total_bytes.saturating_sub(volume.available_bytes);
                             let selected = self.root_input == volume.mount_point;
-                            let button = egui::SelectableLabel::new(
-                                selected,
-                                format!(
-                                    "{}  {} / {}",
-                                    short_volume_label(&volume),
-                                    format_bytes(used),
-                                    format_bytes(volume.total_bytes)
-                                ),
+                            let label = format!(
+                                "{}  {} / {}",
+                                short_volume_label(&volume),
+                                format_bytes(used),
+                                format_bytes(volume.total_bytes)
                             );
                             let response = ui
-                                .add_enabled(!self.scan_active(), button)
+                                .add_enabled_ui(!self.scan_active(), |ui| {
+                                    sized_selectable(ui, 144.0, selected, label.clone())
+                                })
+                                .inner
                                 .on_hover_text(format!(
                                     "{}\n{} {}\n{} {}",
                                     volume.name,
@@ -1384,15 +1405,40 @@ impl DirOtterNativeApp {
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.label(self.t("扫描策略", "Profile"));
-                    ui.selectable_value(&mut self.scan_profile, ScanProfile::Ssd, "SSD");
-                    ui.selectable_value(&mut self.scan_profile, ScanProfile::Hdd, "HDD");
-                    ui.selectable_value(&mut self.scan_profile, ScanProfile::Network, "Network");
+                    let ssd = ui
+                        .add_sized(
+                            [72.0, CONTROL_HEIGHT],
+                            egui::SelectableLabel::new(self.scan_profile == ScanProfile::Ssd, "SSD"),
+                        )
+                        .clicked();
+                    let hdd = ui
+                        .add_sized(
+                            [72.0, CONTROL_HEIGHT],
+                            egui::SelectableLabel::new(self.scan_profile == ScanProfile::Hdd, "HDD"),
+                        )
+                        .clicked();
+                    let network = ui
+                        .add_sized(
+                            [84.0, CONTROL_HEIGHT],
+                            egui::SelectableLabel::new(self.scan_profile == ScanProfile::Network, "Network"),
+                        )
+                        .clicked();
+                    if ssd {
+                        self.scan_profile = ScanProfile::Ssd;
+                    }
+                    if hdd {
+                        self.scan_profile = ScanProfile::Hdd;
+                    }
+                    if network {
+                        self.scan_profile = ScanProfile::Network;
+                    }
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(self.t("批大小", "Batch size"));
-                        ui.add(
+                        ui.add_sized(
+                            [CONTROL_MIN_WIDTH, CONTROL_HEIGHT],
                             egui::DragValue::new(&mut self.event_batch_size)
                                 .range(32..=4096)
                                 .speed(8),
@@ -1400,7 +1446,8 @@ impl DirOtterNativeApp {
                     });
                     ui.vertical(|ui| {
                         ui.label(self.t("快照间隔", "Snapshot interval"));
-                        ui.add(
+                        ui.add_sized(
+                            [CONTROL_MIN_WIDTH + 20.0, CONTROL_HEIGHT],
                             egui::DragValue::new(&mut self.snapshot_interval_ms)
                                 .range(50..=1000)
                                 .suffix(" ms")
@@ -1414,9 +1461,11 @@ impl DirOtterNativeApp {
                 } else {
                     self.t("开始扫描", "Start Scan")
                 };
-                let start_button = egui::Button::new(start_label);
                 if ui
-                    .add_enabled(!self.scan_active(), start_button)
+                    .add_enabled_ui(!self.scan_active(), |ui| {
+                        sized_primary_button(ui, ui.available_width(), start_label)
+                    })
+                    .inner
                     .on_hover_text(self.t(
                         "扫描进行中时请使用右上角的停止按钮。",
                         "Use the top-right stop button while a scan is running.",
@@ -1576,11 +1625,11 @@ impl DirOtterNativeApp {
         ui.columns(5, |columns| {
             let cards = self.summary_cards();
             let accents = [
-                egui::Color32::from_rgb(33, 158, 188),
-                egui::Color32::from_rgb(61, 133, 198),
-                egui::Color32::from_rgb(76, 201, 176),
-                egui::Color32::from_rgb(87, 117, 144),
-                egui::Color32::from_rgb(231, 111, 81),
+                river_teal(),
+                info_blue(),
+                success_green(),
+                egui::Color32::from_rgb(0x5F, 0x8D, 0x96),
+                danger_red(),
             ];
             for (idx, column) in columns.iter_mut().enumerate() {
                 if let Some(card) = cards.get(idx) {
@@ -1726,7 +1775,7 @@ impl DirOtterNativeApp {
                 );
                 let mut color = palette_color(tile.node_id.0);
                 if self.selection.selected_node == Some(tile.node_id) {
-                    color = egui::Color32::from_rgb(42, 157, 143);
+                    color = egui::Color32::from_rgb(0x4B, 0xA3, 0xAC);
                 }
                 if resp.clicked() {
                     self.selection.selected_node = Some(tile.node_id);
@@ -1896,21 +1945,21 @@ impl DirOtterNativeApp {
                 "User",
                 &format_count(user as u64),
                 self.t("用户输入或权限问题", "Input or permission issues"),
-                egui::Color32::from_rgb(244, 162, 97),
+                warning_amber(),
             );
             metric_card(
                 &mut columns[1],
                 "Transient",
                 &format_count(transient as u64),
                 self.t("可重试的瞬时失败", "Retryable transient failures"),
-                egui::Color32::from_rgb(33, 158, 188),
+                info_blue(),
             );
             metric_card(
                 &mut columns[2],
                 "System",
                 &format_count(system as u64),
                 self.t("系统级故障", "System-level failures"),
-                egui::Color32::from_rgb(231, 111, 81),
+                danger_red(),
             );
         });
 
@@ -2016,62 +2065,198 @@ impl DirOtterNativeApp {
     }
 
     fn ui_settings(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        page_header(
-            ui,
-            self.t("偏好设置", "Settings"),
-            self.t(
-                "修复中文字体后，语言选择改成清晰的单选项，不再用含糊复选框。",
-                "After fixing CJK font fallback, language selection becomes explicit radio choices instead of an ambiguous checkbox.",
-            ),
+        let content_width = ui.available_width().min(1180.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(content_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                page_header(
+                    ui,
+                    self.t("偏好设置", "Settings"),
+                    self.t(
+                        "让 DirOtter 保持冷静、低对比、长时间可用的工作状态。",
+                        "Keep DirOtter calm, low-contrast, and comfortable for long sessions.",
+                    ),
+                );
+                ui.add_space(10.0);
+                tone_banner(
+                    ui,
+                    self.t("舒适优先的工作台", "A Comfort-First Workspace"),
+                    self.t(
+                        "语言、主题和字体回退都会立即生效。这里的目标不是“更花哨”，而是让长时间浏览目录树时更稳定、更耐看。",
+                        "Language, theme, and font fallback all apply immediately. The goal here is not flashy UI, but a steadier workspace for long file-tree sessions.",
+                    ),
+                );
+                ui.add_space(12.0);
+
+                ui.columns(2, |columns| {
+                    surface_frame(&columns[0]).show(&mut columns[0], |ui| {
+                        ui.label(
+                            egui::RichText::new(self.t("界面语言", "Interface Language"))
+                                .text_style(egui::TextStyle::Name("title".into())),
+                        );
+                        ui.label(
+                            egui::RichText::new(self.t(
+                                "手动选择会覆盖系统语言检测。",
+                                "Manual selection overrides automatic locale detection.",
+                            ))
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_sized(
+                                    [96.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(
+                                        self.language == Lang::Zh,
+                                        self.t("中文", "中文"),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.language = Lang::Zh;
+                                let _ = self.cache.set_setting("language", "zh");
+                            }
+                            if ui
+                                .add_sized(
+                                    [96.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(self.language == Lang::En, "English"),
+                                )
+                                .clicked()
+                            {
+                                self.language = Lang::En;
+                                let _ = self.cache.set_setting("language", "en");
+                            }
+                        });
+                        ui.add_space(14.0);
+                        ui.label(
+                            egui::RichText::new(self.t("界面主题", "Interface Theme"))
+                                .text_style(egui::TextStyle::Name("title".into())),
+                        );
+                        ui.label(
+                            egui::RichText::new(self.t(
+                                "深色更适合长时间分析；浅色则保持低对比和柔和明度。",
+                                "Dark is better for long analysis sessions; light stays restrained and low contrast.",
+                            ))
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_sized(
+                                    [120.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(!self.theme_dark, self.t("浅色", "Light")),
+                                )
+                                .clicked()
+                            {
+                                self.theme_dark = false;
+                                self.apply_theme(ctx);
+                                let _ = self.cache.set_setting("theme", "light");
+                            }
+                            if ui
+                                .add_sized(
+                                    [120.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(self.theme_dark, self.t("深色", "Dark")),
+                                )
+                                .clicked()
+                            {
+                                self.theme_dark = true;
+                                self.apply_theme(ctx);
+                                let _ = self.cache.set_setting("theme", "dark");
+                            }
+                        });
+                    });
+
+                    surface_frame(&columns[1]).show(&mut columns[1], |ui| {
+                        ui.label(
+                            egui::RichText::new(self.t("视觉方向", "Visual Direction"))
+                                .text_style(egui::TextStyle::Name("title".into())),
+                        );
+                        ui.label(
+                            egui::RichText::new(self.t(
+                                "DirOtter 不是“垃圾清理器”的高噪音视觉，而是偏冷静、偏克制的分析界面。",
+                                "DirOtter is not a loud cleaner UI. It is a quieter, analytical workspace with restrained emphasis.",
+                            ))
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_space(10.0);
+                        color_note_row(
+                            ui,
+                            river_teal(),
+                            self.t("River Teal", "River Teal"),
+                            self.t("主品牌色，用于主按钮、选中与重点数据。", "Primary brand accent for key actions, selection, and emphasis."),
+                        );
+                        ui.add_space(8.0);
+                        color_note_row(
+                            ui,
+                            if self.theme_dark {
+                                egui::Color32::from_rgb(0x18, 0x22, 0x27)
+                            } else {
+                                egui::Color32::from_rgb(0xEE, 0xF1, 0xF0)
+                            },
+                            self.t("基础面板", "Base Surfaces"),
+                            self.t("保持低对比、长时间查看不刺眼。", "Kept low-contrast so long sessions stay easy on the eyes."),
+                        );
+                        ui.add_space(8.0);
+                        color_note_row(
+                            ui,
+                            sand_accent(),
+                            self.t("暖色辅助", "Warm Accent"),
+                            self.t("只做轻微平衡，不大面积出现。", "Used sparingly to soften the palette, not dominate it."),
+                        );
+                        ui.add_space(12.0);
+                        tone_banner(
+                            ui,
+                            self.t("当前模式", "Current Mode"),
+                            if self.theme_dark {
+                                self.t(
+                                    "深色主题已启用：更适合长时间扫描和对比文件体积。",
+                                    "Dark theme is enabled: better for extended scanning and file-size comparison.",
+                                )
+                            } else {
+                                self.t(
+                                    "浅色主题已启用：保持低对比和柔和明度，避免纯白带来的刺眼感。",
+                                    "Light theme is enabled: low contrast and softer luminance to avoid harsh white surfaces.",
+                                )
+                            },
+                        );
+                    });
+                });
+
+                ui.add_space(12.0);
+                ui.columns(2, |columns| {
+                    surface_frame(&columns[0]).show(&mut columns[0], |ui| {
+                        ui.label(
+                            egui::RichText::new(self.t("本地化说明", "Localization Notes"))
+                                .text_style(egui::TextStyle::Name("title".into())),
+                        );
+                        ui.label(self.t(
+                            "应用会优先加载系统中的中文字体回退（Windows 优先 Microsoft YaHei / DengXian），避免中文标题和设置项显示为方框。",
+                            "The app now prefers CJK-capable system fallback fonts (Windows prioritizes Microsoft YaHei / DengXian) so Chinese labels do not render as tofu boxes.",
+                        ));
+                        ui.add_space(6.0);
+                        ui.label(self.t(
+                            "首次启动仍可根据系统语言环境推断中英文，但这里的手动选择会覆盖自动检测结果。",
+                            "The first launch can still infer language from the system locale, but the manual choice here overrides auto-detection.",
+                        ));
+                    });
+
+                    surface_frame(&columns[1]).show(&mut columns[1], |ui| {
+                        ui.label(
+                            egui::RichText::new(self.t("品牌含义", "Why DirOtter"))
+                                .text_style(egui::TextStyle::Name("title".into())),
+                        );
+                        ui.label(self.t(
+                            "Dir 指 directory，Otter 借用水獭聪明、灵活、善于整理的联想。它更像一个冷静探索存储结构的分析工具，而不是只会“清理垃圾”的工具。",
+                            "Dir points to directories, while Otter brings a clever, tidy, exploratory character. The product should feel like a calm storage analyzer, not a noisy junk cleaner.",
+                        ));
+                    });
+                });
+            },
         );
-        ui.add_space(8.0);
-
-        surface_frame(ui).show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(self.t("界面语言", "Interface Language"))
-                    .text_style(egui::TextStyle::Name("title".into())),
-            );
-            ui.horizontal(|ui| {
-                if ui
-                    .selectable_label(self.language == Lang::Zh, self.t("中文", "中文"))
-                    .clicked()
-                {
-                    self.language = Lang::Zh;
-                    let _ = self.cache.set_setting("language", "zh");
-                }
-                if ui
-                    .selectable_label(self.language == Lang::En, "English")
-                    .clicked()
-                {
-                    self.language = Lang::En;
-                    let _ = self.cache.set_setting("language", "en");
-                }
-            });
-            ui.add_space(10.0);
-            let dark_label = self.t("深色主题", "Dark theme");
-            if ui.checkbox(&mut self.theme_dark, dark_label).changed() {
-                self.apply_theme(ctx);
-                let _ = self
-                    .cache
-                    .set_setting("theme", if self.theme_dark { "dark" } else { "light" });
-            }
-        });
-
-        ui.add_space(10.0);
-        surface_frame(ui).show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(self.t("本地化说明", "Localization Notes"))
-                    .text_style(egui::TextStyle::Name("title".into())),
-            );
-            ui.label(self.t(
-                "应用会优先加载系统中的中文字体回退（Windows 优先 Microsoft YaHei / DengXian），避免中文标题和设置项显示为方框。",
-                "The app now prefers CJK-capable system fallback fonts (Windows prioritizes Microsoft YaHei / DengXian) so Chinese labels do not render as tofu boxes.",
-            ));
-            ui.label(self.t(
-                "首次启动默认仍可根据系统语言环境推断中英文，但设置页的手动选择会覆盖自动检测结果。",
-                "The first launch can still infer language from the system locale, but manual selection here overrides auto-detection.",
-            ));
-        });
     }
 
     fn ui_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -2093,7 +2278,8 @@ impl DirOtterNativeApp {
                     self.t("取消", "Cancel")
                 };
                 if ui
-                    .add_enabled(active, egui::Button::new(stop_label))
+                    .add_enabled_ui(active, |ui| sized_button(ui, 108.0, stop_label))
+                    .inner
                     .clicked()
                 {
                     if let Some(session) = &self.scan_session {
@@ -2110,7 +2296,10 @@ impl DirOtterNativeApp {
                     self.t("开始扫描", "Start Scan")
                 };
                 if ui
-                    .add_enabled(!active && !deleting, egui::Button::new(start_label))
+                    .add_enabled_ui(!active && !deleting, |ui| {
+                        sized_button(ui, 108.0, start_label)
+                    })
+                    .inner
                     .clicked()
                 {
                     self.start_scan();
@@ -2236,15 +2425,12 @@ impl DirOtterNativeApp {
             ui.add_space(8.0);
             let has_selection = selected_target.is_some();
             let delete_active = self.delete_active();
-            ui.horizontal_wrapped(|ui| {
+            ui.vertical(|ui| {
                 if ui
-                    .add_enabled(
-                        has_selection,
-                        egui::Button::new(self.t(
-                            "打开所在位置",
-                            "Open File Location",
-                        )),
-                    )
+                    .add_enabled_ui(has_selection, |ui| {
+                        sized_button(ui, ui.available_width(), self.t("打开所在位置", "Open File Location"))
+                    })
+                    .inner
                     .clicked()
                 {
                     if let Some(target) = selected_target.as_ref() {
@@ -2273,18 +2459,21 @@ impl DirOtterNativeApp {
                     }
                 }
                 if ui
-                    .add_enabled(
-                        has_selection && !delete_active,
-                        egui::Button::new(self.t("移到回收站", "Move to Recycle Bin")),
-                    )
+                    .add_enabled_ui(has_selection && !delete_active, |ui| {
+                        sized_button(ui, ui.available_width(), self.t("移到回收站", "Move to Recycle Bin"))
+                    })
+                    .inner
                     .clicked()
                 {
                     self.execute_selected_delete(ExecutionMode::RecycleBin);
                 }
                 let permanent = egui::Button::new(self.t("永久删除", "Delete Permanently"))
-                    .fill(egui::Color32::from_rgb(157, 53, 53));
+                    .fill(danger_red());
                 if ui
-                    .add_enabled(has_selection && !delete_active, permanent)
+                    .add_enabled_ui(has_selection && !delete_active, |ui| {
+                        ui.add_sized([ui.available_width(), CONTROL_HEIGHT], permanent)
+                    })
+                    .inner
                     .clicked()
                 {
                     if let Some(target) = selected_target.clone() {
@@ -2369,7 +2558,7 @@ impl DirOtterNativeApp {
                         .color(if item.success {
                             ui.visuals().text_color()
                         } else {
-                            egui::Color32::from_rgb(231, 111, 81)
+                            danger_red()
                         }),
                     );
                 }
@@ -2448,7 +2637,7 @@ impl DirOtterNativeApp {
                 ui.add_space(12.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let confirm = egui::Button::new(self.t("确认永久删除", "Delete Permanently"))
-                        .fill(egui::Color32::from_rgb(157, 53, 53));
+                        .fill(danger_red());
                     if ui.add(confirm).clicked() {
                         confirmed_delete = Some(pending.target.clone());
                         keep_open = false;
@@ -2580,23 +2769,27 @@ impl eframe::App for DirOtterNativeApp {
 
         egui::TopBottomPanel::top("top_bar")
             .exact_height(TOOLBAR_HEIGHT)
+            .show_separator_line(false)
             .frame(toolbar_frame(ctx))
             .show(ctx, |ui| self.ui_toolbar(ui));
 
         egui::TopBottomPanel::bottom("status_bar")
             .exact_height(STATUSBAR_HEIGHT)
+            .show_separator_line(false)
             .frame(statusbar_frame(ctx))
             .show(ctx, |ui| self.ui_statusbar(ui));
 
         egui::SidePanel::left("nav")
             .exact_width(NAV_WIDTH)
             .resizable(false)
+            .show_separator_line(false)
             .frame(panel_frame(ctx))
             .show(ctx, |ui| self.ui_nav(ui));
 
         egui::SidePanel::right("inspector")
             .exact_width(INSPECTOR_WIDTH)
             .resizable(true)
+            .show_separator_line(false)
             .frame(panel_frame(ctx))
             .show(ctx, |ui| self.ui_inspector(ui));
 
@@ -2604,6 +2797,7 @@ impl eframe::App for DirOtterNativeApp {
             .frame(
                 egui::Frame::default()
                     .fill(ctx.style().visuals.window_fill)
+                    .stroke(egui::Stroke::NONE)
                     .inner_margin(egui::Margin::same(16.0)),
             )
             .show(ctx, |ui| {
@@ -2686,6 +2880,16 @@ fn treemap_hit_test(tiles: &[TreemapTile], pos: egui::Pos2) -> Option<&TreemapTi
 
 fn configure_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
+    if let Some(data) = load_primary_ui_font_bytes() {
+        fonts
+            .font_data
+            .insert("brand-ui".to_string(), egui::FontData::from_owned(data));
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "brand-ui".to_string());
+    }
     if let Some(data) = load_system_font_bytes() {
         fonts
             .font_data
@@ -2694,7 +2898,7 @@ fn configure_fonts(ctx: &egui::Context) {
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(0, "cjk-fallback".to_string());
+            .push("cjk-fallback".to_string());
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
@@ -2702,6 +2906,29 @@ fn configure_fonts(ctx: &egui::Context) {
             .push("cjk-fallback".to_string());
     }
     ctx.set_fonts(fonts);
+}
+
+fn load_primary_ui_font_bytes() -> Option<Vec<u8>> {
+    let candidates: &[&str] = if cfg!(target_os = "windows") {
+        &[
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+            "C:\\Windows\\Fonts\\seguisb.ttf",
+            "C:\\Windows\\Fonts\\segoeuib.ttf",
+        ]
+    } else if cfg!(target_os = "macos") {
+        &[
+            "/System/Library/Fonts/SFNS.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        ]
+    } else {
+        &[
+            "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+            "/usr/share/fonts/truetype/inter-vf/Inter.var.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+    };
+
+    candidates.iter().find_map(|path| fs::read(path).ok())
 }
 
 fn load_system_font_bytes() -> Option<Vec<u8>> {
@@ -2729,54 +2956,89 @@ fn load_system_font_bytes() -> Option<Vec<u8>> {
     candidates.iter().find_map(|path| fs::read(path).ok())
 }
 
+fn river_teal() -> egui::Color32 {
+    egui::Color32::from_rgb(0x2F, 0x7F, 0x86)
+}
+
+fn river_teal_hover() -> egui::Color32 {
+    egui::Color32::from_rgb(0x27, 0x6D, 0x73)
+}
+
+fn river_teal_active() -> egui::Color32 {
+    egui::Color32::from_rgb(0x1F, 0x5C, 0x61)
+}
+
+fn sand_accent() -> egui::Color32 {
+    egui::Color32::from_rgb(0xD8, 0xC6, 0xA5)
+}
+
+fn success_green() -> egui::Color32 {
+    egui::Color32::from_rgb(0x2E, 0x8B, 0x57)
+}
+
+fn warning_amber() -> egui::Color32 {
+    egui::Color32::from_rgb(0xC9, 0x8B, 0x2E)
+}
+
+fn danger_red() -> egui::Color32 {
+    egui::Color32::from_rgb(0xC9, 0x4F, 0x4F)
+}
+
+fn info_blue() -> egui::Color32 {
+    egui::Color32::from_rgb(0x4B, 0x7B, 0xEC)
+}
+
 fn build_dark_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
-    visuals.window_fill = egui::Color32::from_rgb(15, 18, 24);
-    visuals.panel_fill = egui::Color32::from_rgb(18, 22, 29);
-    visuals.extreme_bg_color = egui::Color32::from_rgb(11, 14, 20);
-    visuals.faint_bg_color = egui::Color32::from_rgb(29, 35, 44);
-    visuals.code_bg_color = egui::Color32::from_rgb(12, 17, 24);
-    visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(18, 22, 29);
+    visuals.window_fill = egui::Color32::from_rgb(0x11, 0x18, 0x1C);
+    visuals.panel_fill = egui::Color32::from_rgb(0x18, 0x22, 0x27);
+    visuals.extreme_bg_color = egui::Color32::from_rgb(0x0F, 0x15, 0x19);
+    visuals.faint_bg_color = egui::Color32::from_rgb(0x1F, 0x2C, 0x32);
+    visuals.code_bg_color = egui::Color32::from_rgb(0x14, 0x1D, 0x21);
+    visuals.override_text_color = Some(egui::Color32::from_rgb(0xEA, 0xF2, 0xF4));
+    visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(0x18, 0x22, 0x27);
     visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 48, 61));
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(27, 33, 42);
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x29, 0x37, 0x3E));
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(0x1C, 0x27, 0x2D);
     visuals.widgets.inactive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(45, 55, 70));
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(34, 43, 55);
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x2E, 0x3D, 0x44));
+    visuals.widgets.hovered.bg_fill = river_teal_hover();
     visuals.widgets.hovered.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(74, 144, 164));
-    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(42, 68, 77);
+        egui::Stroke::new(1.0, river_teal());
+    visuals.widgets.active.bg_fill = river_teal_active();
     visuals.widgets.active.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 191, 171));
-    visuals.selection.bg_fill = egui::Color32::from_rgb(36, 111, 150);
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x4B, 0xA3, 0xAC));
+    visuals.selection.bg_fill = egui::Color32::from_rgb(0x4B, 0xA3, 0xAC);
     visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    visuals.widgets.open.bg_fill = egui::Color32::from_rgb(0x1F, 0x2C, 0x32);
     visuals
 }
 
 fn build_light_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::light();
-    visuals.window_fill = egui::Color32::from_rgb(245, 247, 250);
-    visuals.panel_fill = egui::Color32::from_rgb(252, 253, 255);
-    visuals.extreme_bg_color = egui::Color32::from_rgb(234, 239, 244);
-    visuals.faint_bg_color = egui::Color32::from_rgb(240, 244, 248);
-    visuals.code_bg_color = egui::Color32::from_rgb(238, 244, 248);
-    visuals.override_text_color = Some(egui::Color32::from_rgb(31, 41, 55));
-    visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(252, 253, 255);
+    visuals.window_fill = egui::Color32::from_rgb(0xE7, 0xEC, 0xEA);
+    visuals.panel_fill = egui::Color32::from_rgb(0xEE, 0xF1, 0xF0);
+    visuals.extreme_bg_color = egui::Color32::from_rgb(0xDD, 0xE4, 0xE2);
+    visuals.faint_bg_color = egui::Color32::from_rgb(0xE7, 0xEC, 0xEA);
+    visuals.code_bg_color = egui::Color32::from_rgb(0xE3, 0xE8, 0xE6);
+    visuals.override_text_color = Some(egui::Color32::from_rgb(0x26, 0x32, 0x38));
+    visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(0xEE, 0xF1, 0xF0);
     visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 218, 230));
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0xCB, 0xD4, 0xD1));
     visuals.widgets.noninteractive.fg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(55, 65, 81));
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(243, 246, 250);
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x4E, 0x5D, 0x63));
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(0xE5, 0xEA, 0xE8);
     visuals.widgets.inactive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(196, 206, 219));
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(227, 238, 248);
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0xC8, 0xD1, 0xCE));
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(0xDC, 0xE5, 0xE3);
     visuals.widgets.hovered.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(89, 141, 188));
-    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(206, 225, 242);
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x88, 0xA2, 0xA5));
+    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(0xD2, 0xDD, 0xDA);
     visuals.widgets.active.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(57, 112, 161));
-    visuals.selection.bg_fill = egui::Color32::from_rgb(60, 128, 171);
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x6E, 0x8E, 0x92));
+    visuals.selection.bg_fill = egui::Color32::from_rgb(0x7A, 0x99, 0x9D);
     visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    visuals.widgets.open.bg_fill = egui::Color32::from_rgb(0xE1, 0xE7, 0xE5);
     visuals
 }
 
@@ -2784,9 +3046,9 @@ fn panel_frame(ctx: &egui::Context) -> egui::Frame {
     let visuals = &ctx.style().visuals;
     egui::Frame::default()
         .fill(visuals.panel_fill)
-        .inner_margin(egui::Margin::same(12.0))
-        .rounding(egui::Rounding::same(CARD_RADIUS as f32))
-        .stroke(egui::Stroke::new(1.0, border_color(visuals)))
+        .inner_margin(egui::Margin::same(CARD_PADDING))
+        .rounding(egui::Rounding::same(SHELL_RADIUS as f32))
+        .stroke(egui::Stroke::NONE)
 }
 
 fn toolbar_frame(ctx: &egui::Context) -> egui::Frame {
@@ -2794,7 +3056,8 @@ fn toolbar_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::default()
         .fill(visuals.panel_fill)
         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-        .stroke(egui::Stroke::new(1.0, border_color(visuals)))
+        .rounding(egui::Rounding::same(SHELL_RADIUS as f32))
+        .stroke(egui::Stroke::NONE)
 }
 
 fn statusbar_frame(ctx: &egui::Context) -> egui::Frame {
@@ -2802,23 +3065,24 @@ fn statusbar_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::default()
         .fill(visuals.panel_fill)
         .inner_margin(egui::Margin::symmetric(10.0, 4.0))
-        .stroke(egui::Stroke::new(1.0, border_color(visuals)))
+        .rounding(egui::Rounding::same(SHELL_RADIUS as f32))
+        .stroke(egui::Stroke::NONE)
 }
 
 fn surface_frame(ui: &egui::Ui) -> egui::Frame {
     let visuals = ui.visuals();
     egui::Frame::default()
         .fill(visuals.faint_bg_color)
-        .inner_margin(egui::Margin::same(12.0))
+        .inner_margin(egui::Margin::same(CARD_PADDING))
         .rounding(egui::Rounding::same(CARD_RADIUS as f32))
-        .stroke(egui::Stroke::new(1.0, border_color(visuals)))
+        .stroke(egui::Stroke::new(CARD_STROKE_WIDTH, border_color(visuals)))
 }
 
 fn border_color(visuals: &egui::Visuals) -> egui::Color32 {
     if visuals.dark_mode {
-        egui::Color32::from_rgb(40, 48, 61)
+        egui::Color32::from_rgb(0x2B, 0x38, 0x3E)
     } else {
-        egui::Color32::from_rgb(214, 221, 231)
+        egui::Color32::from_rgb(0xC8, 0xD0, 0xCE)
     }
 }
 
@@ -2846,6 +3110,40 @@ fn metric_card(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str, acce
                 .color(ui.visuals().weak_text_color()),
         );
     });
+}
+
+fn sized_selectable(
+    ui: &mut egui::Ui,
+    width: f32,
+    selected: bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add_sized(
+        [width.max(CONTROL_MIN_WIDTH), CONTROL_HEIGHT],
+        egui::SelectableLabel::new(selected, text),
+    )
+}
+
+fn sized_button(
+    ui: &mut egui::Ui,
+    width: f32,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add_sized(
+        [width.max(CONTROL_MIN_WIDTH), CONTROL_HEIGHT],
+        egui::Button::new(text),
+    )
+}
+
+fn sized_primary_button(
+    ui: &mut egui::Ui,
+    width: f32,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add_sized(
+        [width.max(CONTROL_MIN_WIDTH), PRIMARY_BUTTON_HEIGHT],
+        egui::Button::new(text),
+    )
 }
 
 fn render_ranked_size_list(
@@ -2922,23 +3220,51 @@ fn tone_banner(ui: &mut egui::Ui, title: &str, body: &str) {
     let visuals = ui.visuals();
     egui::Frame::default()
         .fill(if visuals.dark_mode {
-            egui::Color32::from_rgb(22, 33, 43)
+            egui::Color32::from_rgb(0x1D, 0x2A, 0x30)
         } else {
-            egui::Color32::from_rgb(232, 241, 249)
+            egui::Color32::from_rgb(0xEE, 0xF4, 0xF5)
         })
         .rounding(egui::Rounding::same(10.0))
         .inner_margin(egui::Margin::same(10.0))
+        .stroke(egui::Stroke::new(
+            1.0,
+            if visuals.dark_mode {
+                river_teal_hover()
+            } else {
+                sand_accent()
+            },
+        ))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(title).strong());
+            ui.label(egui::RichText::new(title).strong().color(river_teal()));
             ui.label(body);
         });
 }
 
+fn color_note_row(ui: &mut egui::Ui, swatch: egui::Color32, title: &str, body: &str) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, egui::Rounding::same(6.0), swatch);
+        ui.add_space(6.0);
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(title).strong());
+            ui.label(
+                egui::RichText::new(body)
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+            );
+        });
+    });
+}
+
 fn status_badge(ui: &mut egui::Ui, status: &str, active: bool) {
     let bg = if active {
-        egui::Color32::from_rgb(33, 158, 188)
+        if ui.visuals().dark_mode {
+            egui::Color32::from_rgb(0x4B, 0xA3, 0xAC)
+        } else {
+            egui::Color32::from_rgb(0x7A, 0x99, 0x9D)
+        }
     } else {
-        egui::Color32::from_rgb(99, 102, 111)
+        egui::Color32::from_rgb(0x8B, 0x93, 0x97)
     };
     let text = egui::RichText::new(status)
         .color(egui::Color32::WHITE)
@@ -2946,7 +3272,10 @@ fn status_badge(ui: &mut egui::Ui, status: &str, active: bool) {
     egui::Frame::default()
         .fill(bg)
         .rounding(egui::Rounding::same(999.0))
-        .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+        .inner_margin(egui::Margin::symmetric(
+            12.0,
+            ((STATUS_BADGE_HEIGHT - 20.0) / 2.0).max(4.0),
+        ))
         .show(ui, |ui: &mut egui::Ui| {
             ui.label(text);
         });
@@ -2977,14 +3306,14 @@ fn stat_row(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
 
 fn palette_color(seed: usize) -> egui::Color32 {
     let palette = [
-        egui::Color32::from_rgb(56, 86, 136),
-        egui::Color32::from_rgb(66, 120, 122),
-        egui::Color32::from_rgb(115, 92, 161),
-        egui::Color32::from_rgb(57, 135, 92),
-        egui::Color32::from_rgb(187, 92, 121),
-        egui::Color32::from_rgb(143, 117, 61),
-        egui::Color32::from_rgb(62, 104, 160),
-        egui::Color32::from_rgb(102, 86, 132),
+        egui::Color32::from_rgb(0x2F, 0x7F, 0x86),
+        egui::Color32::from_rgb(0x3E, 0x8E, 0x7A),
+        egui::Color32::from_rgb(0x4B, 0x7B, 0xEC),
+        egui::Color32::from_rgb(0x5F, 0x8D, 0x96),
+        egui::Color32::from_rgb(0x2E, 0x8B, 0x57),
+        egui::Color32::from_rgb(0xC9, 0x8B, 0x2E),
+        egui::Color32::from_rgb(0x79, 0x95, 0x9B),
+        egui::Color32::from_rgb(0x8A, 0xA8, 0xAD),
     ];
     palette[seed % palette.len()]
 }
