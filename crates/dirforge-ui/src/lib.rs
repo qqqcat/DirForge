@@ -154,6 +154,11 @@ struct DeleteFinishedPayload {
     report: ExecutionReport,
 }
 
+struct QueuedDeleteRequest {
+    target: SelectedTarget,
+    mode: ExecutionMode,
+}
+
 impl DeleteRelayState {
     fn new(target: &SelectedTarget, mode: ExecutionMode) -> Self {
         Self {
@@ -222,6 +227,8 @@ pub struct DirForgeNativeApp {
 
     execution_report: Option<ExecutionReport>,
     pending_delete_confirmation: Option<PendingDeleteConfirmation>,
+    queued_delete: Option<QueuedDeleteRequest>,
+    explorer_feedback: Option<(String, bool)>,
 
     history: Vec<HistoryRecord>,
     errors: Vec<ScanErrorRecord>,
@@ -285,6 +292,8 @@ impl DirForgeNativeApp {
             last_coalesce_commit: Instant::now(),
             execution_report: None,
             pending_delete_confirmation: None,
+            queued_delete: None,
+            explorer_feedback: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
@@ -689,7 +698,24 @@ impl DirForgeNativeApp {
         let Some(target) = self.selected_target() else {
             return;
         };
-        self.execute_delete_for_target(target, mode);
+        self.queue_delete_for_target(target, mode);
+    }
+
+    fn queue_delete_for_target(&mut self, target: SelectedTarget, mode: ExecutionMode) {
+        self.pending_delete_confirmation = None;
+        self.execution_report = None;
+        self.queued_delete = Some(QueuedDeleteRequest { target, mode });
+        self.egui_ctx.request_repaint();
+    }
+
+    fn process_queued_delete(&mut self) {
+        if self.delete_session.is_some() {
+            return;
+        }
+        let Some(request) = self.queued_delete.take() else {
+            return;
+        };
+        self.execute_delete_for_target(request.target, request.mode);
     }
 
     fn execute_delete_for_target(&mut self, target: SelectedTarget, mode: ExecutionMode) {
@@ -706,8 +732,10 @@ impl DirForgeNativeApp {
         let ctx = self.egui_ctx.clone();
         self.pending_delete_confirmation = None;
         self.execution_report = None;
+        self.explorer_feedback = None;
         self.status = self.t("删除中", "Deleting").to_string();
         self.delete_session = Some(DeleteSession { relay });
+        self.egui_ctx.request_repaint();
 
         std::thread::spawn(move || {
             let report = execute_plan(&plan, mode);
@@ -775,6 +803,7 @@ impl DirForgeNativeApp {
             .and_then(|store| store.path_index.get(path).copied());
         self.execution_report = None;
         self.pending_delete_confirmation = None;
+        self.explorer_feedback = None;
     }
 
     fn current_volume_info(&self) -> Option<dirforge_platform::VolumeInfo> {
@@ -1006,6 +1035,7 @@ impl DirForgeNativeApp {
         self.completed_top_dirs.clear();
         self.store = None;
         self.delete_session = None;
+        self.queued_delete = None;
         self.pending_delete_confirmation = None;
         self.execution_report = None;
         self.last_coalesce_commit = Instant::now();
@@ -1219,11 +1249,6 @@ impl DirForgeNativeApp {
                 .color(ui.visuals().weak_text_color()),
         );
         ui.heading("DirForge");
-        ui.label(
-            egui::RichText::new("[relay-1]")
-                .text_style(egui::TextStyle::Small)
-                .color(egui::Color32::from_rgb(33, 158, 188)),
-        );
         ui.add_space(12.0);
 
         ui.label(
@@ -1279,7 +1304,7 @@ impl DirForgeNativeApp {
                 });
             tone_banner(
                 ui,
-                self.t("[relay-1] 扫描仍在进行", "[relay-1] Scan Still Running"),
+                self.t("扫描仍在进行", "Scan Still Running"),
                 &format!(
                     "{} {}\n{}",
                     self.t("当前正在处理：", "Currently working on:"),
@@ -1534,7 +1559,7 @@ impl DirForgeNativeApp {
                 });
             tone_banner(
                 ui,
-                self.t("[relay-1] 这是实时增量视图", "[relay-1] This Is a Live Incremental View"),
+                self.t("这是实时增量视图", "This Is a Live Incremental View"),
                 &format!(
                     "{} {}\n{}",
                     self.t(
@@ -2145,6 +2170,55 @@ impl DirForgeNativeApp {
             }
         });
 
+        if let Some(session) = self.delete_session.as_ref() {
+            let snapshot = session.snapshot();
+            ui.add_space(10.0);
+            surface_frame(ui).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(match snapshot.mode {
+                            ExecutionMode::RecycleBin => {
+                                self.t("后台任务：移到回收站", "Background Task: Recycle Bin")
+                            }
+                            ExecutionMode::Permanent => {
+                                self.t("后台任务：永久删除", "Background Task: Permanent Delete")
+                            }
+                        })
+                        .text_style(egui::TextStyle::Name("title".into())),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(egui::Spinner::new().size(18.0));
+                    });
+                });
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "删除正在后台执行。你可以继续浏览结果，但新的删除操作会暂时锁定。",
+                        "Deletion is running in the background. You can keep browsing results, but new delete actions stay locked for now.",
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(8.0);
+                stat_row(
+                    ui,
+                    self.t("目标", "Target"),
+                    &truncate_middle(&snapshot.target_path, 34),
+                    self.t("当前正在处理的路径", "Path currently being processed"),
+                );
+                stat_row(
+                    ui,
+                    self.t("已耗时", "Elapsed"),
+                    &format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
+                    match snapshot.mode {
+                        ExecutionMode::RecycleBin => {
+                            self.t("回收站删除", "Recycle-bin delete")
+                        }
+                        ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
+                    },
+                );
+            });
+        }
+
         ui.add_space(10.0);
         surface_frame(ui).show(ui, |ui| {
             ui.label(
@@ -2163,6 +2237,41 @@ impl DirForgeNativeApp {
             let has_selection = selected_target.is_some();
             let delete_active = self.delete_active();
             ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        has_selection,
+                        egui::Button::new(self.t(
+                            "打开所在位置",
+                            "Open File Location",
+                        )),
+                    )
+                    .clicked()
+                {
+                    if let Some(target) = selected_target.as_ref() {
+                        match dirforge_platform::select_in_explorer(&target.path) {
+                            Ok(_) => {
+                                self.explorer_feedback = Some((
+                                    self.t(
+                                        "已在系统文件管理器中打开目标位置。",
+                                        "Opened the target location in the system file manager.",
+                                    )
+                                    .to_string(),
+                                    true,
+                                ));
+                            }
+                            Err(err) => {
+                                self.explorer_feedback = Some((
+                                    format!(
+                                        "{}: {}",
+                                        self.t("打开位置失败", "Failed to open location"),
+                                        err.message
+                                    ),
+                                    false,
+                                ));
+                            }
+                        }
+                    }
+                }
                 if ui
                     .add_enabled(
                         has_selection && !delete_active,
@@ -2189,8 +2298,8 @@ impl DirForgeNativeApp {
             if delete_active {
                 ui.label(
                     egui::RichText::new(self.t(
-                        "删除正在后台执行，完成前会暂时锁定新的删除操作。",
-                        "Delete is running in the background. New delete actions stay locked until it finishes.",
+                        "后台删除任务正在执行。你可以继续浏览列表，但新的删除动作会在完成前保持禁用。",
+                        "A background delete task is running. You can keep browsing, but new delete actions stay disabled until it finishes.",
                     ))
                     .text_style(egui::TextStyle::Small)
                     .color(ui.visuals().weak_text_color()),
@@ -2204,6 +2313,22 @@ impl DirForgeNativeApp {
                     .text_style(egui::TextStyle::Small)
                     .color(ui.visuals().weak_text_color()),
                 );
+            }
+            if let Some((message, success)) = self.explorer_feedback.as_ref() {
+                ui.add_space(8.0);
+                if *success {
+                    tone_banner(
+                        ui,
+                        self.t("已打开所在位置", "Opened Location"),
+                        message,
+                    );
+                } else {
+                    tone_banner(
+                        ui,
+                        self.t("打开位置失败", "Open Location Failed"),
+                        message,
+                    );
+                }
             }
             if let Some((title, hint, success)) = self.delete_feedback_message() {
                 ui.add_space(10.0);
@@ -2281,6 +2406,7 @@ impl DirForgeNativeApp {
         };
 
         let mut keep_open = true;
+        let mut confirmed_delete: Option<SelectedTarget> = None;
         egui::Window::new(self.t("确认永久删除", "Confirm Permanent Delete"))
             .collapsible(false)
             .resizable(false)
@@ -2324,8 +2450,7 @@ impl DirForgeNativeApp {
                     let confirm = egui::Button::new(self.t("确认永久删除", "Delete Permanently"))
                         .fill(egui::Color32::from_rgb(157, 53, 53));
                     if ui.add(confirm).clicked() {
-                        self.pending_delete_confirmation = None;
-                        self.execute_delete_for_target(pending.target.clone(), ExecutionMode::Permanent);
+                        confirmed_delete = Some(pending.target.clone());
                         keep_open = false;
                     }
                     if ui.button(self.t("取消", "Cancel")).clicked() {
@@ -2337,103 +2462,9 @@ impl DirForgeNativeApp {
         if !keep_open {
             self.pending_delete_confirmation = None;
         }
-    }
-
-    fn ui_delete_progress_dialog(&mut self, ctx: &egui::Context) {
-        let Some(session) = self.delete_session.as_ref() else {
-            return;
-        };
-        let snapshot = session.snapshot();
-        let screen_rect = ctx.screen_rect();
-
-        egui::Area::new("delete_progress_overlay".into())
-            .order(egui::Order::Foreground)
-            .fixed_pos(screen_rect.min)
-            .show(ctx, |ui| {
-                let (_, response) =
-                    ui.allocate_exact_size(screen_rect.size(), egui::Sense::click());
-                ui.painter().rect_filled(
-                    response.rect,
-                    0.0,
-                    egui::Color32::from_rgba_premultiplied(7, 9, 14, 190),
-                );
-
-                let dialog_size = egui::vec2(460.0, 220.0);
-                let dialog_rect =
-                    egui::Align2::CENTER_CENTER.align_size_within_rect(dialog_size, response.rect);
-
-                ui.allocate_ui_at_rect(dialog_rect, |ui| {
-                    egui::Frame::window(ui.style())
-                        .rounding(egui::Rounding::same(CARD_RADIUS as f32))
-                        .show(ui, |ui| {
-                            ui.set_min_size(dialog_size);
-                            ui.vertical_centered(|ui| {
-                                ui.label(
-                                    egui::RichText::new(match snapshot.mode {
-                                        ExecutionMode::RecycleBin => self
-                                            .t("正在移到回收站", "Moving to Recycle Bin"),
-                                        ExecutionMode::Permanent => {
-                                            self.t("正在永久删除", "Deleting Permanently")
-                                        }
-                                    })
-                                    .text_style(egui::TextStyle::Name("title".into()))
-                                    .strong(),
-                                );
-                            });
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new(self.t(
-                                    "删除会在后台继续执行。界面会保持响应，但在完成前暂时锁定新的删除操作。",
-                                    "Deletion continues in the background. The UI stays responsive, but new delete actions are locked until completion.",
-                                ))
-                                .text_style(egui::TextStyle::Small)
-                                .color(ui.visuals().weak_text_color()),
-                            );
-                            ui.add_space(12.0);
-                            stat_row(
-                                ui,
-                                self.t("目标", "Target"),
-                                &truncate_middle(&snapshot.target_path, 46),
-                                self.t("当前正在处理的路径", "Path currently being processed"),
-                            );
-                            stat_row(
-                                ui,
-                                self.t("已耗时", "Elapsed"),
-                                &format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
-                                match snapshot.mode {
-                                    ExecutionMode::RecycleBin => {
-                                        self.t("回收站删除", "Recycle-bin delete")
-                                    }
-                                    ExecutionMode::Permanent => {
-                                        self.t("永久删除", "Permanent delete")
-                                    }
-                                },
-                            );
-                            ui.add_space(10.0);
-                            let phase = snapshot.started_at.elapsed().as_secs_f32();
-                            let pulse = ((phase.sin() + 1.0) * 0.5 * 0.7 + 0.15).clamp(0.08, 0.92);
-                            ui.add(
-                                egui::ProgressBar::new(pulse)
-                                    .desired_width((dialog_size.x - 32.0).max(220.0))
-                                    .text(self.t(
-                                        "系统正在处理删除请求",
-                                        "System is processing the delete request",
-                                    )),
-                            );
-                            ui.add_space(8.0);
-                            ui.add(egui::Spinner::new().size(28.0));
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new(self.t(
-                                    "大目录和大文件删除可能持续数秒到数分钟，请等待提示完成。",
-                                    "Deleting large folders or files can take seconds or minutes. Wait for the completion message.",
-                                ))
-                                .text_style(egui::TextStyle::Small)
-                                .color(ui.visuals().weak_text_color()),
-                            );
-                        });
-                });
-            });
+        if let Some(target) = confirmed_delete {
+            self.queue_delete_for_target(target, ExecutionMode::Permanent);
+        }
     }
 
     fn ui_statusbar(&mut self, ui: &mut egui::Ui) {
@@ -2490,16 +2521,57 @@ impl DirForgeNativeApp {
             }
         });
     }
+
+    fn ui_delete_activity_banner(&mut self, ui: &mut egui::Ui) {
+        let Some(session) = self.delete_session.as_ref() else {
+            return;
+        };
+        let snapshot = session.snapshot();
+        let phase = snapshot.started_at.elapsed().as_secs_f32();
+        let pulse = ((phase.sin() + 1.0) * 0.5 * 0.7 + 0.15).clamp(0.08, 0.92);
+
+        tone_banner(
+            ui,
+            match snapshot.mode {
+                ExecutionMode::RecycleBin => {
+                    self.t("正在后台移到回收站", "Moving to Recycle Bin in Background")
+                }
+                ExecutionMode::Permanent => {
+                    self.t("正在后台永久删除", "Deleting Permanently in Background")
+                }
+            },
+            &format!(
+                "{}  |  {} {:.1}s  |  {}",
+                truncate_middle(&snapshot.target_path, 72),
+                self.t("已耗时", "Elapsed"),
+                phase,
+                self.t(
+                    "你可以继续浏览扫描结果，删除完成后界面会自动同步。",
+                    "You can keep browsing scan results. The UI will synchronize automatically when deletion finishes.",
+                )
+            ),
+        );
+        ui.add_space(6.0);
+        ui.add(
+            egui::ProgressBar::new(pulse)
+                .desired_width(ui.available_width().max(220.0))
+                .text(self.t(
+                    "系统正在处理删除请求",
+                    "System is processing the delete request",
+                )),
+        );
+    }
 }
 
 impl eframe::App for DirForgeNativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_scan_events();
         self.process_delete_events();
+        self.process_queued_delete();
         self.apply_theme(ctx);
         let delete_active = self.delete_active();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-            "DirForge [relay-1] {}",
+            "DirForge {}",
             self.status
         )));
         if self.scan_active() || delete_active {
@@ -2520,17 +2592,13 @@ impl eframe::App for DirForgeNativeApp {
             .exact_width(NAV_WIDTH)
             .resizable(false)
             .frame(panel_frame(ctx))
-            .show(ctx, |ui| {
-                ui.add_enabled_ui(!delete_active, |ui| self.ui_nav(ui));
-            });
+            .show(ctx, |ui| self.ui_nav(ui));
 
         egui::SidePanel::right("inspector")
             .exact_width(INSPECTOR_WIDTH)
             .resizable(true)
             .frame(panel_frame(ctx))
-            .show(ctx, |ui| {
-                ui.add_enabled_ui(!delete_active, |ui| self.ui_inspector(ui));
-            });
+            .show(ctx, |ui| self.ui_inspector(ui));
 
         egui::CentralPanel::default()
             .frame(
@@ -2539,7 +2607,11 @@ impl eframe::App for DirForgeNativeApp {
                     .inner_margin(egui::Margin::same(16.0)),
             )
             .show(ctx, |ui| {
-                ui.add_enabled_ui(!delete_active, |ui| match self.page {
+                if delete_active {
+                    self.ui_delete_activity_banner(ui);
+                    ui.add_space(12.0);
+                }
+                match self.page {
                     Page::Dashboard => self.ui_dashboard(ui),
                     Page::CurrentScan => self.ui_current_scan(ui),
                     Page::Treemap => self.ui_treemap(ui),
@@ -2547,11 +2619,10 @@ impl eframe::App for DirForgeNativeApp {
                     Page::Errors => self.ui_errors(ui),
                     Page::Diagnostics => self.ui_diagnostics(ui),
                     Page::Settings => self.ui_settings(ui, ctx),
-                });
+                }
             });
 
         self.ui_delete_confirm_dialog(ctx);
-        self.ui_delete_progress_dialog(ctx);
     }
 }
 
@@ -3209,6 +3280,8 @@ mod ui_tests {
             last_coalesce_commit: Instant::now(),
             execution_report: None,
             pending_delete_confirmation: None,
+            queued_delete: None,
+            explorer_feedback: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
