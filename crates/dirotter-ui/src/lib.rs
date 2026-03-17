@@ -2093,31 +2093,57 @@ impl DirOtterNativeApp {
             .collect();
 
         ui.add_space(10.0);
-        egui::ScrollArea::vertical().show_rows(ui, 72.0, filtered.len(), |ui, range| {
-            for i in range {
-                if let Some(e) = filtered.get(i) {
-                    surface_frame(ui).show(ui, |ui| {
-                        if ui
-                            .selectable_label(
-                                self.selection.selected_path.as_deref() == Some(&e.path),
-                                format!("[{:?}] {}", e.kind, truncate_middle(&e.path, 68)),
-                            )
-                            .clicked()
-                        {
-                            self.select_path(&e.path, SelectionSource::Error);
-                        }
-                        ui.horizontal(|ui| {
-                            if ui.button(self.t("选中查看", "Inspect")).clicked() {
-                                self.select_path(&e.path, SelectionSource::Error);
-                            }
-                            ui.label(
-                                egui::RichText::new(&e.reason)
-                                    .color(ui.visuals().weak_text_color()),
-                            );
-                        });
-                    });
-                }
-            }
+        let list_height = ui.available_height().max(240.0);
+        surface_frame(ui).show(ui, |ui| {
+            ui.set_min_height(list_height);
+            ui.set_min_width(ui.available_width());
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    for e in &filtered {
+                        let is_selected = self.selection.selected_path.as_deref() == Some(&e.path);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                let mut frame = surface_frame(ui);
+                                if is_selected {
+                                    frame = frame.stroke(egui::Stroke::new(1.5, river_teal()));
+                                }
+                                frame.show(ui, |ui| {
+                                    if ui
+                                        .add_sized(
+                                            [ui.available_width(), 24.0],
+                                            egui::SelectableLabel::new(
+                                                is_selected,
+                                                format!("[{:?}] {}", e.kind, truncate_middle(&e.path, 68)),
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.select_path(&e.path, SelectionSource::Error);
+                                    }
+                                    ui.add_space(6.0);
+                                    ui.horizontal(|ui| {
+                                        if ui.button(self.t("选中查看", "Inspect")).clicked() {
+                                            self.select_path(&e.path, SelectionSource::Error);
+                                        }
+                                    });
+                                    ui.add_space(6.0);
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&e.reason)
+                                                .text_style(egui::TextStyle::Small)
+                                                .color(ui.visuals().weak_text_color()),
+                                        )
+                                        .wrap(),
+                                    );
+                                });
+                            },
+                        );
+                        ui.add_space(8.0);
+                    }
+                });
         });
     }
 
@@ -2159,14 +2185,29 @@ impl DirOtterNativeApp {
             );
         }
         ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(&mut self.diagnostics_json)
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(26)
-                    .code_editor()
-                    .interactive(false),
+        let panel_width = ui.available_width();
+        let viewport_height = ui.ctx().input(|i| i.screen_rect().height());
+        let editor_height =
+            (viewport_height - TOOLBAR_HEIGHT - STATUSBAR_HEIGHT - 220.0).max(420.0);
+        surface_frame(ui).show(ui, |ui| {
+            ui.set_min_width(panel_width);
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), editor_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    egui::ScrollArea::both()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            ui.add_sized(
+                                [ui.available_width().max(320.0), editor_height],
+                                egui::TextEdit::multiline(&mut self.diagnostics_json)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY)
+                                    .code_editor()
+                                    .interactive(false),
+                            );
+                        });
+                },
             );
         });
     }
@@ -2924,7 +2965,7 @@ impl eframe::App for DirOtterNativeApp {
                         with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_history(ui))
                     }
                     Page::Errors => {
-                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_errors(ui))
+                        with_page_width_fill_height(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_errors(ui))
                     }
                     Page::Diagnostics => {
                         with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_diagnostics(ui))
@@ -3242,6 +3283,39 @@ fn with_scrollable_page_width<R>(
         .auto_shrink([false, false])
         .show(ui, |ui| with_page_width(ui, max_width, add_contents))
         .inner
+}
+
+fn with_page_width_fill_height<R>(
+    ui: &mut egui::Ui,
+    max_width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let available_width = ui.available_width();
+    let available_height = ui.available_height();
+    let width = (available_width - 24.0).max(320.0).min(max_width);
+    let left_space = ((available_width - width) / 2.0).floor().max(0.0);
+    let right_space = (available_width - width - left_space).max(0.0);
+
+    ui.horizontal(|ui| {
+        if left_space > 0.0 {
+            ui.add_space(left_space);
+        }
+        let inner = ui
+            .allocate_ui_with_layout(
+                egui::vec2(width, available_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_height(available_height);
+                    add_contents(ui)
+                },
+            )
+            .inner;
+        if right_space > 0.0 {
+            ui.add_space(right_space);
+        }
+        inner
+    })
+    .inner
 }
 
 fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
@@ -3840,5 +3914,81 @@ mod ui_tests {
         assert_eq!(files.len(), 2);
         assert!(files.iter().all(|(path, _)| path.starts_with("d:\\appdata\\local\\sdk\\")));
         assert_eq!(files[0].0, "d:\\appdata\\local\\sdk\\system.img");
+    }
+
+    #[test]
+    fn select_path_replaces_previous_node_selection_for_error_items() {
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "c:\\".into(), "c:\\".into(), NodeKind::Dir, 0);
+        let windows = store.add_node(
+            Some(root),
+            "Windows".into(),
+            "c:\\Windows".into(),
+            NodeKind::Dir,
+            0,
+        );
+        let servicing = store.add_node(
+            Some(windows),
+            "servicing".into(),
+            "c:\\Windows\\servicing".into(),
+            NodeKind::Dir,
+            0,
+        );
+        store.rollup();
+
+        let mut app = DirOtterNativeApp {
+            egui_ctx: egui::Context::default(),
+            page: Page::Errors,
+            available_volumes: Vec::new(),
+            root_input: "c:\\".into(),
+            status: AppStatus::Completed,
+            summary: ScanSummary::default(),
+            store: Some(store),
+            scan_session: None,
+            delete_session: None,
+            scan_profile: ScanProfile::Ssd,
+            snapshot_interval_ms: 75,
+            event_batch_size: 256,
+            scan_current_path: None,
+            scan_last_event_at: None,
+            scan_dropped_batches: 0,
+            scan_dropped_snapshots: 0,
+            scan_dropped_progress: 0,
+            pending_batch_events: VecDeque::new(),
+            pending_snapshots: VecDeque::new(),
+            live_files: Vec::new(),
+            live_top_files: Vec::new(),
+            live_top_dirs: Vec::new(),
+            completed_top_files: Vec::new(),
+            completed_top_dirs: Vec::new(),
+            last_coalesce_commit: Instant::now(),
+            execution_report: None,
+            pending_delete_confirmation: None,
+            queued_delete: None,
+            explorer_feedback: None,
+            history: Vec::new(),
+            errors: Vec::new(),
+            selected_history_id: None,
+            language: Lang::En,
+            theme_dark: true,
+            cache: CacheStore::new(":memory:").expect("cache"),
+            perf: PerfMetrics::default(),
+            diagnostics_json: String::new(),
+            selection: SelectionState {
+                selected_node: Some(servicing),
+                selected_path: Some("c:\\Windows\\servicing".into()),
+                source: Some(SelectionSource::Table),
+            },
+            error_filter: ErrorFilter::All,
+            treemap_cache: TreemapViewportCache::default(),
+        };
+
+        app.select_path("c:\\$Recycle.Bin\\S-1-5-18", SelectionSource::Error);
+
+        let target = app.selected_target().expect("selected target");
+        assert!(matches!(app.selection.source, Some(SelectionSource::Error)));
+        assert_eq!(app.selection.selected_node, None);
+        assert_eq!(target.path, "c:\\$Recycle.Bin\\S-1-5-18");
+        assert_eq!(target.name, "S-1-5-18");
     }
 }

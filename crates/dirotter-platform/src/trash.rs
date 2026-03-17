@@ -10,9 +10,7 @@ pub fn move_to_recycle_bin(path: &str) -> Result<(), PlatformError> {
             format!("path does not exist: {path}"),
         ));
     }
-    let original_path = p
-        .canonicalize()
-        .unwrap_or_else(|_| p.clone());
+    let original_path = p.canonicalize().unwrap_or_else(|_| p.clone());
     trash::delete(&p).map_err(|e| PlatformError::new(PlatformErrorKind::System, e.to_string()))?;
     verify_recycle_bin_entry(&original_path)?;
     Ok(())
@@ -23,7 +21,10 @@ fn verify_recycle_bin_entry(original_path: &std::path::Path) -> Result<(), Platf
     let original_key = recycle_compare_key(original_path);
     for _ in 0..10 {
         if let Ok(items) = trash::os_limited::list() {
-            if items.iter().any(|item| recycle_compare_key(&item.original_path()) == original_key) {
+            if items
+                .iter()
+                .any(|item| recycle_compare_key(&item.original_path()) == original_key)
+            {
                 return Ok(());
             }
         }
