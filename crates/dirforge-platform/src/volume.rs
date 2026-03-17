@@ -9,9 +9,24 @@ pub struct VolumeInfo {
     pub available_bytes: u64,
 }
 
-pub fn volume_info(path: &str) -> Result<VolumeInfo, PlatformError> {
+pub fn list_volumes() -> Result<Vec<VolumeInfo>, PlatformError> {
     use sysinfo::Disks;
 
+    let mut volumes: Vec<VolumeInfo> = Disks::new_with_refreshed_list()
+        .iter()
+        .map(|disk| VolumeInfo {
+            mount_point: disk.mount_point().display().to_string(),
+            name: disk.name().to_string_lossy().to_string(),
+            total_bytes: disk.total_space(),
+            available_bytes: disk.available_space(),
+        })
+        .collect();
+
+    volumes.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+    Ok(volumes)
+}
+
+pub fn volume_info(path: &str) -> Result<VolumeInfo, PlatformError> {
     let p = PathBuf::from(path);
     if !p.exists() {
         return Err(PlatformError::new(
@@ -20,7 +35,7 @@ pub fn volume_info(path: &str) -> Result<VolumeInfo, PlatformError> {
         ));
     }
 
-    let disks = Disks::new_with_refreshed_list();
+    let disks = list_volumes()?;
     let canonical = p
         .canonicalize()
         .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
@@ -28,15 +43,10 @@ pub fn volume_info(path: &str) -> Result<VolumeInfo, PlatformError> {
 
     let mut best: Option<VolumeInfo> = None;
     for d in &disks {
-        let mount = d.mount_point();
-        let mount_key = mount_compare_key(mount);
+        let mount = PathBuf::from(&d.mount_point);
+        let mount_key = mount_compare_key(&mount);
         if canonical_key.starts_with(&mount_key) {
-            let candidate = VolumeInfo {
-                mount_point: mount.display().to_string(),
-                name: d.name().to_string_lossy().to_string(),
-                total_bytes: d.total_space(),
-                available_bytes: d.available_space(),
-            };
+            let candidate = d.clone();
             if best
                 .as_ref()
                 .map(|b| candidate.mount_point.len() > b.mount_point.len())

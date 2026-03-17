@@ -77,3 +77,25 @@
 - 将扫描结束阶段的最终快照从“整棵树完整克隆”改为“仅发送最后一批增量变更”，避免百万级节点扫描在 finish line 因完整树复制而长时间卡死。
 - UI 在收到 `Finished` 后不再同步执行重复文件检测、文本/JSON/CSV 全量导出、快照入库等重任务，先保证完成态和核心结果可见。
 - 自动收尾当前只保留错误 CSV 导出与历史记录写入，后续重任务将改为后台或按需触发。
+
+## 2026-03-16（Inspector 动作收口与即时局部刷新）
+- 工具栏语义修正：扫描进行中时右上按钮切换为 `Stop Scan`，不再误导性显示可点击的 `Start Scan`。
+- 删除动作从 `Operations` 页面收回到右侧 Inspector，支持 `Move to Recycle Bin` 与 `Delete Permanently`。
+- 移除 `Operations` 导航与整页逻辑，错误页和榜单选中对象后直接在 Inspector 内处理。
+- 删除成功后，榜单、最近发现列表、概览统计与 treemap 支持局部刷新，不必等待下一次重扫。
+- 最大文件夹/最大文件面板改为独立滚动区，并修复重复 widget ID 导致的红框调试告警。
+
+## 2026-03-16（项目评估与文档同步）
+- 执行正式评估验证：`cargo check --workspace` 与 `cargo test --workspace` 均通过。
+- 重写 `task_plan.md` 与 `findings.md`，清理旧模板仓库遗留内容，改为 DirForge 当前状态记录。
+- 更新 `README.md`，同步当前产品能力、风险与交互状态。
+- 重写 `docs/dirforge-comprehensive-assessment.md`，给出当前能力、风险矩阵与未来 2~4 周优先级。
+- 更新 `docs/dirforge-ui-component-spec.md`、`docs/dirforge-install-usage.md`、`docs/quickstart.md`、`docs/dirforge-sdd.md`，移除过时的 `Operations` 页面和旧删除流程描述。
+
+## 2026-03-16（删除确认、盘符快捷扫描与测试矩阵补强）
+- 永久删除新增确认弹窗，不再一键直接执行；Inspector 同时补充成功后的撤销提示与失败后的原因/重试建议。
+- 启动默认根路径改为优先系统盘/首个卷挂载点，不再默认使用 `.`。
+- Overview 扫描目标区新增盘符快捷按钮，点击即可直接扫描对应卷；手动输入目录仍作为高级入口保留。
+- UI 单测新增默认根路径选择与删除后局部树重建验证。
+- `dirforge-platform` 新增卷列表能力与测试，供 UI 盘符按钮复用。
+- `dirforge-actions` 新增目录永久删除、受保护路径拦截、文件占用/权限失败等测试场景。

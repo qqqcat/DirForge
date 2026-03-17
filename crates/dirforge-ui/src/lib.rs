@@ -1,5 +1,6 @@
 use dirforge_actions::{
-    build_deletion_plan_with_origin, execute_plan, ExecutionMode, ExecutionReport, SelectionOrigin,
+    build_deletion_plan_with_origin, execute_plan, ActionFailureKind, ExecutionMode,
+    ExecutionReport, SelectionOrigin,
 };
 use dirforge_cache::{CacheStore, HistoryRecord};
 use dirforge_core::{
@@ -131,6 +132,51 @@ struct SelectedTarget {
     dir_count: u64,
 }
 
+#[derive(Clone)]
+struct PendingDeleteConfirmation {
+    target: SelectedTarget,
+    risk: RiskLevel,
+}
+
+struct DeleteSession {
+    relay: Arc<Mutex<DeleteRelayState>>,
+}
+
+struct DeleteRelayState {
+    started_at: Instant,
+    target_path: String,
+    mode: ExecutionMode,
+    finished: Option<DeleteFinishedPayload>,
+}
+
+struct DeleteFinishedPayload {
+    target: SelectedTarget,
+    report: ExecutionReport,
+}
+
+impl DeleteRelayState {
+    fn new(target: &SelectedTarget, mode: ExecutionMode) -> Self {
+        Self {
+            started_at: Instant::now(),
+            target_path: target.path.clone(),
+            mode,
+            finished: None,
+        }
+    }
+}
+
+impl DeleteSession {
+    fn snapshot(&self) -> DeleteRelayState {
+        let relay = self.relay.lock().expect("delete relay lock");
+        DeleteRelayState {
+            started_at: relay.started_at,
+            target_path: relay.target_path.clone(),
+            mode: relay.mode,
+            finished: None,
+        }
+    }
+}
+
 impl Default for ScanRelayState {
     fn default() -> Self {
         Self {
@@ -149,11 +195,13 @@ impl Default for ScanRelayState {
 pub struct DirForgeNativeApp {
     egui_ctx: egui::Context,
     page: Page,
+    available_volumes: Vec<dirforge_platform::VolumeInfo>,
     root_input: String,
     status: String,
     summary: ScanSummary,
     store: Option<NodeStore>,
     scan_session: Option<ScanSession>,
+    delete_session: Option<DeleteSession>,
     scan_profile: ScanProfile,
     snapshot_interval_ms: u64,
     event_batch_size: usize,
@@ -173,6 +221,7 @@ pub struct DirForgeNativeApp {
     last_coalesce_commit: Instant,
 
     execution_report: Option<ExecutionReport>,
+    pending_delete_confirmation: Option<PendingDeleteConfirmation>,
 
     history: Vec<HistoryRecord>,
     errors: Vec<ScanErrorRecord>,
@@ -205,15 +254,19 @@ impl DirForgeNativeApp {
             .flatten()
             .map(|v| v != "light")
             .unwrap_or(true);
+        let available_volumes = dirforge_platform::list_volumes().unwrap_or_default();
+        let initial_root = preferred_root_from_volumes(&available_volumes);
 
         let mut app = Self {
             egui_ctx: cc.egui_ctx.clone(),
             page: Page::Dashboard,
-            root_input: ".".into(),
+            available_volumes,
+            root_input: initial_root,
             status: "Idle".into(),
             summary: ScanSummary::default(),
             store: None,
             scan_session: None,
+            delete_session: None,
             scan_profile: ScanProfile::Ssd,
             snapshot_interval_ms: 75,
             event_batch_size: 256,
@@ -231,6 +284,7 @@ impl DirForgeNativeApp {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             execution_report: None,
+            pending_delete_confirmation: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
@@ -420,6 +474,82 @@ impl DirForgeNativeApp {
         }
     }
 
+    fn start_scan_for_root(&mut self, root: String) {
+        self.root_input = root;
+        self.page = Page::CurrentScan;
+        self.start_scan();
+    }
+
+    fn delete_feedback_message(&self) -> Option<(String, String, bool)> {
+        let report = self.execution_report.as_ref()?;
+        let item = report.items.first()?;
+        if item.success {
+            return Some(match report.mode {
+                ExecutionMode::RecycleBin => (
+                    self.t("已移到回收站", "Moved to Recycle Bin").to_string(),
+                    self.t(
+                        "可在系统回收站中恢复该项目。",
+                        "You can restore this item from the system recycle bin.",
+                    )
+                    .to_string(),
+                    true,
+                ),
+                ExecutionMode::Permanent => (
+                    self.t("已永久删除", "Deleted Permanently").to_string(),
+                    self.t(
+                        "该操作已执行，当前版本不提供撤销。",
+                        "This action has been executed and cannot be undone in the current build.",
+                    )
+                    .to_string(),
+                    true,
+                ),
+            });
+        }
+
+        let hint = match item.failure_kind {
+            Some(ActionFailureKind::PermissionDenied) => self.t(
+                "权限不足。请检查目标是否为系统目录，或使用更高权限重试。",
+                "Permission denied. Check whether the target is protected or retry with higher privileges.",
+            ),
+            Some(ActionFailureKind::Protected) => self.t(
+                "该目标被风险策略拦截，建议优先使用回收站删除或重新评估路径。",
+                "This target was blocked by risk protection. Prefer recycle-bin deletion or review the path.",
+            ),
+            Some(ActionFailureKind::Io) => self.t(
+                "文件或目录可能正被占用。关闭相关程序后重试。",
+                "The file or directory may be in use. Close related programs and try again.",
+            ),
+            Some(ActionFailureKind::Missing) => self.t(
+                "目标已不存在，界面会在下一次刷新后自动同步。",
+                "The target no longer exists. The UI will synchronize on the next refresh.",
+            ),
+            Some(ActionFailureKind::PlatformUnavailable | ActionFailureKind::NotSupported) => {
+                self.t(
+                    "当前平台不支持该操作，建议改用回收站删除或系统文件管理器。",
+                    "This operation is not supported on the current platform. Try recycle-bin deletion or the system file manager.",
+                )
+            }
+            Some(ActionFailureKind::PrecheckMismatch) => self.t(
+                "预检查与执行前状态不一致，建议重新选择该对象后重试。",
+                "Precheck no longer matches current state. Re-select the item and try again.",
+            ),
+            Some(ActionFailureKind::UnsupportedType) => self.t(
+                "当前只支持文件和目录，特殊对象请改用系统工具处理。",
+                "Only files and directories are supported. Use system tools for special objects.",
+            ),
+            None => self.t(
+                "删除执行失败，请查看下方消息并重试。",
+                "Delete action failed. Review the message below and try again.",
+            ),
+        };
+
+        Some((
+            self.t("删除失败", "Delete Failed").to_string(),
+            format!("{} {}", item.message, hint),
+            false,
+        ))
+    }
+
     fn path_matches_target(path: &str, target: &SelectedTarget) -> bool {
         if path == target.path {
             return true;
@@ -559,6 +689,10 @@ impl DirForgeNativeApp {
         let Some(target) = self.selected_target() else {
             return;
         };
+        self.execute_delete_for_target(target, mode);
+    }
+
+    fn execute_delete_for_target(&mut self, target: SelectedTarget, mode: ExecutionMode) {
         let plan = build_deletion_plan_with_origin(
             vec![(
                 target.path.clone(),
@@ -567,21 +701,59 @@ impl DirForgeNativeApp {
             )],
             self.selection_origin(),
         );
-        let report = execute_plan(&plan, mode);
-        let payload = serde_json::json!({
-            "path": target.path,
+        let relay = Arc::new(Mutex::new(DeleteRelayState::new(&target, mode)));
+        let relay_state = Arc::clone(&relay);
+        let ctx = self.egui_ctx.clone();
+        self.pending_delete_confirmation = None;
+        self.execution_report = None;
+        self.status = self.t("删除中", "Deleting").to_string();
+        self.delete_session = Some(DeleteSession { relay });
+
+        std::thread::spawn(move || {
+            let report = execute_plan(&plan, mode);
+            let mut state = relay_state.lock().expect("delete relay lock");
+            state.finished = Some(DeleteFinishedPayload { target, report });
+            drop(state);
+            ctx.request_repaint();
+        });
+    }
+
+    fn delete_active(&self) -> bool {
+        self.delete_session.is_some()
+    }
+
+    fn process_delete_events(&mut self) {
+        let Some(session) = &self.delete_session else {
+            return;
+        };
+
+        let finished = {
+            let mut relay = session.relay.lock().expect("delete relay lock");
+            relay.finished.take()
+        };
+
+        let Some(payload) = finished else {
+            return;
+        };
+
+        let report = payload.report;
+        let audit_payload = serde_json::json!({
+            "path": payload.target.path,
             "mode": format!("{:?}", report.mode),
             "attempted": report.attempted,
             "succeeded": report.succeeded,
             "failed": report.failed,
         })
         .to_string();
-        let _ = self.cache.add_audit_event("delete_execute", &payload);
+        let _ = self.cache.add_audit_event("delete_execute", &audit_payload);
         if report.succeeded > 0 {
-            self.prune_deleted_target(&target);
+            self.prune_deleted_target(&payload.target);
             self.status = self.t("删除已执行", "Delete executed").to_string();
+        } else {
+            self.status = self.t("删除失败", "Delete failed").to_string();
         }
         self.execution_report = Some(report);
+        self.delete_session = None;
         self.refresh_diagnostics();
     }
 
@@ -602,6 +774,7 @@ impl DirForgeNativeApp {
             .as_ref()
             .and_then(|store| store.path_index.get(path).copied());
         self.execution_report = None;
+        self.pending_delete_confirmation = None;
     }
 
     fn current_volume_info(&self) -> Option<dirforge_platform::VolumeInfo> {
@@ -757,6 +930,7 @@ impl DirForgeNativeApp {
     }
 
     fn start_scan(&mut self) {
+        self.page = Page::CurrentScan;
         self.status = self.t("扫描中", "Scanning").to_string();
         self.scan_current_path = None;
         self.scan_last_event_at = Some(Instant::now());
@@ -771,6 +945,9 @@ impl DirForgeNativeApp {
         self.completed_top_files.clear();
         self.completed_top_dirs.clear();
         self.store = None;
+        self.delete_session = None;
+        self.pending_delete_confirmation = None;
+        self.execution_report = None;
         self.last_coalesce_commit = Instant::now();
 
         let handle = start_scan(
@@ -1069,6 +1246,56 @@ impl DirForgeNativeApp {
                         .desired_width(f32::INFINITY)
                         .hint_text(root_hint),
                 );
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(self.t("快速盘符", "Quick Drives"))
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                if self.available_volumes.is_empty() {
+                    ui.label(self.t(
+                        "未检测到可用卷，仍可手动输入任意目录。",
+                        "No mounted volumes were detected. You can still enter any path manually.",
+                    ));
+                } else {
+                    let volumes = self.available_volumes.clone();
+                    ui.horizontal_wrapped(|ui| {
+                        for volume in volumes {
+                            let used = volume.total_bytes.saturating_sub(volume.available_bytes);
+                            let selected = self.root_input == volume.mount_point;
+                            let button = egui::SelectableLabel::new(
+                                selected,
+                                format!(
+                                    "{}  {} / {}",
+                                    short_volume_label(&volume),
+                                    format_bytes(used),
+                                    format_bytes(volume.total_bytes)
+                                ),
+                            );
+                            let response = ui
+                                .add_enabled(!self.scan_active(), button)
+                                .on_hover_text(format!(
+                                    "{}\n{} {}\n{} {}",
+                                    volume.name,
+                                    self.t("已用", "Used"),
+                                    format_bytes(used),
+                                    self.t("总量", "Total"),
+                                    format_bytes(volume.total_bytes)
+                                ));
+                            if response.clicked() {
+                                self.start_scan_for_root(volume.mount_point.clone());
+                            }
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(self.t(
+                            "点击盘符按钮可直接开始扫描；文本框仍可输入任意目录。",
+                            "Click a drive button to scan it immediately, or type any custom path in the field above.",
+                        ))
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                    );
+                }
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.label(self.t("扫描策略", "Profile"));
@@ -1892,7 +2119,12 @@ impl DirForgeNativeApp {
                 let permanent = egui::Button::new(self.t("永久删除", "Delete Permanently"))
                     .fill(egui::Color32::from_rgb(157, 53, 53));
                 if ui.add_enabled(has_selection, permanent).clicked() {
-                    self.execute_selected_delete(ExecutionMode::Permanent);
+                    if let Some(target) = selected_target.clone() {
+                        self.pending_delete_confirmation = Some(PendingDeleteConfirmation {
+                            risk: self.risk_for_path(&target.path),
+                            target,
+                        });
+                    }
                 }
             });
             if !has_selection {
@@ -1904,6 +2136,13 @@ impl DirForgeNativeApp {
                     .text_style(egui::TextStyle::Small)
                     .color(ui.visuals().weak_text_color()),
                 );
+            }
+            if let Some((title, hint, success)) = self.delete_feedback_message() {
+                ui.add_space(10.0);
+                tone_banner(ui, &title, &hint);
+                if !success {
+                    ui.add_space(6.0);
+                }
             }
             if let Some(report) = self.execution_report.as_ref() {
                 ui.add_space(10.0);
@@ -1966,6 +2205,70 @@ impl DirForgeNativeApp {
                 self.t("当前聚焦来源", "Selection source"),
             );
         });
+    }
+
+    fn ui_delete_confirm_dialog(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_delete_confirmation.clone() else {
+            return;
+        };
+
+        let mut keep_open = true;
+        egui::Window::new(self.t("确认永久删除", "Confirm Permanent Delete"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.set_min_width(420.0);
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "该操作会直接删除文件或目录，不进入回收站。",
+                        "This action deletes the file or folder directly without using the recycle bin.",
+                    ))
+                    .strong(),
+                );
+                ui.add_space(8.0);
+                stat_row(
+                    ui,
+                    self.t("目标", "Target"),
+                    &truncate_middle(&pending.target.path, 42),
+                    match pending.target.kind {
+                        NodeKind::Dir => self.t("目录", "Directory"),
+                        NodeKind::File => self.t("文件", "File"),
+                    },
+                );
+                stat_row(
+                    ui,
+                    self.t("大小", "Size"),
+                    &format_bytes(pending.target.size_bytes),
+                    &format!("{:?}", pending.risk),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "建议：如果只是普通清理，优先使用“移到回收站”。永久删除适合明确确认后再执行。",
+                        "Recommendation: prefer recycle-bin deletion for routine cleanup. Use permanent delete only when you are certain.",
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let confirm = egui::Button::new(self.t("确认永久删除", "Delete Permanently"))
+                        .fill(egui::Color32::from_rgb(157, 53, 53));
+                    if ui.add(confirm).clicked() {
+                        self.pending_delete_confirmation = None;
+                        self.execute_delete_for_target(pending.target.clone(), ExecutionMode::Permanent);
+                        keep_open = false;
+                    }
+                    if ui.button(self.t("取消", "Cancel")).clicked() {
+                        keep_open = false;
+                    }
+                });
+            });
+
+        if !keep_open {
+            self.pending_delete_confirmation = None;
+        }
     }
 
     fn ui_statusbar(&mut self, ui: &mut egui::Ui) {
@@ -2059,6 +2362,8 @@ impl eframe::App for DirForgeNativeApp {
                 Page::Diagnostics => self.ui_diagnostics(ui),
                 Page::Settings => self.ui_settings(ui, ctx),
             });
+
+        self.ui_delete_confirm_dialog(ctx);
     }
 }
 
@@ -2483,6 +2788,46 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn short_volume_label(volume: &dirforge_platform::VolumeInfo) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        return volume.mount_point.trim_end_matches(['\\', '/']).to_string();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if volume.mount_point == "/" {
+            volume.name.clone()
+        } else {
+            volume.mount_point.clone()
+        }
+    }
+}
+
+fn preferred_root_from_volumes(volumes: &[dirforge_platform::VolumeInfo]) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(system_drive) = std::env::var("SystemDrive") {
+            let system_root = format!("{}\\", system_drive.trim_end_matches(['\\', '/']));
+            if volumes
+                .iter()
+                .any(|volume| volume.mount_point.eq_ignore_ascii_case(&system_root))
+            {
+                return system_root;
+            }
+        }
+    }
+
+    if let Some(first) = volumes.first() {
+        return first.mount_point.clone();
+    }
+
+    std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.display().to_string())
+        .unwrap_or_else(|| ".".to_string())
+}
+
 fn detect_lang() -> Lang {
     let locale = std::env::var("LC_ALL")
         .ok()
@@ -2501,6 +2846,7 @@ fn detect_lang() -> Lang {
 #[cfg(test)]
 mod ui_tests {
     use super::*;
+    use dirforge_core::{NodeKind, NodeStore};
 
     #[test]
     fn format_bytes_is_human_readable() {
@@ -2526,5 +2872,73 @@ mod ui_tests {
     fn treemap_label_hides_small_tiles() {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(60.0, 20.0));
         assert!(treemap_label_for_rect("folder", 1024, rect).is_none());
+    }
+
+    #[test]
+    fn preferred_root_uses_first_volume_when_available() {
+        let volumes = vec![dirforge_platform::VolumeInfo {
+            mount_point: "D:\\".to_string(),
+            name: "Data".to_string(),
+            total_bytes: 10,
+            available_bytes: 5,
+        }];
+        assert_eq!(preferred_root_from_volumes(&volumes), "D:\\");
+    }
+
+    #[test]
+    fn rebuild_store_without_target_removes_subtree_and_updates_rollup() {
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "e:\\".into(), "e:\\".into(), NodeKind::Dir, 0);
+        let keep = store.add_node(
+            Some(root),
+            "keep".into(),
+            "e:\\keep".into(),
+            NodeKind::Dir,
+            0,
+        );
+        store.add_node(
+            Some(keep),
+            "file.bin".into(),
+            "e:\\keep\\file.bin".into(),
+            NodeKind::File,
+            10,
+        );
+        let drop_dir = store.add_node(
+            Some(root),
+            "drop".into(),
+            "e:\\drop".into(),
+            NodeKind::Dir,
+            0,
+        );
+        store.add_node(
+            Some(drop_dir),
+            "trash.bin".into(),
+            "e:\\drop\\trash.bin".into(),
+            NodeKind::File,
+            20,
+        );
+        store.rollup();
+
+        let target = SelectedTarget {
+            name: "drop".into(),
+            path: "e:\\drop".into(),
+            size_bytes: 20,
+            kind: NodeKind::Dir,
+            file_count: 1,
+            dir_count: 1,
+        };
+
+        let rebuilt = DirForgeNativeApp::rebuild_store_without_target(&store, &target)
+            .expect("rebuilt store");
+        let root_node = rebuilt
+            .nodes
+            .iter()
+            .find(|node| node.parent.is_none())
+            .expect("root node");
+
+        assert!(!rebuilt.path_index.contains_key("e:\\drop"));
+        assert!(!rebuilt.path_index.contains_key("e:\\drop\\trash.bin"));
+        assert_eq!(root_node.size_subtree, 10);
+        assert_eq!(root_node.file_count, 1);
     }
 }

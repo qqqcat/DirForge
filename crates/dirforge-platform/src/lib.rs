@@ -8,7 +8,7 @@ pub use error::{map_io_error, PlatformError, PlatformErrorKind};
 pub use explorer::{reveal_in_explorer, select_in_explorer};
 pub use fs_meta::{is_reparse_point, normalize_path, stable_file_identity, FileIdentity};
 pub use trash::move_to_recycle_bin;
-pub use volume::{volume_info, VolumeInfo};
+pub use volume::{list_volumes, volume_info, VolumeInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformCapabilities {
@@ -107,6 +107,13 @@ mod tests {
         let cwd = std::env::current_dir().expect("cwd");
         let info = volume_info(&cwd.display().to_string()).expect("volume info");
         assert!(info.total_bytes >= info.available_bytes);
+    }
+
+    #[test]
+    fn list_volumes_returns_entries() {
+        let volumes = list_volumes().expect("list volumes");
+        assert!(!volumes.is_empty());
+        assert!(volumes.iter().all(|volume| !volume.mount_point.is_empty()));
     }
 
     #[test]

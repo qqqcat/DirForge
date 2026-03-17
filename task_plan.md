@@ -1,24 +1,32 @@
 # Task Plan
 
 ## Goal
-将当前仓库升级为可复用的 Copilot Autonomous Engineer 模板，使其在 VS Code 中更接近 Devin / Cursor Agent 的持续执行模式。
+对 DirForge 当前代码、交互和文档进行一次基于实测结果的项目评估，并把所有关键文档同步到与代码一致的状态。
 
-## Phases
-- [x] 读取参考文档并提炼核心能力
-- [x] 明确能力目标：任务分解、循环执行、测试修复、重构、记忆、续跑
-- [x] 设计增强版架构（加入质量闸门、失败恢复、状态机）
-- [x] 创建 `.github` 指令系统与 memory 子系统
-- [x] 创建 VS Code 配置与项目说明文档
-- [x] 自检并记录后续使用方式
-- [x] 补充核心工程约束（分层、可测试、错误分类、数据契约、可观测性、扩展规则）
-- [x] 新增 docs/engineering-requirements.md 完整规范
-- [x] 新增 docs/data-contracts.md 统一数据结构定义
-- [x] 审计模板在“文档承诺”和“实际可执行性”之间的落差
-- [x] 新增模板结构校验脚本与最小 CI workflow
-- [x] 修正文档路径引用并补充 quickstart 指引
+## Assessment Scope
+- [x] 验证工作区构建与测试状态（`cargo check --workspace`、`cargo test --workspace`）
+- [x] 审视扫描主链路：并发扫描、聚合、完成态、取消与错误处理
+- [x] 审视 UI 主流程：Overview / Live Scan / Treemap / History / Errors / Diagnostics / Settings
+- [x] 审视删除链路：Inspector 内回收站删除、永久删除、审计与局部刷新
+- [x] 识别文档漂移：过时的 `Operations` 页面、旧删除流程、旧导航描述
+- [x] 更新主文档：`README.md`
+- [x] 更新综合评估：`docs/dirforge-comprehensive-assessment.md`
+- [x] 更新设计与使用文档：`docs/dirforge-sdd.md`、`docs/dirforge-ui-component-spec.md`、`docs/dirforge-install-usage.md`、`docs/quickstart.md`
+- [x] 更新工作记录：`findings.md`、`progress.md`
 
-## Decisions
-- 在原文档基础上增强：新增质量门禁、失败处理策略、可恢复执行、明确 DoD。
-- 采用“最小可执行模板 + 可扩展文件”策略，避免过度复杂但保留进阶能力。
-- 用模板级结构校验代替空泛的“建议自检”，先保证仓库可审计，再要求接入项目扩展真实测试。
-- 快速上手文档与路径一致性优先级高于继续堆叠概念文档，否则新用户首次使用成本过高。
+## Current Assessment Summary
+- 当前阶段：`Production Readiness`，已具备稳定的端到端可运行主链路。
+- 当前优势：扫描链路稳定、UI 可用性明显提升、删除动作已进入 Inspector、删除后主视图支持局部刷新、启动即提供盘符快捷扫描。
+- 当前主要风险：真实删除跨平台边界测试仍可继续扩展，缺少更完整的 UI 集成回归。
+
+## Completed In This Round
+1. 已为永久删除增加确认层，并补充更清晰的失败/撤销提示。
+2. 已为删除后的局部刷新补充 UI 侧自动化回归验证（默认根路径与局部树重建测试）。
+3. 已加强真实删除在权限不足、文件占用、目录删除等场景下的测试矩阵。
+4. 已优化首次启动默认根路径与空状态引导，并新增盘符快捷按钮，点击即可直接扫描对应卷。
+
+## Next Priorities
+1. 为永久删除增加更强的二次确认文案和高风险路径醒目标识。
+2. 引入更接近真实点击流的 UI 集成测试，而不仅是 UI 逻辑单测。
+3. 持续扩展真实删除跨平台边界样本，尤其是权限、锁定和系统目录。
+4. 继续优化盘符按钮与自定义目录输入的视觉层级，减少首次使用成本。

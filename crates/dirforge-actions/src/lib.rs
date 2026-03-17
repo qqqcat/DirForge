@@ -421,6 +421,7 @@ fn path_kind(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn plan_and_simulated_execution_smoke() {
@@ -445,5 +446,116 @@ mod tests {
         let report = execute_plan_simulated(&plan, ExecutionMode::Permanent);
         assert_eq!(report.attempted, 2);
         assert_eq!(report.failed, 1);
+    }
+
+    #[test]
+    fn permanent_delete_removes_directory_tree() {
+        let root = std::env::temp_dir().join(format!(
+            "dirforge-actions-delete-dir-{}",
+            std::process::id()
+        ));
+        let nested = root.join("nested");
+        let file = nested.join("payload.txt");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::write(&file, b"payload").expect("seed file");
+
+        let plan = build_deletion_plan(vec![(root.display().to_string(), 7, RiskLevel::Low)]);
+        let report = execute_plan(&plan, ExecutionMode::Permanent);
+
+        assert_eq!(report.succeeded, 1);
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn permanent_delete_blocks_high_risk_target() {
+        let root =
+            std::env::temp_dir().join(format!("dirforge-actions-protected-{}", std::process::id()));
+        let _ = fs::create_dir_all(&root);
+        let plan = build_deletion_plan(vec![(root.display().to_string(), 1, RiskLevel::High)]);
+        let report = execute_plan(&plan, ExecutionMode::Permanent);
+
+        assert_eq!(report.failed, 1);
+        assert_eq!(
+            report.items[0].failure_kind,
+            Some(ActionFailureKind::Protected)
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permanent_delete_permission_denied_on_readonly_parent_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "dirforge-actions-perm-denied-{}",
+            std::process::id()
+        ));
+        let guarded = root.join("guarded");
+        let file = guarded.join("locked.txt");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&guarded).expect("create guarded dir");
+        fs::write(&file, b"locked").expect("seed file");
+
+        let mut perms = fs::metadata(&guarded)
+            .expect("guarded metadata")
+            .permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&guarded, perms).expect("set readonly dir perms");
+
+        let plan = build_deletion_plan(vec![(file.display().to_string(), 6, RiskLevel::Low)]);
+        let report = execute_plan(&plan, ExecutionMode::Permanent);
+
+        let mut cleanup_perms = fs::metadata(&guarded)
+            .expect("guarded metadata after test")
+            .permissions();
+        cleanup_perms.set_mode(0o755);
+        let _ = fs::set_permissions(&guarded, cleanup_perms);
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(report.failed, 1);
+        assert_eq!(
+            report.items[0].failure_kind,
+            Some(ActionFailureKind::PermissionDenied)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn permanent_delete_fails_when_file_is_exclusively_locked() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("dirforge-actions-locked-{}", std::process::id()));
+        let file = root.join("locked.txt");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create root");
+        fs::write(&file, b"locked").expect("seed file");
+
+        let handle = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&file)
+            .expect("lock file");
+
+        let plan = build_deletion_plan(vec![(file.display().to_string(), 8, RiskLevel::Low)]);
+        let report = execute_plan(&plan, ExecutionMode::Permanent);
+
+        drop(handle);
+        let _ = fs::remove_file(&file);
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(report.failed, 1);
+        assert!(
+            matches!(
+                report.items[0].failure_kind,
+                Some(ActionFailureKind::PermissionDenied | ActionFailureKind::Io)
+            ),
+            "expected locked file to fail with PermissionDenied or Io, got {:?}",
+            report.items[0].failure_kind
+        );
     }
 }
