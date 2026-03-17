@@ -1,0 +1,13 @@
+[package]
+name = "dirotter-testkit"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+dirotter-core = { path = "../dirotter-core" }
+dirotter-scan = { path = "../dirotter-scan" }
+dirotter-dup = { path = "../dirotter-dup" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

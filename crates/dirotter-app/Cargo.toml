@@ -1,0 +1,9 @@
+[package]
+name = "dirotter-app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eframe.workspace = true
+dirotter-ui = { path = "../dirotter-ui" }
+dirotter-telemetry = { path = "../dirotter-telemetry" }

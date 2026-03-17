@@ -1,0 +1,305 @@
+use dirotter_core::{ErrorKind, NodeKind, NodeStore, ScanErrorRecord};
+use rayon::prelude::*;
+use serde::Serialize;
+use std::fs;
+use std::io;
+use std::path::Path;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SummaryRow {
+    pub path: String,
+    pub kind: &'static str,
+    pub size_self: u64,
+    pub size_subtree: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SummaryReport {
+    pub nodes: usize,
+    pub rows: Vec<SummaryRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DuplicateRow {
+    pub group: usize,
+    pub size: u64,
+    pub path: String,
+    pub keeper: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DuplicateReport {
+    pub groups: usize,
+    pub rows: Vec<DuplicateRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorRow {
+    pub path: String,
+    pub reason: String,
+    pub kind: ErrorKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorReport {
+    pub count: usize,
+    pub rows: Vec<ErrorRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagnosticsBundleManifest {
+    pub diagnostics_payload_file: String,
+    pub summary_report_file: String,
+    pub duplicate_report_file: String,
+    pub error_report_file: String,
+    pub format: &'static str,
+    pub structure_version: u32,
+}
+
+pub const DIAGNOSTICS_BUNDLE_STRUCTURE_VERSION: u32 = 2;
+
+pub fn default_manifest() -> DiagnosticsBundleManifest {
+    DiagnosticsBundleManifest {
+        diagnostics_payload_file: "diagnostics.json".to_string(),
+        summary_report_file: "summary.json".to_string(),
+        duplicate_report_file: "duplicates.csv".to_string(),
+        error_report_file: "errors.csv".to_string(),
+        format: "json",
+        structure_version: DIAGNOSTICS_BUNDLE_STRUCTURE_VERSION,
+    }
+}
+pub fn build_summary_report(store: &NodeStore) -> SummaryReport {
+    let rows = store
+        .nodes
+        .par_iter()
+        .map(|n| SummaryRow {
+            path: n.path.clone(),
+            kind: if matches!(n.kind, NodeKind::Dir) {
+                "dir"
+            } else {
+                "file"
+            },
+            size_self: n.size_self,
+            size_subtree: n.size_subtree,
+        })
+        .collect();
+
+    SummaryReport {
+        nodes: store.nodes.len(),
+        rows,
+    }
+}
+
+pub fn build_duplicate_report(groups: &[dirotter_dup::DuplicateGroup]) -> DuplicateReport {
+    let mut rows: Vec<DuplicateRow> = groups
+        .par_iter()
+        .enumerate()
+        .flat_map_iter(|(group_idx, group)| {
+            group.members.iter().map(move |member| DuplicateRow {
+                group: group_idx,
+                size: group.size,
+                path: member.path.clone(),
+                keeper: member.keeper,
+            })
+        })
+        .collect();
+
+    rows.par_sort_unstable_by(|a, b| a.group.cmp(&b.group).then(a.path.cmp(&b.path)));
+
+    DuplicateReport {
+        groups: groups.len(),
+        rows,
+    }
+}
+
+pub fn build_error_report(errors: &[ScanErrorRecord]) -> ErrorReport {
+    ErrorReport {
+        count: errors.len(),
+        rows: errors
+            .par_iter()
+            .map(|e| ErrorRow {
+                path: e.path.clone(),
+                reason: e.reason.clone(),
+                kind: e.kind,
+            })
+            .collect(),
+    }
+}
+
+pub fn export_summary_txt(store: &NodeStore, output: impl AsRef<Path>) -> io::Result<()> {
+    let report = build_summary_report(store);
+    let mut out = String::new();
+    out.push_str("DirOtter Summary Report\n");
+    out.push_str(&format!("nodes={}\n", report.nodes));
+    for row in report.rows {
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\n",
+            row.path, row.kind, row.size_self, row.size_subtree
+        ));
+    }
+    fs::write(output, out)
+}
+
+pub fn export_summary_json(store: &NodeStore, output: impl AsRef<Path>) -> io::Result<()> {
+    let report = build_summary_report(store);
+    let payload = serde_json::to_vec_pretty(&report)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    fs::write(output, payload)
+}
+
+pub fn export_duplicates_csv(
+    groups: &[dirotter_dup::DuplicateGroup],
+    output: impl AsRef<Path>,
+) -> io::Result<()> {
+    let report = build_duplicate_report(groups);
+    let mut out = String::from("group,size,path,keeper\n");
+    for row in report.rows {
+        out.push_str(&format!(
+            "{},{},\"{}\",{}\n",
+            row.group,
+            row.size,
+            row.path.replace('"', "\"\""),
+            row.keeper
+        ));
+    }
+    fs::write(output, out)
+}
+
+pub fn export_errors_csv(errors: &[ScanErrorRecord], output: impl AsRef<Path>) -> io::Result<()> {
+    let report = build_error_report(errors);
+    let mut out = String::from("path,reason,kind\n");
+    for row in report.rows {
+        out.push_str(&format!(
+            "\"{}\",\"{}\",{:?}\n",
+            row.path.replace('"', "\"\""),
+            row.reason.replace('"', "\"\""),
+            row.kind
+        ));
+    }
+    fs::write(output, out)
+}
+
+pub fn export_diagnostics_bundle(
+    payload: &str,
+    output: impl AsRef<Path>,
+    manifest: &DiagnosticsBundleManifest,
+) -> io::Result<()> {
+    let output_path = output.as_ref();
+    fs::write(output_path, payload)?;
+    let manifest_path = output_path.with_extension("manifest.json");
+    let bytes = serde_json::to_vec_pretty(manifest)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    fs::write(manifest_path, bytes)
+}
+
+pub fn export_diagnostics_archive(
+    payload: &str,
+    archive_dir: impl AsRef<Path>,
+    prefix: &str,
+    manifest: &DiagnosticsBundleManifest,
+) -> io::Result<std::path::PathBuf> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let bundle_dir = archive_dir.as_ref().join(format!("{prefix}-{ts}"));
+    fs::create_dir_all(&bundle_dir)?;
+    let payload_path = bundle_dir.join(&manifest.diagnostics_payload_file);
+    export_diagnostics_bundle(payload, &payload_path, manifest)?;
+    Ok(bundle_dir)
+}
+
+pub fn export_text_report(store: &NodeStore, output: impl AsRef<Path>) -> io::Result<()> {
+    export_summary_txt(store, output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dirotter_core::{NodeKind, NodeStore, RiskLevel};
+    use dirotter_dup::{DuplicateGroup, DuplicateMember};
+
+    #[test]
+    fn export_report_smoke() {
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "root".into(), "/tmp/root".into(), NodeKind::Dir, 0);
+        store.add_node(
+            Some(root),
+            "a".into(),
+            "/tmp/root/a".into(),
+            NodeKind::File,
+            42,
+        );
+        store.rollup();
+
+        let out = std::env::temp_dir().join("dirotter_report_test.txt");
+        export_summary_txt(&store, &out).expect("export report");
+        let content = std::fs::read_to_string(&out).expect("read report");
+        assert!(content.contains("DirOtter Summary Report"));
+        let _ = std::fs::remove_file(out);
+    }
+
+    #[test]
+    fn export_errors_and_duplicates_csv_smoke() {
+        let err_out = std::env::temp_dir().join("dirotter_errors_test.csv");
+        let dup_out = std::env::temp_dir().join("dirotter_dups_test.csv");
+
+        let errors = vec![ScanErrorRecord {
+            path: "/tmp/nope".into(),
+            reason: "denied".into(),
+            kind: ErrorKind::User,
+        }];
+        export_errors_csv(&errors, &err_out).expect("errors csv");
+
+        let groups = vec![DuplicateGroup {
+            size: 10,
+            members: vec![
+                DuplicateMember {
+                    path: "/tmp/a".into(),
+                    size: 10,
+                    keeper: true,
+                },
+                DuplicateMember {
+                    path: "/tmp/b".into(),
+                    size: 10,
+                    keeper: false,
+                },
+            ],
+            reclaimable_bytes: 10,
+            risk: RiskLevel::Low,
+        }];
+        export_duplicates_csv(&groups, &dup_out).expect("dups csv");
+
+        let err_content = std::fs::read_to_string(&err_out).expect("read errors");
+        let dup_content = std::fs::read_to_string(&dup_out).expect("read dups");
+        assert!(err_content.contains("path,reason,kind"));
+        assert!(dup_content.contains("group,size,path,keeper"));
+
+        let _ = std::fs::remove_file(err_out);
+        let _ = std::fs::remove_file(dup_out);
+    }
+
+    #[test]
+    fn export_diagnostics_manifest_smoke() {
+        let out = std::env::temp_dir().join("dirotter_diag_test.json");
+        let mut manifest = default_manifest();
+        manifest.diagnostics_payload_file = "dirotter_diag_test.json".into();
+        export_diagnostics_bundle("{\"ok\":true}", &out, &manifest).expect("export diagnostics");
+        let content = std::fs::read_to_string(&out).expect("read diagnostics");
+        assert!(content.contains("ok"));
+        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_file(out.with_extension("manifest.json"));
+    }
+
+    #[test]
+    fn export_diagnostics_archive_smoke() {
+        let mut manifest = default_manifest();
+        manifest.diagnostics_payload_file = "diag.json".into();
+        let archive_root = std::env::temp_dir().join("dirotter_diag_archive");
+        let bundle = export_diagnostics_archive("{\"ok\":true}", &archive_root, "df", &manifest)
+            .expect("archive");
+        let payload = bundle.join("diag.json");
+        assert!(payload.exists());
+        let _ = std::fs::remove_dir_all(&archive_root);
+    }
+}

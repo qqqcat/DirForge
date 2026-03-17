@@ -21,7 +21,7 @@
 
 ## Document Drift Fixed
 - 旧文档仍在描述 `Operations` 页面与“模拟执行优先”的单独流程，已与现状不符。
-- `task_plan.md`、`findings.md` 原先仍是历史模板仓库内容，已改为 DirForge 当前评估与工作记录。
+- `task_plan.md`、`findings.md` 原先仍是历史模板仓库内容，已改为 DirOtter 当前评估与工作记录。
 - 使用文档中“扫描结束后去操作页执行动作”的描述已过期，需要统一到 Inspector 内动作模型。
 
 ## Current Risks

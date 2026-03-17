@@ -1,9 +1,0 @@
-[package]
-name = "dirforge-telemetry"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-serde = { workspace = true, features = ["derive"] }

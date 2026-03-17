@@ -1,0 +1,11 @@
+[package]
+name = "dirotter-report"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirotter-core = { path = "../dirotter-core" }
+dirotter-dup = { path = "../dirotter-dup" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+rayon.workspace = true

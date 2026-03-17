@@ -1,16 +1,16 @@
 [workspace]
 members = [
-  "crates/dirforge-app",
-  "crates/dirforge-ui",
-  "crates/dirforge-core",
-  "crates/dirforge-scan",
-  "crates/dirforge-dup",
-  "crates/dirforge-cache",
-  "crates/dirforge-platform",
-  "crates/dirforge-actions",
-  "crates/dirforge-report",
-  "crates/dirforge-telemetry",
-  "crates/dirforge-testkit",
+  "crates/dirotter-app",
+  "crates/dirotter-ui",
+  "crates/dirotter-core",
+  "crates/dirotter-scan",
+  "crates/dirotter-dup",
+  "crates/dirotter-cache",
+  "crates/dirotter-platform",
+  "crates/dirotter-actions",
+  "crates/dirotter-report",
+  "crates/dirotter-telemetry",
+  "crates/dirotter-testkit",
 ]
 resolver = "2"
 
@@ -18,7 +18,7 @@ resolver = "2"
 edition = "2021"
 version = "0.1.0"
 license = "MIT"
-authors = ["DirForge Team"]
+authors = ["DirOtter Team"]
 
 [workspace.dependencies]
 eframe = "0.28"

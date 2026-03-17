@@ -1,0 +1,11 @@
+[package]
+name = "dirotter-actions"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirotter-core = { path = "../dirotter-core" }
+dirotter-platform = { path = "../dirotter-platform" }
+dirotter-telemetry = { path = "../dirotter-telemetry" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

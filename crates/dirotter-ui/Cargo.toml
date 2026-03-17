@@ -1,0 +1,19 @@
+[package]
+name = "dirotter-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+dirotter-core = { path = "../dirotter-core" }
+dirotter-scan = { path = "../dirotter-scan" }
+dirotter-dup = { path = "../dirotter-dup" }
+dirotter-cache = { path = "../dirotter-cache" }
+dirotter-actions = { path = "../dirotter-actions" }
+dirotter-platform = { path = "../dirotter-platform" }
+dirotter-report = { path = "../dirotter-report" }
+dirotter-telemetry = { path = "../dirotter-telemetry" }
+rusqlite.workspace = true
+serde_json.workspace = true
+rayon.workspace = true

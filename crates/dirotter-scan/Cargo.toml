@@ -1,0 +1,15 @@
+[package]
+name = "dirotter-scan"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirotter-core = { path = "../dirotter-core" }
+dirotter-telemetry = { path = "../dirotter-telemetry" }
+serde.workspace = true
+serde_json.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+dirotter-testkit = { path = "../dirotter-testkit" }
+nix = { version = "0.28", default-features = false, features = ["user"] }

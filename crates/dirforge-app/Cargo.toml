@@ -1,9 +1,0 @@
-[package]
-name = "dirforge-app"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-eframe.workspace = true
-dirforge-ui = { path = "../dirforge-ui" }
-dirforge-telemetry = { path = "../dirforge-telemetry" }

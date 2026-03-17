@@ -1,8 +1,0 @@
-[package]
-name = "dirforge-core"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-serde.workspace = true
-rayon.workspace = true

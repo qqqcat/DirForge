@@ -1,0 +1,12 @@
+[package]
+name = "dirotter-dup"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirotter-core = { path = "../dirotter-core" }
+blake3.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+dirotter-testkit = { path = "../dirotter-testkit" }

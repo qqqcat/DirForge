@@ -1,4 +1,4 @@
-# DirForge Quick Start
+# DirOtter Quick Start
 
 本指南用于 5~10 分钟内完成本地运行、基础验证和结果产物检查。
 
@@ -10,8 +10,8 @@
 ## 2. 获取代码
 
 ```bash
-git clone <your-repo-url> DirForge
-cd DirForge
+git clone <your-repo-url> DirOtter
+cd DirOtter
 ```
 
 ## 3. 一次性健康检查
@@ -26,7 +26,7 @@ cargo test --workspace
 ## 4. 启动桌面应用
 
 ```bash
-cargo run -p dirforge-app
+cargo run -p dirotter-app
 ```
 
 应用启动后建议按以下路径体验：
@@ -45,12 +45,12 @@ cargo run -p dirforge-app
 
 运行/导出后通常可见：
 
-- `dirforge.db`
-- `dirforge_report.txt`
-- `dirforge_summary.json`
-- `dirforge_duplicates.csv`
-- `dirforge_errors.csv`
-- `dirforge_diagnostics.json`
+- `dirotter.db`
+- `dirotter_report.txt`
+- `dirotter_summary.json`
+- `dirotter_duplicates.csv`
+- `dirotter_errors.csv`
+- `dirotter_diagnostics.json`
 
 ## 6. 常见排查
 
@@ -60,6 +60,6 @@ cargo run -p dirforge-app
 
 ## 7. 下一步阅读
 
-- 架构与设计：`docs/dirforge-sdd.md`
-- 综合评估：`docs/dirforge-comprehensive-assessment.md`
-- 安装与使用细节：`docs/dirforge-install-usage.md`
+- 架构与设计：`docs/dirotter-sdd.md`
+- 综合评估：`docs/dirotter-comprehensive-assessment.md`
+- 安装与使用细节：`docs/dirotter-install-usage.md`

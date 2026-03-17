@@ -1,7 +1,7 @@
 # Task Plan
 
 ## Goal
-对 DirForge 当前代码、交互和文档进行一次基于实测结果的项目评估，并把所有关键文档同步到与代码一致的状态。
+对 DirOtter 当前代码、交互和文档进行一次基于实测结果的项目评估，并把所有关键文档同步到与代码一致的状态。
 
 ## Assessment Scope
 - [x] 验证工作区构建与测试状态（`cargo check --workspace`、`cargo test --workspace`）
@@ -10,8 +10,8 @@
 - [x] 审视删除链路：Inspector 内回收站删除、永久删除、审计与局部刷新
 - [x] 识别文档漂移：过时的 `Operations` 页面、旧删除流程、旧导航描述
 - [x] 更新主文档：`README.md`
-- [x] 更新综合评估：`docs/dirforge-comprehensive-assessment.md`
-- [x] 更新设计与使用文档：`docs/dirforge-sdd.md`、`docs/dirforge-ui-component-spec.md`、`docs/dirforge-install-usage.md`、`docs/quickstart.md`
+- [x] 更新综合评估：`docs/dirotter-comprehensive-assessment.md`
+- [x] 更新设计与使用文档：`docs/dirotter-sdd.md`、`docs/dirotter-ui-component-spec.md`、`docs/dirotter-install-usage.md`、`docs/quickstart.md`
 - [x] 更新工作记录：`findings.md`、`progress.md`
 
 ## Current Assessment Summary
