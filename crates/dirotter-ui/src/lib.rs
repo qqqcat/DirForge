@@ -3794,7 +3794,7 @@ mod ui_tests {
             page: Page::CurrentScan,
             available_volumes: Vec::new(),
             root_input: "d:\\".into(),
-            status: "Completed".into(),
+            status: AppStatus::Completed,
             summary: ScanSummary::default(),
             store: Some(store),
             scan_session: None,

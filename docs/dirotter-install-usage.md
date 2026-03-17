@@ -1,9 +1,9 @@
-# DirOtter 安装与使用指南（2026-03-16）
+# DirOtter 安装与使用指南（2026-03-17）
 
 ## 0. 阶段说明
 
-- 当前：Production Readiness（生产就绪冲刺后期）
-- 目标：Production（生产级）
+- 当前：Production Readiness
+- 目标：Production
 
 ## 1. 安装
 
@@ -32,55 +32,49 @@ cargo run -p dirotter-app
 2. 如果要扫描任意子目录，再手动修改根目录输入框。
 3. 调整扫描参数（profile、batch、snapshot interval）。
 4. 扫描进行中，在工具栏使用 `Stop Scan` 停止扫描，而不是重复点击 `Start Scan`。
-5. 在 Live Scan 页面观察实时进度、热点文件/目录与实时发现列表。
-6. 扫描完成后查看：
+5. 如果某个页面内容超过当前窗口高度，请直接在主内容区内向下滚动；主要页面现在由页面整体滚动承载。
+6. 在 Live Scan 页面观察实时进度、热点文件/目录与最近扫描列表。
+7. 扫描完成后查看：
    - Overview（卷空间摘要、最大文件夹、最大文件）
-   - Treemap（只对可读区域显示标签，悬浮看完整路径）
+   - Treemap（可读区域显示标签，悬浮看完整路径）
    - 历史快照
-   - 错误分类（User/Transient/System）
-7. 在右侧 Inspector 查看当前选中文件/目录的上下文信息，并直接执行：
+   - 错误分类
+8. 在右侧 Inspector 查看当前选中文件/目录的上下文信息，并直接执行：
+   - `Open File Location`
    - `Move to Recycle Bin`
    - `Delete Permanently`
-8. 永久删除会先弹出确认窗口；点击确认后窗口会立即关闭，并转为顶部横幅、状态栏和 Inspector 中的后台任务提示，显示目标、模式与耗时。
-9. 回收站删除成功后会提示可从系统回收站恢复；Windows 下还会做系统回收站二次校验。
-10. 删除成功后，排行榜、概览统计和 treemap 会立即局部刷新。
-11. 选中文件夹后，“最大文件”榜单会切换为该目录内部的大文件，便于继续往下钻取空间热点。
-12. 在 Settings 中切换中英文或深浅主题；Windows 默认会优先加载 Microsoft YaHei / DengXian 等中文字体回退。
-13. 导出报告和诊断文件（含诊断归档目录）。
+9. 永久删除会先弹出确认窗口；点击确认后窗口会立即关闭，并转为顶部横幅、状态栏和 Inspector 中的后台任务提示。
+10. 回收站删除成功后会提示可从系统回收站恢复；Windows 下还会做系统回收站二次校验。
+11. 删除成功后，排行榜、概览统计和 treemap 会立即局部刷新。
+12. 选中文件夹后，“最大文件”榜单会切换为该目录内部的大文件。
+13. 在 Settings 中切换中英文或深浅主题；标题旁状态胶囊也会跟随语言切换。
+14. 导出报告和诊断文件。
 
 说明：
 
 - `Scanned Size` 表示本次扫描实际遍历到的文件总大小。
-- `Volume Used` / `Total` 表示卷级别空间信息，来源于系统磁盘信息，不等同于扫描结果。
-- 当前后台删除任务表达的是“系统正在处理删除请求”，不是字节级进度条。
+- `Volume Used` / `Total` 表示卷级别空间信息，不等同于扫描结果。
+- 当前后台删除任务表达的是阶段性状态，不是字节级进度条。
 
 ## 5. 性能阈值测试
-
-项目包含阈值测试：
 
 ```bash
 cargo test -p dirotter-testkit --test benchmark_thresholds
 ```
 
-当前默认阈值（`crates/dirotter-testkit/perf/baseline.json`）：
-
-- 小规模扫描阈值：500ms
-- 大规模扫描阈值：3500ms
-- 小规模去重阈值：300ms
-
 ## 6. 产物说明
 
-- `dirotter.db`：SQLite 缓存（快照/设置/历史/审计）
-- `dirotter_report.txt`：文本报告
-- `dirotter_summary.json`：摘要 JSON
-- `dirotter_duplicates.csv`：重复候选导出
-- `dirotter_errors.csv`：错误导出
-- `dirotter_diagnostics.json`：诊断导出
-- `diagnostics-<timestamp>/`：诊断归档目录（含 manifest）
+- `dirotter.db`
+- `dirotter_report.txt`
+- `dirotter_summary.json`
+- `dirotter_duplicates.csv`
+- `dirotter_errors.csv`
+- `dirotter_diagnostics.json`
 
 ## 7. 注意事项
 
 - 永久删除是高敏感动作，当前建议优先使用“移到回收站”。
 - 大体量目录扫描时，首次运行可能出现较高 CPU/内存占用。
 - 若 GUI 无法启动，请确认运行环境具备桌面窗口支持。
-- 若中文显示为方框或乱码，请确认系统存在可用 CJK 字体；应用会优先加载系统字体回退。
+- 若中文显示为方框或乱码，请确认系统存在可用 CJK 字体。
+
