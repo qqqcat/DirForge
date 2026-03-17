@@ -887,6 +887,66 @@ impl DirForgeNativeApp {
             .unwrap_or_default()
     }
 
+    fn ranked_files_in_scope(&self, scope_path: &str, limit: usize) -> Vec<(String, u64)> {
+        let Some(store) = self.store.as_ref() else {
+            return Vec::new();
+        };
+        let mut matches: Vec<(String, u64)> = store
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, NodeKind::File))
+            .filter(|node| node.path != scope_path)
+            .filter(|node| path_within_scope(&node.path, scope_path))
+            .map(|node| (node.path.clone(), node.size_self))
+            .collect();
+        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        matches.truncate(limit);
+        matches
+    }
+
+    fn contextual_ranked_files_panel(&self, limit: usize) -> (String, String, Vec<(String, u64)>) {
+        if let Some(target) = self.selected_target() {
+            let scope_path = match target.kind {
+                NodeKind::Dir => Some(target.path.clone()),
+                NodeKind::File => PathBuf::from(&target.path)
+                    .parent()
+                    .map(|parent| parent.display().to_string()),
+            };
+
+            if let Some(scope_path) = scope_path {
+                let scoped_files = self.ranked_files_in_scope(&scope_path, limit);
+                if !scoped_files.is_empty() {
+                    let scope_name = PathBuf::from(&scope_path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| name.to_string())
+                        .unwrap_or_else(|| scope_path.clone());
+                    return (
+                        self.t("所选位置中的最大文件", "Largest Files In Selection")
+                            .to_string(),
+                        format!(
+                            "{}: {}",
+                            self.t("当前范围", "Current scope"),
+                            truncate_middle(&scope_name, 40)
+                        ),
+                        scoped_files,
+                    );
+                }
+            }
+        }
+
+        (
+            self.t("当前最大的文件", "Largest Files Found So Far")
+                .to_string(),
+            self.t(
+                "先发现的结果不代表最终排序。",
+                "Early findings are not yet the final ordering.",
+            )
+            .to_string(),
+            self.current_ranked_files(limit),
+        )
+    }
+
     fn refresh_diagnostics(&mut self) {
         let cache_payload = self
             .cache
@@ -1506,7 +1566,8 @@ impl DirForgeNativeApp {
 
         ui.add_space(12.0);
         let ranked_dirs = self.current_ranked_dirs(12);
-        let ranked_files = self.current_ranked_files(12);
+        let (live_files_title, live_files_subtitle, ranked_files) =
+            self.contextual_ranked_files_panel(12);
         let live_folders_title = self
             .t("当前最大的文件夹", "Largest Folders Found So Far")
             .to_string();
@@ -1514,15 +1575,6 @@ impl DirForgeNativeApp {
             .t(
                 "扫描还未结束时，这里会持续更新。",
                 "This keeps updating until the scan finishes.",
-            )
-            .to_string();
-        let live_files_title = self
-            .t("当前最大的文件", "Largest Files Found So Far")
-            .to_string();
-        let live_files_subtitle = self
-            .t(
-                "先发现的结果不代表最终排序。",
-                "Early findings are not yet the final ordering.",
             )
             .to_string();
         ui.columns(2, |columns| {
@@ -2358,6 +2410,17 @@ impl DirForgeNativeApp {
                                 },
                             );
                             ui.add_space(10.0);
+                            let phase = snapshot.started_at.elapsed().as_secs_f32();
+                            let pulse = ((phase.sin() + 1.0) * 0.5 * 0.7 + 0.15).clamp(0.08, 0.92);
+                            ui.add(
+                                egui::ProgressBar::new(pulse)
+                                    .desired_width((dialog_size.x - 32.0).max(220.0))
+                                    .text(self.t(
+                                        "系统正在处理删除请求",
+                                        "System is processing the delete request",
+                                    )),
+                            );
+                            ui.add_space(8.0);
                             ui.add(egui::Spinner::new().size(28.0));
                             ui.add_space(8.0);
                             ui.label(
@@ -2434,11 +2497,12 @@ impl eframe::App for DirForgeNativeApp {
         self.process_scan_events();
         self.process_delete_events();
         self.apply_theme(ctx);
+        let delete_active = self.delete_active();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "DirForge [relay-1] {}",
             self.status
         )));
-        if self.scan_active() || self.delete_active() {
+        if self.scan_active() || delete_active {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
 
@@ -2456,13 +2520,17 @@ impl eframe::App for DirForgeNativeApp {
             .exact_width(NAV_WIDTH)
             .resizable(false)
             .frame(panel_frame(ctx))
-            .show(ctx, |ui| self.ui_nav(ui));
+            .show(ctx, |ui| {
+                ui.add_enabled_ui(!delete_active, |ui| self.ui_nav(ui));
+            });
 
         egui::SidePanel::right("inspector")
             .exact_width(INSPECTOR_WIDTH)
             .resizable(true)
             .frame(panel_frame(ctx))
-            .show(ctx, |ui| self.ui_inspector(ui));
+            .show(ctx, |ui| {
+                ui.add_enabled_ui(!delete_active, |ui| self.ui_inspector(ui));
+            });
 
         egui::CentralPanel::default()
             .frame(
@@ -2470,14 +2538,16 @@ impl eframe::App for DirForgeNativeApp {
                     .fill(ctx.style().visuals.window_fill)
                     .inner_margin(egui::Margin::same(16.0)),
             )
-            .show(ctx, |ui| match self.page {
-                Page::Dashboard => self.ui_dashboard(ui),
-                Page::CurrentScan => self.ui_current_scan(ui),
-                Page::Treemap => self.ui_treemap(ui),
-                Page::History => self.ui_history(ui),
-                Page::Errors => self.ui_errors(ui),
-                Page::Diagnostics => self.ui_diagnostics(ui),
-                Page::Settings => self.ui_settings(ui, ctx),
+            .show(ctx, |ui| {
+                ui.add_enabled_ui(!delete_active, |ui| match self.page {
+                    Page::Dashboard => self.ui_dashboard(ui),
+                    Page::CurrentScan => self.ui_current_scan(ui),
+                    Page::Treemap => self.ui_treemap(ui),
+                    Page::History => self.ui_history(ui),
+                    Page::Errors => self.ui_errors(ui),
+                    Page::Diagnostics => self.ui_diagnostics(ui),
+                    Page::Settings => self.ui_settings(ui, ctx),
+                });
             });
 
         self.ui_delete_confirm_dialog(ctx);
@@ -2821,8 +2891,15 @@ fn stat_row(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
                     .color(ui.visuals().weak_text_color()),
             );
         });
+        ui.add_space(8.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(egui::RichText::new(value).strong());
+            let response = ui.add_sized(
+                [ui.available_width().max(96.0), 22.0],
+                egui::Label::new(egui::RichText::new(value).strong()).truncate(),
+            );
+            if value.chars().count() > 24 {
+                response.on_hover_text(value);
+            }
         });
     });
 }
@@ -2875,6 +2952,16 @@ fn truncate_middle(input: &str, max_chars: usize) -> String {
         .rev()
         .collect();
     format!("{}…{}", left, right)
+}
+
+fn path_within_scope(path: &str, scope_path: &str) -> bool {
+    if path == scope_path {
+        return true;
+    }
+    let Some(rest) = path.strip_prefix(scope_path) else {
+        return false;
+    };
+    rest.starts_with('\\') || rest.starts_with('/')
 }
 
 fn format_count(value: u64) -> String {
@@ -3058,5 +3145,90 @@ mod ui_tests {
         assert!(!rebuilt.path_index.contains_key("e:\\drop\\trash.bin"));
         assert_eq!(root_node.size_subtree, 10);
         assert_eq!(root_node.file_count, 1);
+    }
+
+    #[test]
+    fn contextual_ranked_files_panel_uses_selected_directory_scope() {
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "d:\\".into(), "d:\\".into(), NodeKind::Dir, 0);
+        let sdk = store.add_node(
+            Some(root),
+            "sdk".into(),
+            "d:\\appdata\\local\\sdk".into(),
+            NodeKind::Dir,
+            0,
+        );
+        store.add_node(
+            Some(sdk),
+            "system.img".into(),
+            "d:\\appdata\\local\\sdk\\system.img".into(),
+            NodeKind::File,
+            20,
+        );
+        store.add_node(
+            Some(sdk),
+            "userdata.img".into(),
+            "d:\\appdata\\local\\sdk\\userdata.img".into(),
+            NodeKind::File,
+            10,
+        );
+        store.add_node(
+            Some(root),
+            "other.bin".into(),
+            "d:\\other.bin".into(),
+            NodeKind::File,
+            100,
+        );
+        store.rollup();
+
+        let app = DirForgeNativeApp {
+            egui_ctx: egui::Context::default(),
+            page: Page::CurrentScan,
+            available_volumes: Vec::new(),
+            root_input: "d:\\".into(),
+            status: "Completed".into(),
+            summary: ScanSummary::default(),
+            store: Some(store),
+            scan_session: None,
+            delete_session: None,
+            scan_profile: ScanProfile::Ssd,
+            snapshot_interval_ms: 75,
+            event_batch_size: 256,
+            scan_current_path: None,
+            scan_last_event_at: None,
+            scan_dropped_batches: 0,
+            scan_dropped_snapshots: 0,
+            scan_dropped_progress: 0,
+            pending_batch_events: VecDeque::new(),
+            pending_snapshots: VecDeque::new(),
+            live_files: Vec::new(),
+            live_top_files: Vec::new(),
+            live_top_dirs: Vec::new(),
+            completed_top_files: Vec::new(),
+            completed_top_dirs: Vec::new(),
+            last_coalesce_commit: Instant::now(),
+            execution_report: None,
+            pending_delete_confirmation: None,
+            history: Vec::new(),
+            errors: Vec::new(),
+            selected_history_id: None,
+            language: Lang::En,
+            theme_dark: true,
+            cache: CacheStore::new(":memory:").expect("cache"),
+            perf: PerfMetrics::default(),
+            diagnostics_json: String::new(),
+            selection: SelectionState {
+                selected_node: Some(sdk),
+                selected_path: Some("d:\\appdata\\local\\sdk".into()),
+                source: Some(SelectionSource::Table),
+            },
+            error_filter: ErrorFilter::All,
+            treemap_cache: TreemapViewportCache::default(),
+        };
+
+        let (_, _, files) = app.contextual_ranked_files_panel(8);
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|(path, _)| path.starts_with("d:\\appdata\\local\\sdk\\")));
+        assert_eq!(files[0].0, "d:\\appdata\\local\\sdk\\system.img");
     }
 }
