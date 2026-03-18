@@ -36,7 +36,6 @@ cargo run -p dirotter-app
 6. 在 Live Scan 页面观察实时进度、热点文件/目录与最近扫描列表。
 7. 扫描完成后查看：
    - Overview（卷空间摘要、最大文件夹、最大文件）
-   - Treemap（可读区域显示标签，悬浮看完整路径）
    - 历史快照
    - 错误分类
 8. 在右侧 Inspector 查看当前选中文件/目录的上下文信息，并直接执行：
@@ -77,4 +76,3 @@ cargo test -p dirotter-testkit --test benchmark_thresholds
 - 大体量目录扫描时，首次运行可能出现较高 CPU/内存占用。
 - 若 GUI 无法启动，请确认运行环境具备桌面窗口支持。
 - 若中文显示为方框或乱码，请确认系统存在可用 CJK 字体。
-

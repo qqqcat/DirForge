@@ -1,35 +1,35 @@
 path,reason,kind
 "C:\$Recycle.Bin\S-1-5-18","read_dir: 拒绝访问。 (os error 5)",System
 "C:\$Recycle.Bin\S-1-5-21-3647064420-2041133764-2522221439-1000","read_dir: 拒绝访问。 (os error 5)",System
-"C:\$Recycle.Bin\S-1-5-21-3647064420-2041133764-2522221439-500","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Config.Msi","read_dir: 拒绝访问。 (os error 5)",System
 "C:\$Recycle.Bin\S-1-5-18","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Config.Msi","read_dir: 拒绝访问。 (os error 5)",System
-"C:\$Recycle.Bin\S-1-5-21-3647064420-2041133764-2522221439-1000","read_dir: 拒绝访问。 (os error 5)",System
 "C:\$Recycle.Bin\S-1-5-21-3647064420-2041133764-2522221439-500","read_dir: 拒绝访问。 (os error 5)",System
-"C:\PerfLogs","read_dir: 拒绝访问。 (os error 5)",System
+"C:\$Recycle.Bin\S-1-5-21-3647064420-2041133764-2522221439-1000","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Config.Msi","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Recovery","read_dir: 拒绝访问。 (os error 5)",System
 "C:\PerfLogs","read_dir: 拒绝访问。 (os error 5)",System
+"C:\$Recycle.Bin\S-1-5-21-3647064420-2041133764-2522221439-500","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Recovery","read_dir: 拒绝访问。 (os error 5)",System
 "C:\System Repair","read_dir: 拒绝访问。 (os error 5)",System
+"C:\PerfLogs","read_dir: 拒绝访问。 (os error 5)",System
 "C:\System Volume Information","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Recovery","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Intel\IntelOptaneData","read_dir: 拒绝访问。 (os error 5)",System
-"C:\System Repair","read_dir: 拒绝访问。 (os error 5)",System
 "C:\System Volume Information","read_dir: 拒绝访问。 (os error 5)",System
+"C:\System Repair","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Intel\IntelOptaneData","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Program Files\WindowsApps","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Program Files\WindowsApps","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Packages","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\WindowsHolographicDevices","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Users\CodexSandboxOffline","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Packages","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Users\CodexSandboxOffline","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\WindowsHolographicDevices","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Users\CodexSandboxOffline","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\LiveKernelReports","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\LiveKernelReports","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\ModemLogs","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Windows\Prefetch","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\ModemLogs","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Windows\Prefetch","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\ServiceState","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\Prefetch","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\ServiceState","read_dir: 拒绝访问。 (os error 5)",System
@@ -44,8 +44,8 @@ path,reason,kind
 "C:\ProgramData\Dell\SARemediation","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Dell\SupportAssist","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Dell\UpdateService","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Dell\SARemediation","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Dell\SupportAssist","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Dell\SARemediation","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Dell\UpdateService","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Diagnosis","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\SmsRouter","read_dir: 拒绝访问。 (os error 5)",System
@@ -72,23 +72,23 @@ path,reason,kind
 "C:\Windows\PLA\Reports","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\PLA\Templates","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\Provisioning\Autopilot","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Windows\security\audit","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Windows\security\cap","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\Provisioning\Autopilot","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Windows\ServiceProfiles\LocalService","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Windows\security\cap","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\security\audit","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Windows\security\cap","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Windows\ServiceProfiles\LocalService","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Windows\security\audit","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Windows\security\cap","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\ServiceProfiles\NetworkService","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\ServiceProfiles\LocalService","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\ServiceProfiles\NetworkService","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\System32\config","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\System32\Configuration","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Windows\System32\config","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\System32\Configuration","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Windows\System32\config","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\SysWOW64\config","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\SysWOW64\Configuration","read_dir: 拒绝访问。 (os error 5)",System
-"C:\Windows\SysWOW64\Configuration","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\SysWOW64\config","read_dir: 拒绝访问。 (os error 5)",System
+"C:\Windows\SysWOW64\Configuration","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\System32\DriverState","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\System32\DriverState","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\System32\ias","read_dir: 拒绝访问。 (os error 5)",System
@@ -123,48 +123,48 @@ path,reason,kind
 "C:\ProgramData\Dell\DTP\DB","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\NetFramework\BreadcrumbStore","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Network\Downloader","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\NetFramework\BreadcrumbStore","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Network\Downloader","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\NetFramework\BreadcrumbStore","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Provisioning\AssetCache","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Search\Data","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Search\Data","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Provisioning\AssetCache","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Search\Data","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\AppRepository","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\CapabilityAccessManager","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows Defender\Clean Store","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\Hyper-V","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\AppRepository","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows Defender\Features","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\CapabilityAccessManager","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\LfSvc","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\Models","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\CapabilityAccessManager","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\Hyper-V","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\Models","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\LfSvc","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\PackagedEventProviders","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\Power Efficiency Diagnostics","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows Defender\Clean Store","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows Defender\Features","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\PackagedEventProviders","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\SystemData","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\Power Efficiency Diagnostics","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\Clean Store","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\LocalCopy","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\LfSvc","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\Hyper-V","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows Defender\Network Inspection System","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\Features","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\Models","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows Defender\Network Inspection System","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\PackagedEventProviders","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\wfp","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\SystemData","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows Defender\Quarantine","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\LocalCopy","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows Defender\Quarantine","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\Models","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WSAIFabric","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\Network Inspection System","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\Scans","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\Power Efficiency Diagnostics","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\PackagedEventProviders","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows Defender\Quarantine","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\wfp","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\Support","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows Defender\Quarantine","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WSAIFabric","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows NT\MSFax","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\Scans","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\SystemData","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\Power Efficiency Diagnostics","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows Defender\Support","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\wfp","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows NT\MSFax","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WSAIFabric","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\SystemData","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\wfp","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WSAIFabric","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\Microsoft\Windows\Models","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\Microsoft\Windows\Models","read_dir: 拒绝访问。 (os error 5)",System
 "C:\Windows\System32\Com\dmp","read_dir: 拒绝访问。 (os error 5)",System
@@ -187,57 +187,75 @@ path,reason,kind
 "C:\Windows\Resources\Themes\aero\VSCache","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Dell\Plugins\PublicSecureStorage\DellTechHub\DataStore","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Dell\Plugins\PublicSecureStorage\DellTechHub\DataStore","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportQueue\Kernel_141_d7e4bd8c3254bfcf615bb5592ac8c5345c53fea_00000000_3a189777-2149-4097-abf9-0f4ce98dff99","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportQueue\Kernel_141_ff9c47234ef789cd0aa62c77bfe199ba655b8_00000000_44145f63-5d39-4fe1-9ba2-0512e5d78f32","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportQueue\Kernel_141_d7e4bd8c3254bfcf615bb5592ac8c5345c53fea_00000000_3a189777-2149-4097-abf9-0f4ce98dff99","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\AppHang_DiskAnalyzer.exe_ff5dac6099be552a76e95d2656aeb6627017c845_7838a9af_48b12ceb-b58a-48a5-8ef3-3b64d70c0a0d","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportQueue\Kernel_141_ff9c47234ef789cd0aa62c77bfe199ba655b8_00000000_44145f63-5d39-4fe1-9ba2-0512e5d78f32","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\Critical_10.0.26100.8035__e9d2dbe44fae792dba46e4cd20edf41b90745bbf_00000000_614e9dee-9c92-47d9-af13-ec9379c217f8","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\AppHang_DiskAnalyzer.exe_ff5dac6099be552a76e95d2656aeb6627017c845_7838a9af_48b12ceb-b58a-48a5-8ef3-3b64d70c0a0d","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_02f2ef3c-2d96-4954-9c5f-98df43a85474","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_15491969-8763-47cf-9e52-13cce37a5850","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_02f2ef3c-2d96-4954-9c5f-98df43a85474","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\AppHang_DiskAnalyzer.exe_ff5dac6099be552a76e95d2656aeb6627017c845_7838a9af_48b12ceb-b58a-48a5-8ef3-3b64d70c0a0d","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\Critical_10.0.26100.8035__e9d2dbe44fae792dba46e4cd20edf41b90745bbf_00000000_614e9dee-9c92-47d9-af13-ec9379c217f8","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_1b07492a-1232-43c5-8a67-4611082dc373","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_02f2ef3c-2d96-4954-9c5f-98df43a85474","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_35181cab-d139-4232-9a81-5b7127c8b388","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_15491969-8763-47cf-9e52-13cce37a5850","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_4fe221b2-bc6c-4ae7-9605-c47a0faf9344","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_1b07492a-1232-43c5-8a67-4611082dc373","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_35181cab-d139-4232-9a81-5b7127c8b388","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_6480796c-a4b7-46f5-a774-f382eb76924c","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_35181cab-d139-4232-9a81-5b7127c8b388","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_1b07492a-1232-43c5-8a67-4611082dc373","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_a4a38c5c-f5a6-4964-a022-229986941009","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_4fe221b2-bc6c-4ae7-9605-c47a0faf9344","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_bc74cd3c-8397-43e5-bf47-9130c683333a","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_6480796c-a4b7-46f5-a774-f382eb76924c","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_a4a38c5c-f5a6-4964-a022-229986941009","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_cb365432-60f8-4a96-994a-ef794aa219f3","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_6480796c-a4b7-46f5-a774-f382eb76924c","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_cd505b2c-ed25-4120-969f-efe9cada8e5e","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_a4a38c5c-f5a6-4964-a022-229986941009","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_cb365432-60f8-4a96-994a-ef794aa219f3","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_bc74cd3c-8397-43e5-bf47-9130c683333a","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_d642e30a-0c15-4181-b1fb-88e11135cab2","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_df901570-ba90-46f1-b311-b6b53e8f7548","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_cb365432-60f8-4a96-994a-ef794aa219f3","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_cd505b2c-ed25-4120-969f-efe9cada8e5e","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_df901570-ba90-46f1-b311-b6b53e8f7548","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_dfcf4cd8-010e-42e5-b569-8b067125322b","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_d642e30a-0c15-4181-b1fb-88e11135cab2","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e04cca20-3c19-4eac-ba70-3f8ae0f4996a","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_df901570-ba90-46f1-b311-b6b53e8f7548","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e7ee7a85-e6c4-447a-8b85-3044e2d7d57c","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_dfcf4cd8-010e-42e5-b569-8b067125322b","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_0123a5d1-78dd-40f5-9bd1-eb2c08988db4","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e04cca20-3c19-4eac-ba70-3f8ae0f4996a","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_2ea46f8c-83ad-4332-8bfd-bd5edbfc574f","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e3833b15-b1f2-4d8e-958e-966e231a2e0e","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e7ee7a85-e6c4-447a-8b85-3044e2d7d57c","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e04cca20-3c19-4eac-ba70-3f8ae0f4996a","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_0123a5d1-78dd-40f5-9bd1-eb2c08988db4","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e3833b15-b1f2-4d8e-958e-966e231a2e0e","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;DSIC_159d9767473b9f425f7fc1915e0c54282798daa_00000000_e7ee7a85-e6c4-447a-8b85-3044e2d7d57c","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_2ea46f8c-83ad-4332-8bfd-bd5edbfc574f","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_4606bf26-1806-40fa-86c3-7c50432fe345","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_0123a5d1-78dd-40f5-9bd1-eb2c08988db4","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_60b1ecea-5eae-4c14-9700-035fd318afc6","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_2ea46f8c-83ad-4332-8bfd-bd5edbfc574f","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_995779d8-ae11-4132-8312-741c770c209b","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_4606bf26-1806-40fa-86c3-7c50432fe345","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_a0291c3a-1ddd-44e3-a5f4-fa7995659029","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_8ef2a0aa-bacd-432e-aaae-8274dde67846","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_995779d8-ae11-4132-8312-741c770c209b","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_60b1ecea-5eae-4c14-9700-035fd318afc6","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_ace86587-528f-4800-be66-079582de037a","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_a0291c3a-1ddd-44e3-a5f4-fa7995659029","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_8ef2a0aa-bacd-432e-aaae-8274dde67846","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_995779d8-ae11-4132-8312-741c770c209b","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_a0291c3a-1ddd-44e3-a5f4-fa7995659029","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_ddebf9ff-351f-4ede-8fab-005d25c91e00","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e4eb46e2-543f-4fe6-aaa9-a99178394f31","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_ace86587-528f-4800-be66-079582de037a","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e54e49f9-0cda-4919-b609-3a641f35ea7c","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_c068181a-9bfd-4f6a-84ab-8a94493954e8","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_ddebf9ff-351f-4ede-8fab-005d25c91e00","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e08b5e31-edd4-45cb-a4f9-8318209c338b","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_ace86587-528f-4800-be66-079582de037a","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_c068181a-9bfd-4f6a-84ab-8a94493954e8","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e4eb46e2-543f-4fe6-aaa9-a99178394f31","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_ddebf9ff-351f-4ede-8fab-005d25c91e00","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_fd62834f-addb-411e-88c1-7aa11fdfca45","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_MicrosoftEdgeUpd_b14c3ad8345ce91c15fc78b2915ae952944597_00000000_c5b83432-6cc4-474d-8341-f8ed5e99f0ef","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportQueue\Kernel_141_ff9c47234ef789cd0aa62c77bfe199ba655b8_00000000_44145f63-5d39-4fe1-9ba2-0512e5d78f32","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e54e49f9-0cda-4919-b609-3a641f35ea7c","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_fb5173e9-9a38-4fd5-a3a2-009a4341d97d","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e08b5e31-edd4-45cb-a4f9-8318209c338b","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_fd62834f-addb-411e-88c1-7aa11fdfca45","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e4eb46e2-543f-4fe6-aaa9-a99178394f31","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_MicrosoftEdgeUpd_b14c3ad8345ce91c15fc78b2915ae952944597_00000000_c5b83432-6cc4-474d-8341-f8ed5e99f0ef","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_e54e49f9-0cda-4919-b609-3a641f35ea7c","read_dir: 拒绝访问。 (os error 5)",System
+"C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_fb5173e9-9a38-4fd5-a3a2-009a4341d97d","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_Acquisition;setu_231856d2e175a546df10e6138e8f8d95f06edb_00000000_fd62834f-addb-411e-88c1-7aa11fdfca45","read_dir: 拒绝访问。 (os error 5)",System
 "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\NonCritical_MicrosoftEdgeUpd_b14c3ad8345ce91c15fc78b2915ae952944597_00000000_c5b83432-6cc4-474d-8341-f8ed5e99f0ef","read_dir: 拒绝访问。 (os error 5)",System
-"C:\ProgramData\Microsoft\Windows\WER\ReportQueue\Kernel_141_ff9c47234ef789cd0aa62c77bfe199ba655b8_00000000_44145f63-5d39-4fe1-9ba2-0512e5d78f32","read_dir: 拒绝访问。 (os error 5)",System

@@ -40,16 +40,11 @@ const NAV_ITEM_HEIGHT: f32 = 36.0;
 const STATUS_BADGE_HEIGHT: f32 = 32.0;
 const CONTROL_MIN_WIDTH: f32 = 56.0;
 const PAGE_MAX_WIDTH: f32 = 1360.0;
-const MIN_TREEMAP_TILE_EDGE: f32 = 16.0;
-const MIN_TREEMAP_LABEL_WIDTH: f32 = 84.0;
-const MIN_TREEMAP_LABEL_HEIGHT: f32 = 30.0;
-const TREEMAP_TILE_LIMIT: usize = 24;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Dashboard,
     CurrentScan,
-    Treemap,
     History,
     Errors,
     Diagnostics,
@@ -75,7 +70,6 @@ enum AppStatus {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SelectionSource {
-    Treemap,
     Table,
     History,
     Error,
@@ -103,21 +97,6 @@ enum ErrorFilter {
     User,
     Transient,
     System,
-}
-
-#[derive(Clone)]
-struct TreemapTile {
-    node_id: NodeId,
-    rect: egui::Rect,
-    label: String,
-    size_bytes: u64,
-    path: String,
-}
-
-#[derive(Default, Clone)]
-struct TreemapViewportCache {
-    key: Option<(u32, u32, usize, usize)>,
-    tiles: Vec<TreemapTile>,
 }
 
 struct ScanSession {
@@ -263,7 +242,6 @@ pub struct DirOtterNativeApp {
     diagnostics_json: String,
     selection: SelectionState,
     error_filter: ErrorFilter,
-    treemap_cache: TreemapViewportCache,
 }
 
 impl DirOtterNativeApp {
@@ -325,7 +303,6 @@ impl DirOtterNativeApp {
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
             error_filter: ErrorFilter::All,
-            treemap_cache: TreemapViewportCache::default(),
         };
 
         let _ = app.reload_history();
@@ -504,7 +481,7 @@ impl DirOtterNativeApp {
 
     fn selection_origin(&self) -> SelectionOrigin {
         match self.selection.source {
-            Some(SelectionSource::Table | SelectionSource::Treemap) => SelectionOrigin::TopFiles,
+            Some(SelectionSource::Table) => SelectionOrigin::TopFiles,
             Some(SelectionSource::History | SelectionSource::Error) | None => {
                 SelectionOrigin::Manual
             }
@@ -725,7 +702,6 @@ impl DirOtterNativeApp {
             self.store = Self::rebuild_store_without_target(&store, target);
             self.sync_summary_from_store();
             self.sync_rankings_from_store();
-            self.treemap_cache = TreemapViewportCache::default();
         } else {
             self.summary.bytes_observed = self
                 .summary
@@ -831,7 +807,6 @@ impl DirOtterNativeApp {
 
     fn source_label(&self, source: SelectionSource) -> &'static str {
         match source {
-            SelectionSource::Treemap => self.t("矩形树图", "Treemap"),
             SelectionSource::Table => self.t("列表", "Table"),
             SelectionSource::History => self.t("历史", "History"),
             SelectionSource::Error => self.t("错误", "Error"),
@@ -1313,7 +1288,6 @@ impl DirOtterNativeApp {
         for (p, label_zh, label_en) in [
             (Page::Dashboard, "概览", "Overview"),
             (Page::CurrentScan, "扫描进行中", "Live Scan"),
-            (Page::Treemap, "矩形树图", "Treemap"),
             (Page::History, "历史记录", "History"),
             (Page::Errors, "错误中心", "Errors"),
             (Page::Diagnostics, "诊断导出", "Diagnostics"),
@@ -1832,224 +1806,6 @@ impl DirOtterNativeApp {
                     }
                 });
         });
-    }
-
-    fn treemap_tiles_for_viewport(
-        &mut self,
-        store: &NodeStore,
-        viewport: egui::Rect,
-        scope_id: NodeId,
-    ) -> Vec<TreemapTile> {
-        let key = (
-            viewport.width() as u32,
-            viewport.height() as u32,
-            store.nodes.len(),
-            scope_id.0,
-        );
-        if self.treemap_cache.key == Some(key) {
-            return self.treemap_cache.tiles.clone();
-        }
-
-        let dirs = self.treemap_entries_for_scope(store, scope_id);
-        let mut tiles = Vec::new();
-        layout_treemap_recursive(viewport, &dirs, &mut tiles);
-        self.treemap_cache = TreemapViewportCache {
-            key: Some(key),
-            tiles: tiles.clone(),
-        };
-        tiles
-    }
-
-    fn treemap_entries_for_scope<'a>(
-        &self,
-        store: &'a NodeStore,
-        scope_id: NodeId,
-    ) -> Vec<&'a Node> {
-        let mut nodes: Vec<&Node> = store
-            .children
-            .get(&scope_id)
-            .into_iter()
-            .flat_map(|ids| ids.iter())
-            .filter_map(|id| store.nodes.get(id.0))
-            .collect();
-
-        nodes.sort_by(|a, b| {
-            b.size_subtree
-                .max(b.size_self)
-                .cmp(&a.size_subtree.max(a.size_self))
-                .then_with(|| a.path.cmp(&b.path))
-        });
-        nodes.truncate(TREEMAP_TILE_LIMIT);
-
-        if nodes.is_empty() {
-            store
-                .nodes
-                .get(scope_id.0)
-                .map(|node| vec![node])
-                .unwrap_or_default()
-        } else {
-            nodes
-        }
-    }
-
-    fn root_node_id(&self, store: &NodeStore) -> Option<NodeId> {
-        store.nodes.iter().find(|node| node.parent.is_none()).map(|node| node.id)
-    }
-
-    fn nearest_store_node_for_path(&self, store: &NodeStore, path: &str) -> Option<NodeId> {
-        let mut current = Some(path.to_string());
-        while let Some(candidate) = current {
-            if let Some(id) = store.path_index.get(&candidate).copied() {
-                return Some(id);
-            }
-            current = PathBuf::from(&candidate)
-                .parent()
-                .map(|parent| parent.display().to_string());
-        }
-        None
-    }
-
-    fn treemap_scope_node_id(&self, store: &NodeStore) -> Option<NodeId> {
-        let root_id = self.root_node_id(store)?;
-        let Some(target) = self.selected_target() else {
-            return Some(root_id);
-        };
-
-        let scope_path = match target.kind {
-            NodeKind::Dir => target.path,
-            NodeKind::File => PathBuf::from(&target.path)
-                .parent()
-                .map(|parent| parent.display().to_string())
-                .unwrap_or_else(|| target.path),
-        };
-
-        self.nearest_store_node_for_path(store, &scope_path)
-            .or(Some(root_id))
-    }
-
-    fn select_node_from_store(
-        &mut self,
-        store: &NodeStore,
-        node_id: NodeId,
-        source: SelectionSource,
-    ) {
-        self.selection.selected_node = Some(node_id);
-        if let Some(node) = store.nodes.get(node_id.0) {
-            self.selection.selected_path = Some(node.path.clone());
-        }
-        self.selection.source = Some(source);
-        self.execution_report = None;
-        self.pending_delete_confirmation = None;
-        self.explorer_feedback = None;
-    }
-
-    fn ui_treemap(&mut self, ui: &mut egui::Ui) {
-        page_header(
-            ui,
-            self.t("矩形树图", "Treemap"),
-            self.t(
-                "只在有阅读价值的区域展示标签，悬浮可查看完整路径与体积。",
-                "Only render labels where they remain legible; hover for full path and size.",
-            ),
-        );
-        ui.add_space(8.0);
-        if let Some(store) = self.store.clone() {
-            let Some(scope_id) = self.treemap_scope_node_id(&store) else {
-                return;
-            };
-            let Some(scope_node) = store.nodes.get(scope_id.0) else {
-                return;
-            };
-            let root_id = self.root_node_id(&store).unwrap_or(scope_id);
-
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{}: {}",
-                        self.t("当前范围", "Current scope"),
-                        truncate_middle(&scope_node.path, 60)
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-                );
-                if scope_node.parent.is_some() {
-                    if ui.button(self.t("上一级", "Up")).clicked() {
-                        if let Some(parent_id) = scope_node.parent {
-                            self.select_node_from_store(&store, parent_id, SelectionSource::Treemap);
-                        }
-                    }
-                    if scope_id != root_id && ui.button(self.t("回到根目录", "Reset to Root")).clicked()
-                    {
-                        self.select_node_from_store(&store, root_id, SelectionSource::Treemap);
-                    }
-                }
-            });
-            ui.add_space(8.0);
-            let desired = egui::vec2(ui.available_width(), ui.available_height() - 12.0);
-            let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
-            let painter = ui.painter_at(rect);
-            let tiles = self.treemap_tiles_for_viewport(&store, rect, scope_id);
-
-            for tile in &tiles {
-                let mut resp = ui.interact(
-                    tile.rect,
-                    ui.make_persistent_id(("treemap", tile.node_id.0)),
-                    egui::Sense::click(),
-                );
-                let mut color = palette_color(tile.node_id.0);
-                if self.selection.selected_node == Some(tile.node_id) {
-                    color = egui::Color32::from_rgb(0x4B, 0xA3, 0xAC);
-                }
-                if resp.clicked() {
-                    self.select_node_from_store(&store, tile.node_id, SelectionSource::Treemap);
-                }
-                if resp.hovered() {
-                    resp = resp.on_hover_ui(|ui| {
-                        ui.label(egui::RichText::new(&tile.path).strong());
-                        ui.label(format!(
-                            "{}: {}",
-                            self.t("体积", "Size"),
-                            format_bytes(tile.size_bytes)
-                        ));
-                    });
-                }
-                painter.rect_filled(tile.rect, 6.0, color);
-                painter.rect_stroke(
-                    tile.rect,
-                    6.0,
-                    egui::Stroke::new(1.0, egui::Color32::from_black_alpha(70)),
-                );
-                if !tile.label.is_empty() {
-                    painter.text(
-                        tile.rect.left_top() + egui::vec2(8.0, 8.0),
-                        egui::Align2::LEFT_TOP,
-                        &tile.label,
-                        egui::FontId::new(13.0, egui::FontFamily::Proportional),
-                        egui::Color32::WHITE,
-                    );
-                }
-            }
-
-            if let Some(pointer_pos) = ui.input(|i| i.pointer.hover_pos()) {
-                if let Some(hit) = treemap_hit_test(&tiles, pointer_pos) {
-                    ui.add_space(6.0);
-                    ui.label(format!(
-                        "{} {}  |  {} {}",
-                        self.t("悬浮", "Hover"),
-                        truncate_middle(&hit.path, 40),
-                        self.t("体积", "Size"),
-                        format_bytes(hit.size_bytes)
-                    ));
-                }
-            }
-        } else {
-            surface_frame(ui).show(ui, |ui| {
-                ui.label(self.t(
-                    "暂无扫描结果，请先执行一次扫描。",
-                    "No scan data yet. Start a scan first.",
-                ));
-            });
-        }
     }
 
     fn ui_history(&mut self, ui: &mut egui::Ui) {
@@ -3071,7 +2827,6 @@ impl eframe::App for DirOtterNativeApp {
                     Page::CurrentScan => with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 40.0, |ui| {
                         self.ui_current_scan(ui)
                     }),
-                    Page::Treemap => self.ui_treemap(ui),
                     Page::History => {
                         with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_history(ui))
                     }
@@ -3089,64 +2844,6 @@ impl eframe::App for DirOtterNativeApp {
 
         self.ui_delete_confirm_dialog(ctx);
     }
-}
-
-fn layout_treemap_recursive(
-    rect: egui::Rect,
-    dirs: &[&dirotter_core::Node],
-    out: &mut Vec<TreemapTile>,
-) {
-    if dirs.is_empty()
-        || rect.width() < MIN_TREEMAP_TILE_EDGE
-        || rect.height() < MIN_TREEMAP_TILE_EDGE
-    {
-        return;
-    }
-    if dirs.len() == 1 {
-        let node = dirs[0];
-        out.push(TreemapTile {
-            node_id: node.id,
-            rect,
-            label: treemap_label_for_rect(&node.name, node.size_subtree.max(node.size_self), rect)
-                .unwrap_or_default(),
-            size_bytes: node.size_subtree.max(node.size_self),
-            path: node.path.clone(),
-        });
-        return;
-    }
-
-    let total: u64 = dirs.iter().map(|d| d.size_subtree.max(1)).sum();
-    let mut acc = 0u64;
-    let mut split_idx = 0usize;
-    for (i, d) in dirs.iter().enumerate() {
-        acc += d.size_subtree.max(1);
-        if acc * 2 >= total {
-            split_idx = i + 1;
-            break;
-        }
-    }
-    let split_idx = split_idx.clamp(1, dirs.len() - 1);
-    let left = &dirs[..split_idx];
-    let right = &dirs[split_idx..];
-    let left_sum: u64 = left.iter().map(|d| d.size_subtree.max(1)).sum();
-
-    if rect.width() >= rect.height() {
-        let w = rect.width() * (left_sum as f32 / total as f32);
-        let a = egui::Rect::from_min_size(rect.min, egui::vec2(w.max(1.0), rect.height()));
-        let b = egui::Rect::from_min_max(egui::pos2(a.right(), rect.top()), rect.max);
-        layout_treemap_recursive(a, left, out);
-        layout_treemap_recursive(b, right, out);
-    } else {
-        let h = rect.height() * (left_sum as f32 / total as f32);
-        let a = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), h.max(1.0)));
-        let b = egui::Rect::from_min_max(egui::pos2(rect.left(), a.bottom()), rect.max);
-        layout_treemap_recursive(a, left, out);
-        layout_treemap_recursive(b, right, out);
-    }
-}
-
-fn treemap_hit_test(tiles: &[TreemapTile], pos: egui::Pos2) -> Option<&TreemapTile> {
-    tiles.iter().find(|t| t.rect.contains(pos))
 }
 
 fn configure_fonts(ctx: &egui::Context) {
@@ -3697,34 +3394,6 @@ fn stat_row(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
     });
 }
 
-fn palette_color(seed: usize) -> egui::Color32 {
-    let palette = [
-        egui::Color32::from_rgb(0x2F, 0x7F, 0x86),
-        egui::Color32::from_rgb(0x3E, 0x8E, 0x7A),
-        egui::Color32::from_rgb(0x4B, 0x7B, 0xEC),
-        egui::Color32::from_rgb(0x5F, 0x8D, 0x96),
-        egui::Color32::from_rgb(0x2E, 0x8B, 0x57),
-        egui::Color32::from_rgb(0xC9, 0x8B, 0x2E),
-        egui::Color32::from_rgb(0x79, 0x95, 0x9B),
-        egui::Color32::from_rgb(0x8A, 0xA8, 0xAD),
-    ];
-    palette[seed % palette.len()]
-}
-
-fn treemap_label_for_rect(name: &str, size_bytes: u64, rect: egui::Rect) -> Option<String> {
-    if rect.width() < MIN_TREEMAP_LABEL_WIDTH || rect.height() < MIN_TREEMAP_LABEL_HEIGHT {
-        return None;
-    }
-
-    let max_chars = ((rect.width() - 16.0) / 7.2).floor().max(6.0) as usize;
-    let title = truncate_middle(name, max_chars);
-    if rect.height() >= 58.0 && rect.width() >= 124.0 {
-        Some(format!("{}\n{}", title, format_bytes(size_bytes)))
-    } else {
-        Some(title)
-    }
-}
-
 fn truncate_middle(input: &str, max_chars: usize) -> String {
     let chars: Vec<char> = input.chars().collect();
     if chars.len() <= max_chars {
@@ -3864,12 +3533,6 @@ mod ui_tests {
         let truncated = truncate_middle("very-long-file-name.iso", 10);
         assert!(truncated.starts_with("very"));
         assert!(truncated.ends_with(".iso"));
-    }
-
-    #[test]
-    fn treemap_label_hides_small_tiles() {
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(60.0, 20.0));
-        assert!(treemap_label_for_rect("folder", 1024, rect).is_none());
     }
 
     #[test]
@@ -4018,7 +3681,6 @@ mod ui_tests {
                 source: Some(SelectionSource::Table),
             },
             error_filter: ErrorFilter::All,
-            treemap_cache: TreemapViewportCache::default(),
         };
 
         let (_, _, files) = app.contextual_ranked_files_panel(8);
@@ -4091,7 +3753,6 @@ mod ui_tests {
                 source: Some(SelectionSource::Table),
             },
             error_filter: ErrorFilter::All,
-            treemap_cache: TreemapViewportCache::default(),
         };
 
         app.select_path("c:\\$Recycle.Bin\\S-1-5-18", SelectionSource::Error);
@@ -4103,138 +3764,4 @@ mod ui_tests {
         assert_eq!(target.name, "S-1-5-18");
     }
 
-    #[test]
-    fn treemap_scope_uses_selected_directory_or_file_parent() {
-        let mut store = NodeStore::default();
-        let root = store.add_node(None, "c:\\".into(), "c:\\".into(), NodeKind::Dir, 0);
-        let users = store.add_node(Some(root), "Users".into(), "c:\\Users".into(), NodeKind::Dir, 0);
-        let alice = store.add_node(
-            Some(users),
-            "alice".into(),
-            "c:\\Users\\alice".into(),
-            NodeKind::Dir,
-            0,
-        );
-        let note = store.add_node(
-            Some(alice),
-            "note.txt".into(),
-            "c:\\Users\\alice\\note.txt".into(),
-            NodeKind::File,
-            12,
-        );
-        store.rollup();
-
-        let mut app = DirOtterNativeApp {
-            egui_ctx: egui::Context::default(),
-            page: Page::Treemap,
-            available_volumes: Vec::new(),
-            root_input: "c:\\".into(),
-            status: AppStatus::Completed,
-            summary: ScanSummary::default(),
-            store: Some(store),
-            scan_session: None,
-            delete_session: None,
-            scan_profile: ScanProfile::Ssd,
-            snapshot_interval_ms: 75,
-            event_batch_size: 256,
-            scan_current_path: None,
-            scan_last_event_at: None,
-            scan_dropped_batches: 0,
-            scan_dropped_snapshots: 0,
-            scan_dropped_progress: 0,
-            pending_batch_events: VecDeque::new(),
-            pending_snapshots: VecDeque::new(),
-            live_files: Vec::new(),
-            live_top_files: Vec::new(),
-            live_top_dirs: Vec::new(),
-            completed_top_files: Vec::new(),
-            completed_top_dirs: Vec::new(),
-            last_coalesce_commit: Instant::now(),
-            execution_report: None,
-            pending_delete_confirmation: None,
-            queued_delete: None,
-            explorer_feedback: None,
-            history: Vec::new(),
-            errors: Vec::new(),
-            selected_history_id: None,
-            language: Lang::En,
-            theme_dark: true,
-            cache: CacheStore::new(":memory:").expect("cache"),
-            perf: PerfMetrics::default(),
-            diagnostics_json: String::new(),
-            selection: SelectionState {
-                selected_node: Some(users),
-                selected_path: Some("c:\\Users".into()),
-                source: Some(SelectionSource::Table),
-            },
-            error_filter: ErrorFilter::All,
-            treemap_cache: TreemapViewportCache::default(),
-        };
-
-        let store_ref = app.store.as_ref().expect("store");
-        assert_eq!(app.treemap_scope_node_id(store_ref), Some(users));
-
-        app.selection.selected_node = Some(note);
-        app.selection.selected_path = Some("c:\\Users\\alice\\note.txt".into());
-        let store_ref = app.store.as_ref().expect("store");
-        assert_eq!(app.treemap_scope_node_id(store_ref), Some(alice));
-    }
-
-    #[test]
-    fn treemap_scope_falls_back_to_nearest_existing_ancestor() {
-        let mut store = NodeStore::default();
-        let root = store.add_node(None, "c:\\".into(), "c:\\".into(), NodeKind::Dir, 0);
-        let users = store.add_node(Some(root), "Users".into(), "c:\\Users".into(), NodeKind::Dir, 0);
-        store.rollup();
-
-        let app = DirOtterNativeApp {
-            egui_ctx: egui::Context::default(),
-            page: Page::Treemap,
-            available_volumes: Vec::new(),
-            root_input: "c:\\".into(),
-            status: AppStatus::Completed,
-            summary: ScanSummary::default(),
-            store: Some(store),
-            scan_session: None,
-            delete_session: None,
-            scan_profile: ScanProfile::Ssd,
-            snapshot_interval_ms: 75,
-            event_batch_size: 256,
-            scan_current_path: None,
-            scan_last_event_at: None,
-            scan_dropped_batches: 0,
-            scan_dropped_snapshots: 0,
-            scan_dropped_progress: 0,
-            pending_batch_events: VecDeque::new(),
-            pending_snapshots: VecDeque::new(),
-            live_files: Vec::new(),
-            live_top_files: Vec::new(),
-            live_top_dirs: Vec::new(),
-            completed_top_files: Vec::new(),
-            completed_top_dirs: Vec::new(),
-            last_coalesce_commit: Instant::now(),
-            execution_report: None,
-            pending_delete_confirmation: None,
-            queued_delete: None,
-            explorer_feedback: None,
-            history: Vec::new(),
-            errors: Vec::new(),
-            selected_history_id: None,
-            language: Lang::En,
-            theme_dark: true,
-            cache: CacheStore::new(":memory:").expect("cache"),
-            perf: PerfMetrics::default(),
-            diagnostics_json: String::new(),
-            selection: SelectionState {
-                selected_node: None,
-                selected_path: Some("c:\\Users\\missing\\nested".into()),
-                source: Some(SelectionSource::Error),
-            },
-            error_filter: ErrorFilter::All,
-            treemap_cache: TreemapViewportCache::default(),
-        };
-
-        let store_ref = app.store.as_ref().expect("store");
-        assert_eq!(app.treemap_scope_node_id(store_ref), Some(users));
-    }
 }
