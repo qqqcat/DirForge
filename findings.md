@@ -19,6 +19,57 @@
 - “快速扫描（推荐）”为默认路径，显著降低首次使用成本。
 - “深度扫描”和“超大硬盘模式”把复杂场景选择从技术术语改成任务语义。
 
+## 2026-03-18 Result View Simplification
+
+## Verification
+- 结果页已与实时扫描解耦，扫描中不会再尝试实时 treemap。
+- 新页面只读取完成后的结果树，并只展示当前目录的直接子项。
+- 会在扫描完成后把最终树快照写入 SQLite 快照缓存。
+
+## Key Changes
+- 新增 `Result View` 页面，替代文档里残留的实时 treemap 预期。
+- 结果页支持下钻、返回上级和“跳到当前选中目录”。
+- 删除成功后，结果页会跟随 `NodeStore` 局部重建即时刷新。
+
+## 2026-03-19 Result View Layout Fix
+
+## Verification
+- 结果页主列表已从自然高度卡片改为填充型结果区。
+- 条形图区会吃满页面剩余高度，长列表改为内部滚动。
+
+## Key Changes
+- Result View 页面切到 fill-height 页面布局。
+- 目录结果条形图区加入显式剩余高度计算，避免大面积空白。
+- 条目渲染改为 `show_rows`，在填充型结果区内承载长列表。
+
+## 2026-03-19 Cleanup Suggestion System V1
+
+## Verification
+- Overview 已新增清理建议卡片、详情窗和缓存一键清理确认流。
+- 规则分类、风险规则与聚合逻辑已补单测。
+- `cargo test -p dirotter-ui`：通过
+
+## Key Changes
+- 扫描完成后会基于 `NodeStore` 生成规则驱动的清理分析层，而不是只停留在体积数据展示。
+- 建议系统会区分 `可清理 / 谨慎 / 禁删`，并把安全缓存项单独提炼为快捷清理入口。
+- 批量清理与单项删除统一复用现有回收站删除链路，避免出现两套执行逻辑。
+
+## Product Impact
+- 用户进入 Overview 后，首先看到的是“能释放多少空间”，而不是继续自己猜该从哪里下手。
+- `一键清理缓存（推荐）` 让产品开始具备“直接帮用户完成任务”的能力。
+
+## 2026-03-19 Overview / Settings Clipping Fix
+
+## Verification
+- 首页与设置页滚动布局已补充底部安全区。
+- Settings 页已移除页面内部多余的固定宽度包裹。
+- `cargo test -p dirotter-ui`：通过
+
+## Key Changes
+- 修复了最后一排卡片贴着视口底边时看起来像被裁掉的问题。
+- 首页新增清理建议后，卡片间距做了轻量压缩，首屏不再那么拥挤。
+- 根因定位为 `egui` 子 `Ui` 的 clip rect 过紧，卡片描边被裁掉；已通过统一外边距修复，而不是继续按页面打补丁。
+
 ## 2026-03-17 Project Reassessment
 
 ## Verification

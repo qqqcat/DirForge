@@ -2,3 +2,6 @@
 Cargo.lock
 dirotter_report.txt
 dirotter_snapshot.tsv
+dirotter.db
+dirotter.db-shm
+dirotter.db-wal

@@ -4,7 +4,7 @@ mod walker;
 
 use aggregator::Aggregator;
 use dirotter_core::{
-    ErrorKind, Node, NodeId, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
+    ErrorKind, Node, NodeId, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
 };
 use dirotter_telemetry as telemetry;
 use publisher::Publisher;
@@ -66,6 +66,7 @@ pub enum ScanEvent {
     },
     Finished {
         summary: ScanSummary,
+        store: NodeStore,
         errors: Vec<ScanErrorRecord>,
         top_files: Vec<(String, u64)>,
         top_dirs: Vec<(String, u64)>,
@@ -281,7 +282,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         let _ = walker_thread.join();
 
         publisher.flush_batch();
-        let (summary, errors, final_delta, final_view) = aggregator.finalize();
+        let (summary, final_store, errors, final_delta, final_view) = aggregator.finalize();
         let finished_payload_size = serde_json::to_vec(&final_view)
             .map(|payload| payload.len() as u64)
             .unwrap_or_default();
@@ -298,7 +299,13 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         let final_top_dirs = final_view.top_dirs.clone();
         publisher.send_snapshot(final_delta, final_view);
         telemetry::record_snapshot();
-        publisher.send_finished(summary, errors, final_top_files, final_top_dirs);
+        publisher.send_finished(
+            summary,
+            final_store,
+            errors,
+            final_top_files,
+            final_top_dirs,
+        );
     });
 
     ScanHandle { events: rx, cancel }

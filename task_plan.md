@@ -59,3 +59,43 @@
 - 扫描入口已从技术参数面板收口为用户模式选择。
 - 默认推荐路径更清晰，普通用户不再被迫理解 `batch / snapshot`。
 - 文档、实现和测试已围绕同一套扫描模式定义收口。
+
+## Follow-up: Result View Simplification
+- Treemap 不再按实时扫描刷新。
+- 新结果页只在扫描完成后工作，并优先读取扫描完成后的结果树 / 缓存快照。
+- 结果页只展示当前目录的直接子项，支持逐层下钻与返回上级。
+- 目标是保留“看目录占比”的核心价值，同时避免百万节点和重布局算法拖垮 UI。
+
+## Follow-up: Result View Layout Optimization
+- 结果页不再使用自然高度塌缩的内容卡。
+- 页面结构调整为“顶部摘要 + 底部填充型结果区”。
+- 条形图区必须吃满剩余高度，长列表走结果区内部滚动，而不是留下大面积未利用空白。
+
+## Follow-up: Cleanup Suggestion System (V1)
+- 目标：把首页从“只看数据”推进到“给出可执行的释放空间建议”。
+- 分析层：
+  - 基于扫描完成后的 `NodeStore`
+  - 规则分类 `cache / downloads / video / archive / installer / image / system / other`
+  - 风险分级 `Low / Medium / High`
+  - 评分采用 `size + unused_days + category bias`
+- UI：
+  - Overview 顶部新增 `清理建议` 卡
+  - 支持 `查看详情`
+  - 支持 `一键清理缓存（推荐）`
+- 执行：
+  - 快捷清理默认走回收站
+  - 详情窗里绿色默认勾选、黄色默认不勾选、红色锁定不可删
+- 验证：
+  - `cargo fmt --all`
+  - `cargo test --workspace`
+  - `cargo build -p dirotter-app`
+
+## Follow-up: Overview / Settings Clipping Fix
+- 问题：
+  - 首页在新增清理建议后，首屏更紧，底部卡片容易出现“像被截断”的观感
+  - Settings 页在页面级宽度约束内部又套了固定宽度容器，右侧卡片更容易贴边
+- 修正：
+  - 为滚动页统一补充底部安全区
+  - Settings 页移除多余的二次固定宽度裁切
+  - 首页卡片纵向间距做轻量压缩
+  - 卡片容器增加统一外边距，避免描边被子布局裁剪矩形截断

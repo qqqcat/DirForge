@@ -1,5 +1,5 @@
 use crate::{BatchEntry, ScanEvent, ScanProgress, ScanStage, SnapshotView};
-use dirotter_core::{ScanSummary, SnapshotDelta};
+use dirotter_core::{NodeStore, ScanSummary, SnapshotDelta};
 use dirotter_telemetry as telemetry;
 use std::collections::VecDeque;
 use std::sync::mpsc::{SyncSender, TrySendError};
@@ -141,12 +141,14 @@ impl Publisher {
     pub fn send_finished(
         &self,
         summary: ScanSummary,
+        store: NodeStore,
         errors: Vec<dirotter_core::ScanErrorRecord>,
         top_files: Vec<(String, u64)>,
         top_dirs: Vec<(String, u64)>,
     ) {
         let _ = self.tx.send(ScanEvent::Finished {
             summary,
+            store,
             errors,
             top_files,
             top_dirs,
