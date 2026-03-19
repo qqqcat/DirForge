@@ -5,7 +5,7 @@
 - 已提供页面：Overview / Live Scan / Result View / History / Errors / Diagnostics / Settings
 - 已移除页面：Operations
 - 已落地布局：顶部工具栏、左导航、中央工作区、右侧 Inspector、底部状态栏
-- 已落地能力：中文字体回退、人类可读大小/计数格式、轻量结果视图、页面级滚动、对称 gutter
+- 已落地能力：四语言切换（中文/英文/法语/西班牙语）、中文字体回退、人类可读大小/计数格式、轻量结果视图、页面级滚动、对称 gutter
 - 已落地动作：Inspector 内 `Move to Recycle Bin` / `Delete Permanently` / `Open File Location`
 - 已落地刷新：删除成功后局部刷新榜单、概览统计、treemap 与 Inspector
 - 已落地反馈：删除确认窗口会先关闭，再转为顶部横幅、Inspector 任务卡片与状态栏提示
@@ -161,6 +161,8 @@
 
 - 默认依据系统语言环境推断语言
 - 设置页手动选择优先级高于自动检测
+- 当前自动检测覆盖 `zh / fr / es / en`
+- 法语与西班牙语必须提供完整 UI 文案覆盖，不得把说明文案或状态提示退回英文
 - Windows UI 字体优先采用 `Segoe UI / Segoe UI Variable` 风格，中文继续回退到 `Microsoft YaHei / DengXian / SimHei / SimSun`
 - 浅色与深色主题都必须保持完整 panel/surface 对比度，不能出现浅色控件叠黑底
 

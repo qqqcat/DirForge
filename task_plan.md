@@ -99,3 +99,20 @@
   - Settings 页移除多余的二次固定宽度裁切
   - 首页卡片纵向间距做轻量压缩
   - 卡片容器增加统一外边距，避免描边被子布局裁剪矩形截断
+
+## Follow-up: French / Spanish Localization
+- 目标：
+  - 在现有中英文基础上增加法语与西班牙语
+  - 保持现有 `self.t(zh, en)` 调用模型，避免大范围重构 UI 调用点
+- 实现：
+  - 新增 `Lang::Fr / Lang::Es`
+  - 新增 `language` 设置值解析与保存：`en / zh / fr / es`
+  - 根据 `LC_ALL / LANG` 自动识别 `zh / fr / es / en`
+  - 用英文文案作为稳定键，向法语 / 西班牙语词典做映射
+  - 法语 / 西班牙语必须补齐当前 UI 全量英文键，不接受说明文案回退英文
+- 验证：
+  - `cargo fmt --all`
+  - `cargo check --workspace`
+  - `cargo build --workspace`
+  - `cargo test --workspace`
+  - 额外增加源码级词典覆盖测试，防止未来新增英文文案后漏翻

@@ -71,3 +71,13 @@
 - Settings 页移除额外固定宽度容器，直接使用页面级宽度约束，修复右侧卡片贴边问题。
 - 首页清理建议卡与扫描目标卡做轻量压缩，降低首屏拥挤度。
 - 继续追根后，确认真正根因是卡片描边被紧凑子布局的 clip rect 裁掉；现已在统一卡片容器层修复。
+
+## 2026-03-19（法语 / 西班牙语支持）
+- 在 `dirotter-ui` 中新增 `Fr / Es` 语言枚举、设置持久化解析与系统语言自动检测，覆盖 `zh / fr / es / en`。
+- Settings 页语言切换扩展为 `中文 / English / Français / Español` 四选项。
+- 采用“英文键 -> 法语 / 西班牙语词典”的方式扩展现有本地化层，避免重写全量 `self.t(zh, en)` 调用点。
+- 已将法语 / 西班牙语从“核心词汇覆盖”补齐为完整 UI 版本，不再依赖英文说明文案回退。
+- 新增源码级完整性测试：自动提取当前 `self.t(...)` 英文键，并校验法语 / 西班牙语词典覆盖。
+- 补充 UI 单测，覆盖语言设置 round-trip、区域设置检测和核心操作文案翻译。
+- 已完成工程复验：`cargo fmt --all`、`cargo check --workspace`、`cargo build --workspace`、`cargo test --workspace` 全部通过。
+- 已同步更新 `README.md`、`docs/dirotter-install-usage.md`、`docs/quickstart.md`、`docs/dirotter-ui-component-spec.md`、`docs/dirotter-comprehensive-assessment.md`、`docs/dirotter-sdd.md`、`task_plan.md`、`findings.md`、`progress.md`。

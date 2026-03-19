@@ -70,6 +70,26 @@
 - 首页新增清理建议后，卡片间距做了轻量压缩，首屏不再那么拥挤。
 - 根因定位为 `egui` 子 `Ui` 的 clip rect 过紧，卡片描边被裁掉；已通过统一外边距修复，而不是继续按页面打补丁。
 
+## 2026-03-19 French / Spanish Localization
+
+## Verification
+- Settings 已可切换 `中文 / English / Français / Español` 四种界面语言。
+- 启动时会优先根据 `zh / fr / es / en` 系统语言环境自动选择默认语言。
+- 已新增源码级覆盖测试：自动提取当前 `self.t(...)` 英文键，并验证法语 / 西班牙语词典完整命中。
+- `cargo fmt --all`：通过
+- `cargo check --workspace`：通过
+- `cargo build --workspace`：通过
+- `cargo test --workspace`：通过
+
+## Key Changes
+- 在 `dirotter-ui` 中新增独立 `i18n.rs`，把法语和西班牙语完整接入现有 `中文 + 英文` 本地化调用模型。
+- 当前 UI 英文键已补齐到法语与西班牙语完整版本，不再保留“长说明退回英文”的半完成状态。
+- 语言设置值已支持 `en / zh / fr / es` round-trip，避免旧逻辑把未知语言回退成英文。
+
+## Product Impact
+- DirOtter 现在不再局限于中英文界面，可直接覆盖更多欧洲用户。
+- 扩展方式保持了现有 `self.t(zh, en)` 调用结构，后续继续补全文案时改动成本较低。
+
 ## 2026-03-17 Project Reassessment
 
 ## Verification

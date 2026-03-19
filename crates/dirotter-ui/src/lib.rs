@@ -1,3 +1,5 @@
+mod i18n;
+
 use dirotter_actions::{
     build_deletion_plan_with_origin, execute_plan, ActionFailureKind, ExecutionMode,
     ExecutionReport, SelectionOrigin,
@@ -12,6 +14,12 @@ use dirotter_report::{
 use dirotter_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanMode};
 use dirotter_telemetry as telemetry;
 use eframe::egui;
+use i18n::{
+    detect_lang_from_locale, lang_native_label, lang_setting_value, parse_lang_setting,
+    translate_es, translate_fr,
+};
+#[cfg(test)]
+use i18n::{has_translation_es, has_translation_fr};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -55,10 +63,12 @@ enum Page {
     Settings,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Lang {
     En,
     Zh,
+    Fr,
+    Es,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -330,7 +340,7 @@ impl DirOtterNativeApp {
             .get_setting("language")
             .ok()
             .flatten()
-            .map(|v| if v == "zh" { Lang::Zh } else { Lang::En })
+            .and_then(|v| parse_lang_setting(&v))
             .unwrap_or_else(detect_lang);
         let theme_dark = cache
             .get_setting("theme")
@@ -405,7 +415,16 @@ impl DirOtterNativeApp {
         match self.language {
             Lang::Zh => zh,
             Lang::En => en,
+            Lang::Fr => translate_fr(en),
+            Lang::Es => translate_es(en),
         }
+    }
+
+    fn set_language(&mut self, language: Lang) {
+        self.language = language;
+        let _ = self
+            .cache
+            .set_setting("language", lang_setting_value(language));
     }
 
     fn selected_scan_config(&self) -> ScanConfig {
@@ -2033,6 +2052,7 @@ impl DirOtterNativeApp {
     fn ui_dashboard(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
+            self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("磁盘概览", "Drive Overview"),
             self.t(
                 "像主流磁盘分析器一样，先看卷空间，再看最大的文件夹和文件。",
@@ -2525,6 +2545,7 @@ impl DirOtterNativeApp {
     fn ui_current_scan(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
+            self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("实时扫描", "Live Scan"),
             self.t(
                 "这里展示的是“扫描中已发现的最大项”，不是最终结果。内部性能指标已移到诊断页。",
@@ -2663,6 +2684,7 @@ impl DirOtterNativeApp {
     fn ui_treemap(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
+            self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("结果视图", "Result View"),
             self.t(
                 "这里只展示扫描完成后的结果，不跟实时扫描绑定。每次只看当前目录的直接子项，再按需逐层进入。",
@@ -2819,9 +2841,9 @@ impl DirOtterNativeApp {
                                 let label = format!(
                                     "{} {}",
                                     if matches!(entry.kind, NodeKind::Dir) {
-                                        "DIR"
+                                        self.t("目录", "DIR")
                                     } else {
-                                        "FILE"
+                                        self.t("文件", "FILE")
                                     },
                                     truncate_middle(&entry.name, 56)
                                 );
@@ -2893,6 +2915,7 @@ impl DirOtterNativeApp {
     fn ui_history(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
+            self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("历史快照", "History"),
             self.t(
                 "按时间回看扫描快照，所有数字都改为适合人读的格式。",
@@ -2916,7 +2939,12 @@ impl DirOtterNativeApp {
                         .text_style(egui::TextStyle::Name("title".into())),
                 );
                 ui.add_space(8.0);
-                stat_row(ui, "ID", &h.id.to_string(), &truncate_middle(&h.root, 44));
+                stat_row(
+                    ui,
+                    self.t("编号", "ID"),
+                    &h.id.to_string(),
+                    &truncate_middle(&h.root, 44),
+                );
                 stat_row(
                     ui,
                     self.t("文件", "Files"),
@@ -2978,6 +3006,7 @@ impl DirOtterNativeApp {
     fn ui_errors(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
+            self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("错误中心", "Errors"),
             self.t(
                 "保留错误分类与路径跳转，但避免把原始状态直接堆叠成噪声。",
@@ -2998,21 +3027,21 @@ impl DirOtterNativeApp {
         ui.columns(3, |columns| {
             metric_card(
                 &mut columns[0],
-                "User",
+                self.t("用户", "User"),
                 &format_count(user as u64),
                 self.t("用户输入或权限问题", "Input or permission issues"),
                 warning_amber(),
             );
             metric_card(
                 &mut columns[1],
-                "Transient",
+                self.t("瞬时", "Transient"),
                 &format_count(transient as u64),
                 self.t("可重试的瞬时失败", "Retryable transient failures"),
                 info_blue(),
             );
             metric_card(
                 &mut columns[2],
-                "System",
+                self.t("系统", "System"),
                 &format_count(system as u64),
                 self.t("系统级故障", "System-level failures"),
                 danger_red(),
@@ -3020,13 +3049,24 @@ impl DirOtterNativeApp {
         });
 
         let filter_label = self.t("全部", "All").to_string();
+        let user_filter_label = self.t("用户", "User").to_string();
+        let transient_filter_label = self.t("瞬时", "Transient").to_string();
+        let system_filter_label = self.t("系统", "System").to_string();
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
             ui.label(self.t("过滤", "Filter"));
             ui.selectable_value(&mut self.error_filter, ErrorFilter::All, filter_label);
-            ui.selectable_value(&mut self.error_filter, ErrorFilter::User, "User");
-            ui.selectable_value(&mut self.error_filter, ErrorFilter::Transient, "Transient");
-            ui.selectable_value(&mut self.error_filter, ErrorFilter::System, "System");
+            ui.selectable_value(&mut self.error_filter, ErrorFilter::User, user_filter_label);
+            ui.selectable_value(
+                &mut self.error_filter,
+                ErrorFilter::Transient,
+                transient_filter_label,
+            );
+            ui.selectable_value(
+                &mut self.error_filter,
+                ErrorFilter::System,
+                system_filter_label,
+            );
         });
 
         let filtered: Vec<_> = self
@@ -3103,6 +3143,7 @@ impl DirOtterNativeApp {
     fn ui_diagnostics(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
+            self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("诊断导出", "Diagnostics"),
             self.t(
                 "保留结构化 JSON，但给导出动作更明确的位置和说明。",
@@ -3168,6 +3209,7 @@ impl DirOtterNativeApp {
     fn ui_settings(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         page_header(
             ui,
+            self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("偏好设置", "Settings"),
             self.t(
                 "让 DirOtter 保持冷静、低对比、长时间可用的工作状态。",
@@ -3206,23 +3248,48 @@ impl DirOtterNativeApp {
                                     [96.0, CONTROL_HEIGHT],
                                     egui::SelectableLabel::new(
                                         self.language == Lang::Zh,
-                                        self.t("中文", "中文"),
+                                        lang_native_label(Lang::Zh),
                                     ),
                                 )
                                 .clicked()
                             {
-                                self.language = Lang::Zh;
-                                let _ = self.cache.set_setting("language", "zh");
+                                self.set_language(Lang::Zh);
                             }
                             if ui
                                 .add_sized(
                                     [96.0, CONTROL_HEIGHT],
-                                    egui::SelectableLabel::new(self.language == Lang::En, "English"),
+                                    egui::SelectableLabel::new(
+                                        self.language == Lang::En,
+                                        lang_native_label(Lang::En),
+                                    ),
                                 )
                                 .clicked()
                             {
-                                self.language = Lang::En;
-                                let _ = self.cache.set_setting("language", "en");
+                                self.set_language(Lang::En);
+                            }
+                            if ui
+                                .add_sized(
+                                    [96.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(
+                                        self.language == Lang::Fr,
+                                        lang_native_label(Lang::Fr),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.set_language(Lang::Fr);
+                            }
+                            if ui
+                                .add_sized(
+                                    [96.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(
+                                        self.language == Lang::Es,
+                                        lang_native_label(Lang::Es),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.set_language(Lang::Es);
                             }
                         });
                         ui.add_space(14.0);
@@ -4476,9 +4543,9 @@ fn with_page_width_fill_height<R>(
     .inner
 }
 
-fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+fn page_header(ui: &mut egui::Ui, eyebrow: &str, title: &str, subtitle: &str) {
     ui.label(
-        egui::RichText::new("DirOtter Workspace")
+        egui::RichText::new(eyebrow)
             .text_style(egui::TextStyle::Small)
             .color(river_teal()),
     );
@@ -4851,11 +4918,7 @@ fn detect_lang() -> Lang {
         .unwrap_or_default()
         .to_lowercase();
 
-    if locale.starts_with("zh") {
-        Lang::Zh
-    } else {
-        Lang::En
-    }
+    detect_lang_from_locale(&locale)
 }
 
 #[cfg(test)]
@@ -4874,6 +4937,159 @@ mod ui_tests {
     fn format_count_adds_grouping() {
         assert_eq!(format_count(12), "12");
         assert_eq!(format_count(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn locale_detection_supports_french_and_spanish() {
+        assert_eq!(detect_lang_from_locale("fr_FR"), Lang::Fr);
+        assert_eq!(detect_lang_from_locale("es_ES.UTF-8"), Lang::Es);
+        assert_eq!(detect_lang_from_locale("zh_CN"), Lang::Zh);
+        assert_eq!(detect_lang_from_locale("en_US"), Lang::En);
+    }
+
+    #[test]
+    fn language_settings_round_trip_for_all_supported_languages() {
+        assert_eq!(parse_lang_setting("en"), Some(Lang::En));
+        assert_eq!(parse_lang_setting("zh"), Some(Lang::Zh));
+        assert_eq!(parse_lang_setting("fr"), Some(Lang::Fr));
+        assert_eq!(parse_lang_setting("es"), Some(Lang::Es));
+        assert_eq!(lang_setting_value(Lang::Fr), "fr");
+        assert_eq!(lang_setting_value(Lang::Es), "es");
+    }
+
+    #[test]
+    fn french_and_spanish_translations_cover_primary_actions() {
+        assert_eq!(translate_fr("Start Scan"), "Démarrer l'analyse");
+        assert_eq!(translate_es("Start Scan"), "Iniciar escaneo");
+        assert_eq!(translate_fr("Open File Location"), "Ouvrir l'emplacement");
+        assert_eq!(translate_es("Open File Location"), "Abrir ubicación");
+    }
+
+    fn extract_english_translation_keys(source: &str) -> Vec<String> {
+        let bytes = source.as_bytes();
+        let needle = b"self.t(";
+        let mut keys = Vec::new();
+        let mut i = 0usize;
+
+        while i + needle.len() <= bytes.len() {
+            if &bytes[i..i + needle.len()] != needle {
+                i += 1;
+                continue;
+            }
+
+            let start = i + needle.len();
+            let mut j = start;
+            let mut depth = 1usize;
+            let mut in_string = false;
+            let mut escape = false;
+
+            while j < bytes.len() && depth > 0 {
+                let b = bytes[j];
+                if in_string {
+                    if escape {
+                        escape = false;
+                    } else if b == b'\\' {
+                        escape = true;
+                    } else if b == b'"' {
+                        in_string = false;
+                    }
+                } else if b == b'"' {
+                    in_string = true;
+                } else if b == b'(' {
+                    depth += 1;
+                } else if b == b')' {
+                    depth -= 1;
+                }
+                j += 1;
+            }
+
+            let inner = &source[start..j.saturating_sub(1)];
+            let mut literals = Vec::new();
+            let inner_bytes = inner.as_bytes();
+            let mut k = 0usize;
+
+            while k < inner_bytes.len() {
+                if inner_bytes[k] != b'"' {
+                    k += 1;
+                    continue;
+                }
+
+                k += 1;
+                let mut literal = String::new();
+                let mut inner_escape = false;
+
+                while k < inner_bytes.len() {
+                    let b = inner_bytes[k];
+                    if inner_escape {
+                        match b {
+                            b'n' => literal.push('\n'),
+                            b'r' => literal.push('\r'),
+                            b't' => literal.push('\t'),
+                            b'\\' => literal.push('\\'),
+                            b'"' => literal.push('"'),
+                            _ => literal.push(b as char),
+                        }
+                        inner_escape = false;
+                    } else if b == b'\\' {
+                        inner_escape = true;
+                    } else if b == b'"' {
+                        break;
+                    } else {
+                        literal.push(b as char);
+                    }
+                    k += 1;
+                }
+
+                literals.push(literal);
+                k += 1;
+            }
+
+            if let Some(en) = literals.last() {
+                if !keys.iter().any(|existing| existing == en) {
+                    keys.push(en.clone());
+                }
+            }
+
+            i = j;
+        }
+
+        keys
+    }
+
+    #[test]
+    fn french_translations_cover_all_current_ui_english_keys() {
+        let source = include_str!("lib.rs");
+        let source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("source before tests");
+        let keys = extract_english_translation_keys(source);
+        let missing: Vec<_> = keys
+            .into_iter()
+            .filter(|key| !has_translation_fr(key))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "missing French translations: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn spanish_translations_cover_all_current_ui_english_keys() {
+        let source = include_str!("lib.rs");
+        let source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("source before tests");
+        let keys = extract_english_translation_keys(source);
+        let missing: Vec<_> = keys
+            .into_iter()
+            .filter(|key| !has_translation_es(key))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "missing Spanish translations: {missing:?}"
+        );
     }
 
     #[test]
