@@ -1,5 +1,24 @@
 # Findings
 
+## 2026-03-18 Scan Experience Optimization
+
+## Verification
+- 代码改造已完成，新增 `ScanMode` 预设与 UI 模式选择。
+- 自动化测试已补充模式映射与预设模式扫描覆盖。
+- `cargo fmt --all`：通过
+- `cargo test --workspace`：通过
+
+## Key Changes
+- 扫描入口已从 `SSD / HDD / Network + batch / snapshot` 收口为三档用户模式。
+- `ScanMode` 已集中定义在扫描层，避免 UI、测试和文档各自维护一套规则。
+- UI 已明确提示“三种模式都会完整扫描当前范围，差异只在扫描节奏与界面刷新方式”。
+- 扫描模式会保存到本地设置，避免每次重启重新选择。
+
+## Product Impact
+- 普通用户不再被迫理解底层性能参数。
+- “快速扫描（推荐）”为默认路径，显著降低首次使用成本。
+- “深度扫描”和“超大硬盘模式”把复杂场景选择从技术术语改成任务语义。
+
 ## 2026-03-17 Project Reassessment
 
 ## Verification
@@ -29,4 +48,3 @@
 1. 为主页面建立统一的 12-column 栅格和固定 gutter token。
 2. 引入最小视觉回归或截图对比，覆盖留白、对齐、标题状态和列表高度。
 3. 继续压实删除链路中的阶段反馈与回收站可见性体验。
-

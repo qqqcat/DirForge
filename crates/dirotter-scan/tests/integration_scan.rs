@@ -1,5 +1,5 @@
 use dirotter_core::ScanProfile;
-use dirotter_scan::{start_scan, ScanConfig, ScanEvent};
+use dirotter_scan::{start_scan, ScanConfig, ScanEvent, ScanMode};
 
 #[test]
 fn scan_fixture_tree() {
@@ -157,6 +157,32 @@ fn scan_deep_and_wide_fixtures() {
             }
         }
         assert!(done, "scan should finish for fixture");
+    }
+}
+
+#[test]
+fn scan_modes_finish_sample_fixture() {
+    let fixture = dirotter_testkit::FixtureTree::sample().expect("fixture");
+
+    for mode in [ScanMode::Quick, ScanMode::Deep, ScanMode::LargeDisk] {
+        let handle = start_scan(fixture.root.clone(), ScanConfig::for_mode(mode));
+        let mut done = false;
+
+        for _ in 0..2500 {
+            if let Ok(ScanEvent::Finished { summary, .. }) = handle
+                .events
+                .recv_timeout(std::time::Duration::from_millis(10))
+            {
+                assert!(summary.scanned_files >= 2);
+                done = true;
+                break;
+            }
+        }
+
+        assert!(
+            done,
+            "scan mode {mode:?} should finish on the sample fixture"
+        );
     }
 }
 

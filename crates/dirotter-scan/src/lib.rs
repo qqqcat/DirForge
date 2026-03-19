@@ -87,6 +87,32 @@ impl ScanHandle {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScanMode {
+    Quick,
+    Deep,
+    LargeDisk,
+}
+
+impl ScanMode {
+    pub fn as_setting_value(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Deep => "deep",
+            Self::LargeDisk => "large-disk",
+        }
+    }
+
+    pub fn from_setting(value: &str) -> Option<Self> {
+        match value {
+            "quick" => Some(Self::Quick),
+            "deep" => Some(Self::Deep),
+            "large-disk" => Some(Self::LargeDisk),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ScanConfig {
     pub profile: ScanProfile,
@@ -98,13 +124,7 @@ pub struct ScanConfig {
 
 impl Default for ScanConfig {
     fn default() -> Self {
-        Self {
-            profile: ScanProfile::Ssd,
-            batch_size: 256,
-            snapshot_ms: 75,
-            metadata_parallelism: 4,
-            deep_tasks_throttle: 64,
-        }
+        Self::for_mode(ScanMode::Quick)
     }
 }
 
@@ -123,6 +143,40 @@ pub(crate) struct ProfileTuning {
 }
 
 impl ScanConfig {
+    pub fn for_mode(mode: ScanMode) -> Self {
+        match mode {
+            ScanMode::Quick => Self {
+                profile: ScanProfile::Ssd,
+                batch_size: 256,
+                snapshot_ms: 75,
+                metadata_parallelism: 4,
+                deep_tasks_throttle: 64,
+            },
+            ScanMode::Deep => Self {
+                profile: ScanProfile::Hdd,
+                batch_size: 192,
+                snapshot_ms: 60,
+                metadata_parallelism: 6,
+                deep_tasks_throttle: 96,
+            },
+            ScanMode::LargeDisk => Self {
+                profile: ScanProfile::Network,
+                batch_size: 640,
+                snapshot_ms: 150,
+                metadata_parallelism: 3,
+                deep_tasks_throttle: 192,
+            },
+        }
+    }
+
+    pub fn effective_batch_size(self) -> usize {
+        self.tuned().batch_size.max(1)
+    }
+
+    pub fn effective_snapshot_ms(self) -> u64 {
+        self.tuned().snapshot_ms.max(50)
+    }
+
     pub(crate) fn tuned(self) -> ProfileTuning {
         let (batch_mult, snapshot_mult, parallel_cap, retry, retry_backoff, large_dir_backoff) =
             match self.profile {
@@ -248,4 +302,46 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
     });
 
     ScanHandle { events: rx, cancel }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_mode_is_the_default_config() {
+        let default_config = ScanConfig::default();
+        let quick_config = ScanConfig::for_mode(ScanMode::Quick);
+
+        assert_eq!(default_config.profile, quick_config.profile);
+        assert_eq!(default_config.batch_size, quick_config.batch_size);
+        assert_eq!(default_config.snapshot_ms, quick_config.snapshot_ms);
+        assert_eq!(
+            default_config.metadata_parallelism,
+            quick_config.metadata_parallelism
+        );
+        assert_eq!(
+            default_config.deep_tasks_throttle,
+            quick_config.deep_tasks_throttle
+        );
+    }
+
+    #[test]
+    fn scan_modes_round_trip_to_settings() {
+        for mode in [ScanMode::Quick, ScanMode::Deep, ScanMode::LargeDisk] {
+            assert_eq!(ScanMode::from_setting(mode.as_setting_value()), Some(mode));
+        }
+    }
+
+    #[test]
+    fn large_disk_mode_uses_the_most_conservative_publish_cadence() {
+        let quick = ScanConfig::for_mode(ScanMode::Quick);
+        let deep = ScanConfig::for_mode(ScanMode::Deep);
+        let large = ScanConfig::for_mode(ScanMode::LargeDisk);
+
+        assert!(deep.effective_batch_size() < quick.effective_batch_size());
+        assert!(large.effective_batch_size() > quick.effective_batch_size());
+        assert!(deep.effective_snapshot_ms() > quick.effective_snapshot_ms());
+        assert!(large.effective_snapshot_ms() > deep.effective_snapshot_ms());
+    }
 }

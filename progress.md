@@ -34,3 +34,11 @@
 - 执行最终复验：`cargo check --workspace` 与 `cargo test --workspace` 均通过。
 - 再次同步更新 `README.md`、`task_plan.md`、`findings.md`、`progress.md`、`docs/dirotter-comprehensive-assessment.md`、`docs/dirotter-ui-component-spec.md`、`docs/dirotter-install-usage.md`、`docs/dirotter-sdd.md`、`docs/quickstart.md`。
 
+## 2026-03-18（扫描体验优化）
+- 在 `dirotter-scan` 中新增 `ScanMode`，正式建立 `快速扫描（推荐）/ 深度扫描 / 超大硬盘模式` 三档用户预设。
+- 用 `ScanConfig::for_mode(...)` 统一模式到内部 `profile / batch / snapshot / 并发阈值` 的映射，保留底层调优能力但不再在 UI 暴露。
+- 将扫描目标卡从 `SSD / HDD / Network + batch / snapshot` 改为模式化选择，并补充“完整扫描不变，仅调整节奏和刷新方式”的说明。
+- 将扫描模式持久化到本地设置，保持下次启动体验一致。
+- 补充扫描层单元测试与集成测试，覆盖模式设置 round-trip、默认模式和三档模式可完成扫描。
+- 同步更新 `README.md`、`task_plan.md`、`findings.md`、`progress.md`、`docs/dirotter-comprehensive-assessment.md`、`docs/dirotter-ui-component-spec.md`、`docs/dirotter-install-usage.md`、`docs/dirotter-sdd.md`、`docs/quickstart.md`。
+- 已完成最终工程复验：`cargo fmt --all` 与 `cargo test --workspace` 均通过。

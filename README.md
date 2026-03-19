@@ -26,7 +26,7 @@ DirOtter 是一个基于 Rust 的本地磁盘分析器，当前聚焦于：
 > 当前状态：**工程化验证阶段（Production Readiness）**  
 > 目标状态：**生产级（Production）**
 
-## 项目现状（2026-03-17）
+## 项目现状（2026-03-18）
 
 基于当前代码、实测问题修复和全量回归测试，DirOtter 已具备从“扫描 -> 分析 -> 展示 -> 直接处理 -> 导出诊断”的端到端主链路。
 
@@ -41,6 +41,10 @@ DirOtter 是一个基于 Rust 的本地磁盘分析器，当前聚焦于：
   - 去除固定高度主卡和固定高度排行榜
   - 状态胶囊按当前语言实时本地化
 - 启动时会优先选择系统盘/首个卷作为默认根路径，并提供盘符快捷按钮，点击即可直接扫描对应卷。
+- 扫描入口已从 `SSD / HDD / Network + batch / snapshot` 收口为三档用户模式：
+  - `快速扫描（推荐）`
+  - `深度扫描`
+  - `超大硬盘模式`
 - Workspace `cargo check --workspace` 与 `cargo test --workspace` 均通过。
 - 当前主要短板已从“主链路能否工作”转向“正式栅格系统、视觉回归保护和删除过程细粒度反馈”。
 
@@ -51,6 +55,7 @@ DirOtter 是一个基于 Rust 的本地磁盘分析器，当前聚焦于：
 ## 主要能力（已落地）
 
 - 扫描引擎：多线程目录扫描、进度/批次/快照/完成事件、取消扫描。
+- 扫描体验：面向用户的三档扫描模式，自动隐藏 batch / snapshot 等技术细节。
 - 核心模型：`NodeStore` + `rollup()` + Top-N 文件/目录查询。
 - 去重能力：按大小与哈希进行候选分组。
 - 操作链路：Inspector 内真实删除、永久删除确认、后台删除任务提示、Windows 回收站二次校验、风险分层、审计输出与删除后局部刷新。
@@ -111,4 +116,3 @@ cargo test --workspace
 - UI 规格：`docs/dirotter-ui-component-spec.md`
 - 安装与使用：`docs/dirotter-install-usage.md`
 - 快速上手：`docs/quickstart.md`
-

@@ -4,13 +4,13 @@ use dirotter_actions::{
 };
 use dirotter_cache::{CacheStore, HistoryRecord};
 use dirotter_core::{
-    ErrorKind, Node, NodeId, NodeKind, NodeStore, RiskLevel, ScanErrorRecord, ScanProfile,
-    ScanSummary, SnapshotDelta,
+    ErrorKind, Node, NodeId, NodeKind, NodeStore, RiskLevel, ScanErrorRecord, ScanSummary,
+    SnapshotDelta,
 };
 use dirotter_report::{
     default_manifest, export_diagnostics_archive, export_diagnostics_bundle, export_errors_csv,
 };
-use dirotter_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent};
+use dirotter_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanMode};
 use dirotter_telemetry as telemetry;
 use eframe::egui;
 use std::collections::{HashMap, VecDeque};
@@ -207,9 +207,7 @@ pub struct DirOtterNativeApp {
     store: Option<NodeStore>,
     scan_session: Option<ScanSession>,
     delete_session: Option<DeleteSession>,
-    scan_profile: ScanProfile,
-    snapshot_interval_ms: u64,
-    event_batch_size: usize,
+    scan_mode: ScanMode,
     scan_current_path: Option<String>,
     scan_last_event_at: Option<Instant>,
     scan_dropped_batches: u64,
@@ -260,6 +258,12 @@ impl DirOtterNativeApp {
             .flatten()
             .map(|v| v != "light")
             .unwrap_or(true);
+        let scan_mode = cache
+            .get_setting("scan_mode")
+            .ok()
+            .flatten()
+            .and_then(|value| ScanMode::from_setting(&value))
+            .unwrap_or(ScanMode::Quick);
         let available_volumes = dirotter_platform::list_volumes().unwrap_or_default();
         let initial_root = preferred_root_from_volumes(&available_volumes);
 
@@ -273,9 +277,7 @@ impl DirOtterNativeApp {
             store: None,
             scan_session: None,
             delete_session: None,
-            scan_profile: ScanProfile::Ssd,
-            snapshot_interval_ms: 75,
-            event_batch_size: 256,
+            scan_mode,
             scan_current_path: None,
             scan_last_event_at: None,
             scan_dropped_batches: 0,
@@ -321,6 +323,49 @@ impl DirOtterNativeApp {
         }
     }
 
+    fn selected_scan_config(&self) -> ScanConfig {
+        ScanConfig::for_mode(self.scan_mode)
+    }
+
+    fn scan_mode_title(&self, mode: ScanMode) -> &'static str {
+        match mode {
+            ScanMode::Quick => self.t("快速扫描（推荐）", "Quick Scan (Recommended)"),
+            ScanMode::Deep => self.t("深度扫描", "Deep Scan"),
+            ScanMode::LargeDisk => self.t("超大硬盘模式", "Large Disk Mode"),
+        }
+    }
+
+    fn scan_mode_description(&self, mode: ScanMode) -> &'static str {
+        match mode {
+            ScanMode::Quick => self.t(
+                "更快进入可操作结果，适合日常整理和大多数本地磁盘。",
+                "Reach actionable results faster. Best for routine cleanup and most local disks.",
+            ),
+            ScanMode::Deep => self.t(
+                "用更稳的节奏持续展开复杂目录，适合首次全面排查。",
+                "Use a steadier cadence for complex directory trees and first-pass investigations.",
+            ),
+            ScanMode::LargeDisk => self.t(
+                "降低界面刷新压力，适合超大硬盘、外置盘和文件数极多的目录。",
+                "Reduce UI refresh pressure for very large drives, external disks, or extremely dense folders.",
+            ),
+        }
+    }
+
+    fn scan_mode_note(&self) -> &'static str {
+        self.t(
+            "所有模式都会完整扫描当前范围，差异只在扫描节奏和界面刷新方式。",
+            "All modes scan the same scope. The only difference is pacing and UI update cadence.",
+        )
+    }
+
+    fn set_scan_mode(&mut self, mode: ScanMode) {
+        self.scan_mode = mode;
+        let _ = self
+            .cache
+            .set_setting("scan_mode", self.scan_mode.as_setting_value());
+    }
+
     fn status_text(&self) -> &'static str {
         match self.status {
             AppStatus::Idle => self.t("空闲", "Idle"),
@@ -346,8 +391,7 @@ impl DirOtterNativeApp {
         } else {
             build_light_visuals()
         };
-        style.visuals.widgets.noninteractive.rounding =
-            egui::Rounding::same(CONTROL_RADIUS as f32);
+        style.visuals.widgets.noninteractive.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
         style.visuals.widgets.inactive.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
         style.visuals.widgets.hovered.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
         style.visuals.widgets.active.rounding = egui::Rounding::same(CONTROL_RADIUS as f32);
@@ -1058,17 +1102,9 @@ impl DirOtterNativeApp {
         self.pending_delete_confirmation = None;
         self.execution_report = None;
         self.last_coalesce_commit = Instant::now();
+        let scan_config = self.selected_scan_config();
 
-        let handle = start_scan(
-            PathBuf::from(self.root_input.clone()),
-            ScanConfig {
-                profile: self.scan_profile,
-                batch_size: self.event_batch_size.max(1),
-                snapshot_ms: self.snapshot_interval_ms.max(50),
-                metadata_parallelism: 4,
-                deep_tasks_throttle: 64,
-            },
-        );
+        let handle = start_scan(PathBuf::from(self.root_input.clone()), scan_config);
         let (events, cancel) = handle.into_parts();
         let relay = Arc::new(Mutex::new(ScanRelayState::default()));
         let relay_thread_state = Arc::clone(&relay);
@@ -1201,9 +1237,9 @@ impl DirOtterNativeApp {
             finished = relay_finished;
         }
 
-        // Snapshot coalescing: commit once per 50~100ms
+        // Coalesce UI updates according to the active scan mode cadence.
         if self.last_coalesce_commit.elapsed()
-            >= Duration::from_millis(self.snapshot_interval_ms.max(50))
+            >= Duration::from_millis(self.selected_scan_config().effective_snapshot_ms())
         {
             while let Some(batch) = self.pending_batch_events.pop_front() {
                 for item in batch {
@@ -1445,8 +1481,8 @@ impl DirOtterNativeApp {
             );
             ui.label(
                 egui::RichText::new(self.t(
-                    "先确定扫描范围，再决定性能策略。",
-                    "Set the scan scope first, then tune the performance profile.",
+                    "先确定扫描范围，再选择更容易理解的扫描模式。",
+                    "Set the scan scope first, then choose a scan mode that matches the job.",
                 ))
                 .text_style(egui::TextStyle::Small)
                 .color(ui.visuals().weak_text_color()),
@@ -1510,58 +1546,48 @@ impl DirOtterNativeApp {
                 );
             }
             ui.add_space(12.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(self.t("扫描策略", "Profile"));
-                let ssd = ui
-                    .add_sized(
-                        [72.0, CONTROL_HEIGHT],
-                        egui::SelectableLabel::new(self.scan_profile == ScanProfile::Ssd, "SSD"),
-                    )
-                    .clicked();
-                let hdd = ui
-                    .add_sized(
-                        [72.0, CONTROL_HEIGHT],
-                        egui::SelectableLabel::new(self.scan_profile == ScanProfile::Hdd, "HDD"),
-                    )
-                    .clicked();
-                let network = ui
-                    .add_sized(
-                        [84.0, CONTROL_HEIGHT],
-                        egui::SelectableLabel::new(self.scan_profile == ScanProfile::Network, "Network"),
-                    )
-                    .clicked();
-                if ssd {
-                    self.scan_profile = ScanProfile::Ssd;
-                }
-                if hdd {
-                    self.scan_profile = ScanProfile::Hdd;
-                }
-                if network {
-                    self.scan_profile = ScanProfile::Network;
-                }
+            ui.label(
+                egui::RichText::new(self.t("扫描模式", "Scan Mode"))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                egui::RichText::new(self.t(
+                    "DirOtter 会自动处理 batch / snapshot 等内部节奏，不再要求手动调参数。",
+                    "DirOtter now handles batch and snapshot pacing automatically. You no longer need to tune technical knobs.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(8.0);
+            ui.add_enabled_ui(!self.scan_active(), |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for mode in [ScanMode::Quick, ScanMode::Deep, ScanMode::LargeDisk] {
+                        let response = sized_selectable(
+                            ui,
+                            188.0,
+                            self.scan_mode == mode,
+                            self.scan_mode_title(mode),
+                        )
+                        .on_hover_text(self.scan_mode_description(mode));
+                        if response.clicked() {
+                            self.set_scan_mode(mode);
+                        }
+                    }
+                });
             });
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(self.t("批大小", "Batch size"));
-                    ui.add_sized(
-                        [CONTROL_MIN_WIDTH, CONTROL_HEIGHT],
-                        egui::DragValue::new(&mut self.event_batch_size)
-                            .range(32..=4096)
-                            .speed(8),
-                    );
-                });
-                ui.vertical(|ui| {
-                    ui.label(self.t("快照间隔", "Snapshot interval"));
-                    ui.add_sized(
-                        [CONTROL_MIN_WIDTH + 20.0, CONTROL_HEIGHT],
-                        egui::DragValue::new(&mut self.snapshot_interval_ms)
-                            .range(50..=1000)
-                            .suffix(" ms")
-                            .speed(5),
-                    );
-                });
-            });
+            tone_banner(
+                ui,
+                self.scan_mode_title(self.scan_mode),
+                self.scan_mode_description(self.scan_mode),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(self.scan_mode_note())
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+            );
             ui.add_space(16.0);
             let start_label = if self.scan_active() {
                 self.t("扫描进行中", "Scanning")
@@ -1983,7 +2009,11 @@ impl DirOtterNativeApp {
                                             [ui.available_width(), 24.0],
                                             egui::SelectableLabel::new(
                                                 is_selected,
-                                                format!("[{:?}] {}", e.kind, truncate_middle(&e.path, 68)),
+                                                format!(
+                                                    "[{:?}] {}",
+                                                    e.kind,
+                                                    truncate_middle(&e.path, 68)
+                                                ),
                                             ),
                                         )
                                         .clicked()
@@ -2283,7 +2313,11 @@ impl DirOtterNativeApp {
                     .color(ui.visuals().text_color()),
             );
             ui.add_space(10.0);
-            status_badge(ui, self.status_text(), self.scan_active() || self.delete_active());
+            status_badge(
+                ui,
+                self.status_text(),
+                self.scan_active() || self.delete_active(),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let active = self.scan_active();
                 let deleting = self.delete_active();
@@ -2824,21 +2858,25 @@ impl eframe::App for DirOtterNativeApp {
                     Page::Dashboard => {
                         with_scrollable_page_width(ui, PAGE_MAX_WIDTH, |ui| self.ui_dashboard(ui))
                     }
-                    Page::CurrentScan => with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 40.0, |ui| {
-                        self.ui_current_scan(ui)
+                    Page::CurrentScan => {
+                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 40.0, |ui| {
+                            self.ui_current_scan(ui)
+                        })
+                    }
+                    Page::History => with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| {
+                        self.ui_history(ui)
                     }),
-                    Page::History => {
-                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_history(ui))
-                    }
-                    Page::Errors => {
-                        with_page_width_fill_height(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_errors(ui))
-                    }
+                    Page::Errors => with_page_width_fill_height(ui, PAGE_MAX_WIDTH + 20.0, |ui| {
+                        self.ui_errors(ui)
+                    }),
                     Page::Diagnostics => {
-                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| self.ui_diagnostics(ui))
+                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| {
+                            self.ui_diagnostics(ui)
+                        })
                     }
-                    Page::Settings => {
-                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH, |ui| self.ui_settings(ui, ctx))
-                    }
+                    Page::Settings => with_scrollable_page_width(ui, PAGE_MAX_WIDTH, |ui| {
+                        self.ui_settings(ui, ctx)
+                    }),
                 }
             });
 
@@ -2971,8 +3009,7 @@ fn build_dark_visuals() -> egui::Visuals {
     visuals.widgets.inactive.bg_stroke =
         egui::Stroke::new(1.0, egui::Color32::from_rgb(0x2E, 0x3D, 0x44));
     visuals.widgets.hovered.bg_fill = river_teal_hover();
-    visuals.widgets.hovered.bg_stroke =
-        egui::Stroke::new(1.0, river_teal());
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, river_teal());
     visuals.widgets.active.bg_fill = river_teal_active();
     visuals.widgets.active.bg_stroke =
         egui::Stroke::new(1.0, egui::Color32::from_rgb(0x4B, 0xA3, 0xAC));
@@ -3069,10 +3106,10 @@ fn with_page_width<R>(
         }
         let inner = ui
             .allocate_ui_with_layout(
-            egui::vec2(width, 0.0),
-            egui::Layout::top_down(egui::Align::Min),
-            add_contents,
-        )
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                add_contents,
+            )
             .inner;
         if right_space > 0.0 {
             ui.add_space(right_space);
@@ -3246,12 +3283,9 @@ fn render_ranked_size_list(
                         selection.selected_node = None;
                         *execution_report = None;
                     }
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            ui.label(format_bytes(*size));
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format_bytes(*size));
+                    });
                 });
                 ui.add(
                     egui::ProgressBar::new(ratio)
@@ -3321,7 +3355,8 @@ fn tone_banner(ui: &mut egui::Ui, title: &str, body: &str) {
 fn color_note_row(ui: &mut egui::Ui, swatch: egui::Color32, title: &str, body: &str) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-        ui.painter().rect_filled(rect, egui::Rounding::same(6.0), swatch);
+        ui.painter()
+            .rect_filled(rect, egui::Rounding::same(6.0), swatch);
         ui.add_space(6.0);
         ui.vertical(|ui| {
             ui.label(egui::RichText::new(title).strong());
@@ -3647,9 +3682,7 @@ mod ui_tests {
             store: Some(store),
             scan_session: None,
             delete_session: None,
-            scan_profile: ScanProfile::Ssd,
-            snapshot_interval_ms: 75,
-            event_batch_size: 256,
+            scan_mode: ScanMode::Quick,
             scan_current_path: None,
             scan_last_event_at: None,
             scan_dropped_batches: 0,
@@ -3685,7 +3718,9 @@ mod ui_tests {
 
         let (_, _, files) = app.contextual_ranked_files_panel(8);
         assert_eq!(files.len(), 2);
-        assert!(files.iter().all(|(path, _)| path.starts_with("d:\\appdata\\local\\sdk\\")));
+        assert!(files
+            .iter()
+            .all(|(path, _)| path.starts_with("d:\\appdata\\local\\sdk\\")));
         assert_eq!(files[0].0, "d:\\appdata\\local\\sdk\\system.img");
     }
 
@@ -3719,9 +3754,7 @@ mod ui_tests {
             store: Some(store),
             scan_session: None,
             delete_session: None,
-            scan_profile: ScanProfile::Ssd,
-            snapshot_interval_ms: 75,
-            event_batch_size: 256,
+            scan_mode: ScanMode::Quick,
             scan_current_path: None,
             scan_last_event_at: None,
             scan_dropped_batches: 0,
@@ -3763,5 +3796,4 @@ mod ui_tests {
         assert_eq!(target.path, "c:\\$Recycle.Bin\\S-1-5-18");
         assert_eq!(target.name, "S-1-5-18");
     }
-
 }
