@@ -1,9 +1,13 @@
+mod delete;
 mod error;
 mod explorer;
 mod fs_meta;
 mod trash;
 mod volume;
 
+pub use delete::{
+    purge_all_staging_roots, purge_staged_path, stage_for_fast_cleanup, STAGING_DIR_NAME,
+};
 pub use error::{map_io_error, PlatformError, PlatformErrorKind};
 pub use explorer::{reveal_in_explorer, select_in_explorer};
 pub use fs_meta::{is_reparse_point, normalize_path, stable_file_identity, FileIdentity};
@@ -87,6 +91,31 @@ pub fn capabilities() -> PlatformCapabilities {
             volume_info: true,
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn trim_process_memory() -> Result<(), PlatformError> {
+    use windows_sys::Win32::System::ProcessStatus::EmptyWorkingSet;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let process = unsafe { GetCurrentProcess() };
+    let ok = unsafe { EmptyWorkingSet(process) };
+    if ok == 0 {
+        Err(PlatformError::new(
+            PlatformErrorKind::System,
+            "EmptyWorkingSet failed",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn trim_process_memory() -> Result<(), PlatformError> {
+    Err(PlatformError::new(
+        PlatformErrorKind::Unsupported,
+        "process memory trimming is only implemented on Windows",
+    ))
 }
 
 #[cfg(test)]

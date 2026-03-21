@@ -1,5 +1,7 @@
 use dirotter_core::RiskLevel;
-use dirotter_platform::{move_to_recycle_bin, PlatformErrorKind};
+use dirotter_platform::{
+    move_to_recycle_bin, purge_staged_path, stage_for_fast_cleanup, PlatformErrorKind,
+};
 use dirotter_telemetry as telemetry;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -42,6 +44,7 @@ pub struct DeletionPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
     RecycleBin,
+    FastPurge,
     Permanent,
 }
 
@@ -181,6 +184,7 @@ fn execute_internal(
     let mut items = Vec::with_capacity(plan.files.len());
     let mut succeeded = 0usize;
     let mut failed = 0usize;
+    let mut staged_paths = Vec::new();
 
     for file in &plan.files {
         let dry_run_check =
@@ -188,43 +192,58 @@ fn execute_internal(
         let validation =
             validate_deletion_target(Path::new(&file.path), file.risk, mode, simulated);
 
-        let (success, message, failure_kind, retries, platform_kind, io_kind, path_kind) =
-            match validation {
-                Err(kind) => (
-                    false,
-                    format!("validation failed: {kind:?}"),
-                    Some(kind),
-                    0,
-                    None,
-                    None,
-                    Some(path_kind(&file.path).to_string()),
-                ),
-                Ok(meta) => {
-                    if config.compare_with_dry_run && dry_run_check.is_some() {
-                        (
-                            false,
-                            "validation mismatch with dry-run".to_string(),
-                            Some(ActionFailureKind::PrecheckMismatch),
-                            0,
-                            None,
-                            None,
-                            Some(path_kind(&file.path).to_string()),
-                        )
-                    } else if simulated {
-                        (
-                            true,
-                            format!("simulated {:?}", mode),
-                            None,
-                            0,
-                            None,
-                            None,
-                            Some(path_kind(&file.path).to_string()),
-                        )
-                    } else {
-                        execute_with_retry(&file.path, mode, meta, config.retries)
-                    }
+        let (
+            success,
+            message,
+            failure_kind,
+            retries,
+            platform_kind,
+            io_kind,
+            path_kind,
+            staged_path,
+        ) = match validation {
+            Err(kind) => (
+                false,
+                format!("validation failed: {kind:?}"),
+                Some(kind),
+                0,
+                None,
+                None,
+                Some(path_kind(&file.path).to_string()),
+                None,
+            ),
+            Ok(meta) => {
+                if config.compare_with_dry_run && dry_run_check.is_some() {
+                    (
+                        false,
+                        "validation mismatch with dry-run".to_string(),
+                        Some(ActionFailureKind::PrecheckMismatch),
+                        0,
+                        None,
+                        None,
+                        Some(path_kind(&file.path).to_string()),
+                        None,
+                    )
+                } else if simulated {
+                    (
+                        true,
+                        format!("simulated {:?}", mode),
+                        None,
+                        0,
+                        None,
+                        None,
+                        Some(path_kind(&file.path).to_string()),
+                        None,
+                    )
+                } else {
+                    execute_with_retry(&file.path, mode, meta, config.retries)
                 }
-            };
+            }
+        };
+
+        if let Some(staged_path) = staged_path {
+            staged_paths.push(staged_path);
+        }
 
         telemetry::record_action_result(success);
         if success {
@@ -259,6 +278,23 @@ fn execute_internal(
         });
     }
 
+    if !simulated && mode == ExecutionMode::FastPurge && !staged_paths.is_empty() {
+        std::thread::spawn(move || {
+            for staged in staged_paths {
+                let result = purge_staged_path(&staged);
+                telemetry::record_action_audit(
+                    serde_json::json!({
+                        "kind": "fast_purge_background",
+                        "path": staged,
+                        "success": result.is_ok(),
+                        "error": result.err().map(|err| err.message),
+                    })
+                    .to_string(),
+                );
+            }
+        });
+    }
+
     ExecutionReport {
         mode,
         attempted: plan.files.len(),
@@ -281,30 +317,40 @@ fn execute_with_retry(
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 ) {
     let mut attempt = 0u8;
     let _ = (meta.exists, meta.writable, meta.protected_reason);
     loop {
         let result = match (mode, meta.is_dir) {
-            (ExecutionMode::Permanent, false) => std::fs::remove_file(path)
-                .map(|_| ())
-                .map_err(|e| map_io_error(&e)),
+            (ExecutionMode::Permanent, false) => {
+                delete_file_fast(path).map_err(|e| map_io_error(&e))
+            }
             (ExecutionMode::Permanent, true) => std::fs::remove_dir_all(path)
-                .map(|_| ())
+                .map(|_| None)
                 .map_err(|e| map_io_error(&e)),
-            (ExecutionMode::RecycleBin, _) => move_to_recycle_bin(path).map_err(map_platform_error),
+            (ExecutionMode::RecycleBin, _) => move_to_recycle_bin(path)
+                .map(|_| None)
+                .map_err(map_platform_error),
+            (ExecutionMode::FastPurge, _) => stage_for_fast_cleanup(path)
+                .map(Some)
+                .map_err(map_platform_error),
         };
 
         match result {
-            Ok(_) => {
+            Ok(staged_path) => {
                 return (
                     true,
-                    "execute ok".to_string(),
+                    match mode {
+                        ExecutionMode::FastPurge => "staged for background purge".to_string(),
+                        _ => "execute ok".to_string(),
+                    },
                     None,
                     attempt,
                     None,
                     None,
                     None,
+                    staged_path,
                 );
             }
             Err(kind) => {
@@ -318,6 +364,7 @@ fn execute_with_retry(
                         platform_kind,
                         io_kind,
                         Some(path_kind(path).to_string()),
+                        None,
                     );
                 }
                 attempt += 1;
@@ -333,7 +380,8 @@ fn validate_deletion_target(
     mode: ExecutionMode,
     simulated: bool,
 ) -> Result<TargetMeta, ActionFailureKind> {
-    let protected_reason = (mode == ExecutionMode::Permanent && risk == RiskLevel::High)
+    let protected_reason = ((mode == ExecutionMode::Permanent || mode == ExecutionMode::FastPurge)
+        && risk == RiskLevel::High)
         .then_some(ActionFailureKind::Protected);
 
     if !path.exists() {
@@ -380,6 +428,8 @@ fn failure_dimensions(
 ) -> (Option<String>, Option<String>) {
     let platform_kind = if mode == ExecutionMode::RecycleBin {
         Some(format!("{:?}", kind))
+    } else if mode == ExecutionMode::FastPurge {
+        Some(format!("{:?}", kind))
     } else {
         None
     };
@@ -415,6 +465,21 @@ fn path_kind(path: &str) -> &'static str {
         "file_like"
     } else {
         "dir_like"
+    }
+}
+
+fn delete_file_fast(path: &str) -> io::Result<Option<String>> {
+    #[cfg(target_os = "windows")]
+    {
+        let target = Path::new(path);
+        return dirotter_platform::purge_staged_path(&target.display().to_string())
+            .map(|_| None)
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err.message));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::remove_file(path).map(|_| None)
     }
 }
 
@@ -479,6 +544,29 @@ mod tests {
         assert_eq!(
             report.items[0].failure_kind,
             Some(ActionFailureKind::Protected)
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fast_purge_stages_path_and_returns_quickly() {
+        let root = std::env::temp_dir().join(format!(
+            "dirotter-actions-fast-purge-{}",
+            std::process::id()
+        ));
+        let file = root.join("cache.bin");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create root");
+        fs::write(&file, vec![1u8; 4096]).expect("seed file");
+
+        let plan = build_deletion_plan(vec![(file.display().to_string(), 4096, RiskLevel::Low)]);
+        let report = execute_plan(&plan, ExecutionMode::FastPurge);
+
+        assert_eq!(report.succeeded, 1);
+        assert!(
+            !file.exists(),
+            "source path should disappear immediately after staging"
         );
 
         let _ = fs::remove_dir_all(&root);

@@ -34,6 +34,9 @@ const MAX_PENDING_SNAPSHOTS: usize = 8;
 const MAX_LIVE_FILES: usize = 20_000;
 const MAX_TREEMAP_CHILDREN: usize = 2_000;
 const MAX_CLEANUP_DETAIL_ITEMS: usize = 48;
+const MAX_CLEANUP_ITEMS_PER_CATEGORY: usize = 24;
+const MAX_BLOCKED_ITEMS_PER_CATEGORY: usize = 12;
+const MAX_CLEANUP_TOTAL_ITEMS: usize = 120;
 const MIN_CLEANUP_BYTES: u64 = 64 * 1024 * 1024;
 const MIN_CACHE_DIR_BYTES: u64 = 16 * 1024 * 1024;
 const NAV_WIDTH: f32 = 188.0;
@@ -51,6 +54,9 @@ const NAV_ITEM_HEIGHT: f32 = 36.0;
 const STATUS_BADGE_HEIGHT: f32 = 32.0;
 const CONTROL_MIN_WIDTH: f32 = 56.0;
 const PAGE_MAX_WIDTH: f32 = 1360.0;
+const DASHBOARD_PAGE_MAX_WIDTH: f32 = 1160.0;
+const SETTINGS_PAGE_MAX_WIDTH: f32 = 1040.0;
+const PAGE_SIDE_GUTTER: f32 = 64.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -75,6 +81,7 @@ enum Lang {
 enum AppStatus {
     Idle,
     Scanning,
+    Finalizing,
     Completed,
     Deleting,
     DeleteExecuted,
@@ -119,6 +126,10 @@ struct ScanSession {
     relay: Arc<Mutex<ScanRelayState>>,
 }
 
+struct ScanFinalizeSession {
+    relay: Arc<Mutex<ScanFinalizeRelayState>>,
+}
+
 struct ScanRelayState {
     latest_progress: Option<dirotter_scan::ScanProgress>,
     pending_batches: VecDeque<Vec<BatchEntry>>,
@@ -130,12 +141,26 @@ struct ScanRelayState {
     dropped_progress: u64,
 }
 
+#[derive(Default)]
+struct ScanFinalizeRelayState {
+    finished: Option<ScanFinalizePayload>,
+}
+
 struct FinishedPayload {
     summary: ScanSummary,
     store: NodeStore,
     errors: Vec<ScanErrorRecord>,
     top_files: Vec<(String, u64)>,
     top_dirs: Vec<(String, u64)>,
+}
+
+struct ScanFinalizePayload {
+    summary: ScanSummary,
+    store: NodeStore,
+    errors: Vec<ScanErrorRecord>,
+    top_files: Vec<(String, u64)>,
+    top_dirs: Vec<(String, u64)>,
+    cleanup_analysis: CleanupAnalysis,
 }
 
 #[derive(Clone)]
@@ -207,6 +232,7 @@ struct CleanupDeleteRequest {
     label: String,
     targets: Vec<SelectedTarget>,
     estimated_bytes: u64,
+    mode: ExecutionMode,
 }
 
 #[derive(Default)]
@@ -294,10 +320,12 @@ pub struct DirOtterNativeApp {
     summary: ScanSummary,
     store: Option<NodeStore>,
     scan_session: Option<ScanSession>,
+    scan_finalize_session: Option<ScanFinalizeSession>,
     delete_session: Option<DeleteSession>,
     scan_mode: ScanMode,
     scan_current_path: Option<String>,
     scan_last_event_at: Option<Instant>,
+    scan_cancel_requested: bool,
     scan_dropped_batches: u64,
     scan_dropped_snapshots: u64,
     scan_dropped_progress: u64,
@@ -317,6 +345,7 @@ pub struct DirOtterNativeApp {
     pending_delete_confirmation: Option<PendingDeleteConfirmation>,
     queued_delete: Option<QueuedDeleteRequest>,
     explorer_feedback: Option<(String, bool)>,
+    maintenance_feedback: Option<(String, bool)>,
 
     history: Vec<HistoryRecord>,
     errors: Vec<ScanErrorRecord>,
@@ -324,6 +353,7 @@ pub struct DirOtterNativeApp {
 
     language: Lang,
     theme_dark: bool,
+    advanced_tools_enabled: bool,
     cache: CacheStore,
 
     perf: PerfMetrics,
@@ -348,6 +378,12 @@ impl DirOtterNativeApp {
             .flatten()
             .map(|v| v != "light")
             .unwrap_or(true);
+        let advanced_tools_enabled = cache
+            .get_setting("advanced_tools")
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
         let scan_mode = cache
             .get_setting("scan_mode")
             .ok()
@@ -356,6 +392,9 @@ impl DirOtterNativeApp {
             .unwrap_or(ScanMode::Quick);
         let available_volumes = dirotter_platform::list_volumes().unwrap_or_default();
         let initial_root = preferred_root_from_volumes(&available_volumes);
+        std::thread::spawn(|| {
+            let _ = dirotter_platform::purge_all_staging_roots();
+        });
 
         let mut app = Self {
             egui_ctx: cc.egui_ctx.clone(),
@@ -366,10 +405,12 @@ impl DirOtterNativeApp {
             summary: ScanSummary::default(),
             store: None,
             scan_session: None,
+            scan_finalize_session: None,
             delete_session: None,
             scan_mode,
             scan_current_path: None,
             scan_last_event_at: None,
+            scan_cancel_requested: false,
             scan_dropped_batches: 0,
             scan_dropped_snapshots: 0,
             scan_dropped_progress: 0,
@@ -387,11 +428,13 @@ impl DirOtterNativeApp {
             pending_delete_confirmation: None,
             queued_delete: None,
             explorer_feedback: None,
+            maintenance_feedback: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
             language,
             theme_dark,
+            advanced_tools_enabled,
             cache,
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
@@ -399,12 +442,14 @@ impl DirOtterNativeApp {
             error_filter: ErrorFilter::All,
         };
 
-        let _ = app.reload_history();
-        if let Ok(Some(snapshot)) = app.cache.load_latest_snapshot(&app.root_input) {
-            app.store = Some(snapshot);
-            app.sync_summary_from_store();
-            app.sync_rankings_from_store();
-            app.refresh_cleanup_analysis();
+        if app.advanced_tools_enabled {
+            let _ = app.reload_history();
+            if let Ok(Some(snapshot)) = app.cache.load_latest_snapshot(&app.root_input) {
+                app.store = Some(snapshot);
+                app.sync_summary_from_store();
+                app.sync_rankings_from_store();
+                app.refresh_cleanup_analysis();
+            }
         }
         app.apply_theme(&cc.egui_ctx);
         app.refresh_diagnostics();
@@ -425,6 +470,23 @@ impl DirOtterNativeApp {
         let _ = self
             .cache
             .set_setting("language", lang_setting_value(language));
+    }
+
+    fn set_advanced_tools_enabled(&mut self, enabled: bool) {
+        self.advanced_tools_enabled = enabled;
+        let _ = self
+            .cache
+            .set_setting("advanced_tools", if enabled { "true" } else { "false" });
+        if enabled {
+            let _ = self.reload_history();
+            self.refresh_diagnostics();
+        } else {
+            self.history.clear();
+            self.errors.clear();
+            if matches!(self.page, Page::History | Page::Errors | Page::Diagnostics) {
+                self.page = Page::Dashboard;
+            }
+        }
     }
 
     fn selected_scan_config(&self) -> ScanConfig {
@@ -474,6 +536,7 @@ impl DirOtterNativeApp {
         match self.status {
             AppStatus::Idle => self.t("空闲", "Idle"),
             AppStatus::Scanning => self.t("扫描中", "Scanning"),
+            AppStatus::Finalizing => self.t("整理结果中", "Finalizing"),
             AppStatus::Completed => self.t("完成", "Completed"),
             AppStatus::Deleting => self.t("删除中", "Deleting"),
             AppStatus::DeleteExecuted => self.t("删除已执行", "Delete executed"),
@@ -688,7 +751,7 @@ impl DirOtterNativeApp {
         match risk {
             RiskLevel::Low => self.t("可清理", "Safe"),
             RiskLevel::Medium => self.t("谨慎", "Warning"),
-            RiskLevel::High => self.t("禁删", "Blocked"),
+            RiskLevel::High => self.t("手动处理", "Manual Review"),
         }
     }
 
@@ -707,8 +770,8 @@ impl DirOtterNativeApp {
             CleanupCategory::Installer => self.t("安装程序或安装包。", "Installer package."),
             CleanupCategory::Image => self.t("图片类文件。", "Image asset."),
             CleanupCategory::System => self.t(
-                "系统目录或系统托管文件，已阻止删除。",
-                "System path or system-managed file. Deletion is blocked.",
+                "系统目录或系统托管文件。请打开所在位置后再手动确认处理。",
+                "System path or system-managed file. Open its location and review manually.",
             ),
             CleanupCategory::Other => self.t("大体积未分类文件。", "Large unclassified file."),
         }
@@ -865,7 +928,11 @@ impl DirOtterNativeApp {
     }
 
     fn refresh_cleanup_analysis(&mut self) {
-        self.cleanup.analysis = self.store.as_ref().map(Self::build_cleanup_analysis);
+        self.apply_cleanup_analysis(self.store.as_ref().map(Self::build_cleanup_analysis));
+    }
+
+    fn apply_cleanup_analysis(&mut self, analysis: Option<CleanupAnalysis>) {
+        self.cleanup.analysis = analysis;
         self.cleanup.detail_category = None;
         self.cleanup.selected_paths = self
             .cleanup
@@ -881,6 +948,36 @@ impl DirOtterNativeApp {
             })
             .unwrap_or_default();
         self.cleanup.pending_delete = None;
+    }
+
+    fn cleanup_candidate_limit(risk: RiskLevel) -> usize {
+        if risk == RiskLevel::High {
+            MAX_BLOCKED_ITEMS_PER_CATEGORY
+        } else {
+            MAX_CLEANUP_ITEMS_PER_CATEGORY
+        }
+    }
+
+    fn rank_cleanup_candidate(candidate: &CleanupCandidate) -> (i64, i64) {
+        let score_key = (candidate.cleanup_score * 10.0).round() as i64;
+        (score_key, candidate.target.size_bytes as i64)
+    }
+
+    fn push_ranked_cleanup_candidate(
+        category_candidates: &mut HashMap<CleanupCategory, Vec<CleanupCandidate>>,
+        candidate: CleanupCandidate,
+    ) {
+        let limit = Self::cleanup_candidate_limit(candidate.risk);
+        let bucket = category_candidates.entry(candidate.category).or_default();
+        bucket.push(candidate);
+        bucket.sort_by(|a, b| {
+            Self::rank_cleanup_candidate(b)
+                .cmp(&Self::rank_cleanup_candidate(a))
+                .then_with(|| a.target.path.cmp(&b.target.path))
+        });
+        if bucket.len() > limit {
+            bucket.truncate(limit);
+        }
     }
 
     fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
@@ -901,7 +998,8 @@ impl DirOtterNativeApp {
         });
 
         let mut cache_scope_paths: Vec<String> = Vec::new();
-        let mut items: Vec<CleanupCandidate> = Vec::new();
+        let mut category_candidates: HashMap<CleanupCategory, Vec<CleanupCandidate>> =
+            HashMap::new();
 
         for node in cache_dirs {
             if cache_scope_paths
@@ -920,18 +1018,21 @@ impl DirOtterNativeApp {
                 dir_count: node.dir_count,
             };
             let unused_days = Self::cleanup_unused_days(&target.path);
-            items.push(CleanupCandidate {
-                cleanup_score: Self::cleanup_score(
-                    target.size_bytes,
+            Self::push_ranked_cleanup_candidate(
+                &mut category_candidates,
+                CleanupCandidate {
+                    cleanup_score: Self::cleanup_score(
+                        target.size_bytes,
+                        unused_days,
+                        CleanupCategory::Cache,
+                        RiskLevel::Low,
+                    ),
+                    target,
+                    category: CleanupCategory::Cache,
+                    risk: RiskLevel::Low,
                     unused_days,
-                    CleanupCategory::Cache,
-                    RiskLevel::Low,
-                ),
-                target,
-                category: CleanupCategory::Cache,
-                risk: RiskLevel::Low,
-                unused_days,
-            });
+                },
+            );
         }
 
         for node in store
@@ -955,38 +1056,49 @@ impl DirOtterNativeApp {
                 continue;
             }
 
-            let unused_days = Self::cleanup_unused_days(&node.path);
+            let unused_days = if risk == RiskLevel::High {
+                None
+            } else {
+                Self::cleanup_unused_days(&node.path)
+            };
             let score = Self::cleanup_score(node.size_self, unused_days, category, risk);
             if risk != RiskLevel::High && score < 1.0 {
                 continue;
             }
 
-            items.push(CleanupCandidate {
-                target: SelectedTarget {
-                    name: node.name.clone(),
-                    path: node.path.clone(),
-                    size_bytes: node.size_self,
-                    kind: node.kind,
-                    file_count: node.file_count,
-                    dir_count: node.dir_count,
+            Self::push_ranked_cleanup_candidate(
+                &mut category_candidates,
+                CleanupCandidate {
+                    target: SelectedTarget {
+                        name: node.name.clone(),
+                        path: node.path.clone(),
+                        size_bytes: node.size_self,
+                        kind: node.kind,
+                        file_count: node.file_count,
+                        dir_count: node.dir_count,
+                    },
+                    category,
+                    risk,
+                    cleanup_score: score,
+                    unused_days,
                 },
-                category,
-                risk,
-                cleanup_score: score,
-                unused_days,
-            });
+            );
         }
 
+        let mut items: Vec<CleanupCandidate> =
+            category_candidates.into_values().flatten().collect();
         items.sort_by(|a, b| {
-            b.target
-                .size_bytes
-                .cmp(&a.target.size_bytes)
+            Self::rank_cleanup_candidate(b)
+                .cmp(&Self::rank_cleanup_candidate(a))
                 .then_with(|| {
                     Self::cleanup_sort_priority(a.category)
                         .cmp(&Self::cleanup_sort_priority(b.category))
                 })
                 .then_with(|| a.target.path.cmp(&b.target.path))
         });
+        if items.len() > MAX_CLEANUP_TOTAL_ITEMS {
+            items.truncate(MAX_CLEANUP_TOTAL_ITEMS);
+        }
 
         let mut category_map: HashMap<CleanupCategory, CleanupCategorySummary> = HashMap::new();
         let mut reclaimable_bytes = 0u64;
@@ -1057,6 +1169,61 @@ impl DirOtterNativeApp {
         items
     }
 
+    fn cleanup_delete_mode_for_category(category: CleanupCategory) -> ExecutionMode {
+        if category == CleanupCategory::Cache {
+            ExecutionMode::FastPurge
+        } else {
+            ExecutionMode::RecycleBin
+        }
+    }
+
+    fn can_fast_purge_path(&self, path: &str) -> bool {
+        let kind = fs::metadata(path)
+            .ok()
+            .map(|meta| {
+                if meta.is_dir() {
+                    NodeKind::Dir
+                } else {
+                    NodeKind::File
+                }
+            })
+            .unwrap_or(NodeKind::File);
+        let category = Self::cleanup_category_for_path(path, kind);
+        let risk = Self::cleanup_risk_for_path(path, category);
+        category == CleanupCategory::Cache && risk == RiskLevel::Low
+    }
+
+    fn selected_cleanup_totals(&self, category: CleanupCategory) -> (usize, u64) {
+        self.cleanup_items_for_category(category)
+            .into_iter()
+            .filter(|item| {
+                item.risk != RiskLevel::High
+                    && self
+                        .cleanup
+                        .selected_paths
+                        .contains(item.target.path.as_str())
+            })
+            .fold((0usize, 0u64), |(count, bytes), item| {
+                (count + 1, bytes.saturating_add(item.target.size_bytes))
+            })
+    }
+
+    fn select_all_safe_cleanup_items(&mut self, category: CleanupCategory) {
+        for item in self.cleanup_items_for_category(category) {
+            if item.risk != RiskLevel::High {
+                self.cleanup.selected_paths.insert(item.target.path);
+            }
+        }
+    }
+
+    fn clear_selected_cleanup_items(&mut self, category: CleanupCategory) {
+        for item in self.cleanup_items_for_category(category) {
+            self.cleanup
+                .selected_paths
+                .remove(item.target.path.as_str());
+        }
+    }
+
     fn queue_cleanup_delete(&mut self, request: CleanupDeleteRequest) {
         if request.targets.is_empty() {
             return;
@@ -1066,6 +1233,17 @@ impl DirOtterNativeApp {
     }
 
     fn queue_cleanup_category_delete(&mut self, category: CleanupCategory) {
+        self.queue_cleanup_category_delete_with_mode(
+            category,
+            Self::cleanup_delete_mode_for_category(category),
+        );
+    }
+
+    fn queue_cleanup_category_delete_with_mode(
+        &mut self,
+        category: CleanupCategory,
+        mode: ExecutionMode,
+    ) {
         let selected_targets: Vec<SelectedTarget> = self
             .cleanup_items_for_category(category)
             .into_iter()
@@ -1082,10 +1260,17 @@ impl DirOtterNativeApp {
             .iter()
             .map(|target| target.size_bytes)
             .sum();
+        let label = match mode {
+            ExecutionMode::FastPurge => self.t("快速清理选中缓存", "Fast Cleanup Selected"),
+            ExecutionMode::RecycleBin => self.t("移到回收站", "Move to Recycle Bin"),
+            ExecutionMode::Permanent => self.t("永久删除选中项", "Delete Selected Permanently"),
+        }
+        .to_string();
         self.queue_cleanup_delete(CleanupDeleteRequest {
-            label: self.t("清理选中项", "Clean Selected").to_string(),
+            label,
             targets: selected_targets,
             estimated_bytes,
+            mode,
         });
     }
 
@@ -1103,6 +1288,7 @@ impl DirOtterNativeApp {
             label: self.t("一键清理缓存", "Quick Cache Cleanup").to_string(),
             estimated_bytes: analysis.quick_clean_bytes,
             targets,
+            mode: ExecutionMode::FastPurge,
         });
     }
 
@@ -1206,6 +1392,18 @@ impl DirOtterNativeApp {
                         self.t(
                             "个项目已进入系统回收站，可从系统回收站恢复。",
                             "items were moved to the system recycle bin and can be restored there.",
+                        )
+                    ),
+                    true,
+                ),
+                ExecutionMode::FastPurge => (
+                    self.t("已快速移出", "Cleared from View").to_string(),
+                    format!(
+                        "{} {}",
+                        format_count(report.succeeded as u64),
+                        self.t(
+                            "个项目已移入后台清理区，空间会在后台继续释放。",
+                            "items were moved into the background cleanup area and disk space will continue to be reclaimed.",
                         )
                     ),
                     true,
@@ -1490,6 +1688,10 @@ impl DirOtterNativeApp {
         self.delete_session.is_some()
     }
 
+    fn scan_finalizing(&self) -> bool {
+        self.scan_finalize_session.is_some()
+    }
+
     fn process_delete_events(&mut self) {
         let Some(session) = &self.delete_session else {
             return;
@@ -1581,7 +1783,54 @@ impl DirOtterNativeApp {
     }
 
     fn scan_active(&self) -> bool {
-        self.scan_session.is_some()
+        self.scan_session.is_some() || self.scan_finalizing()
+    }
+
+    fn finish_cancelled_scan(&mut self) {
+        self.status = AppStatus::Cancelled;
+        self.scan_current_path = None;
+        self.scan_last_event_at = None;
+        self.scan_cancel_requested = false;
+        self.pending_batch_events.clear();
+        self.pending_snapshots.clear();
+        self.live_files.clear();
+        self.completed_top_files = self.live_top_files.clone();
+        self.completed_top_dirs = self.live_top_dirs.clone();
+        self.execution_report = None;
+        self.cleanup = CleanupPanelState::default();
+        self.refresh_diagnostics();
+        self.scan_session = None;
+        self.scan_finalize_session = None;
+    }
+
+    fn process_scan_finalize_events(&mut self) {
+        let Some(session) = &self.scan_finalize_session else {
+            return;
+        };
+
+        let finished = {
+            let mut relay = session.relay.lock().expect("scan finalize relay lock");
+            relay.finished.take()
+        };
+
+        let Some(payload) = finished else {
+            return;
+        };
+
+        self.store = Some(payload.store);
+        self.summary = payload.summary;
+        self.errors = payload.errors;
+        self.completed_top_files = payload.top_files;
+        self.completed_top_dirs = payload.top_dirs;
+        self.apply_cleanup_analysis(Some(payload.cleanup_analysis));
+        self.status = AppStatus::Completed;
+        self.scan_current_path = None;
+        self.scan_last_event_at = None;
+        self.scan_cancel_requested = false;
+        self.execution_report = None;
+        self.treemap_focus_path = None;
+        self.scan_finalize_session = None;
+        self.refresh_diagnostics();
     }
 
     fn scan_health_summary(&self) -> String {
@@ -1774,11 +2023,166 @@ impl DirOtterNativeApp {
         Ok(())
     }
 
+    fn set_maintenance_feedback(&mut self, message: String, success: bool) {
+        self.maintenance_feedback = Some((message, success));
+    }
+
+    fn save_current_snapshot_manually(&mut self) {
+        let Some(store) = self.store.as_ref() else {
+            self.set_maintenance_feedback(
+                self.t(
+                    "当前没有可保存的扫描结果。",
+                    "There is no scan result to save yet.",
+                )
+                .to_string(),
+                false,
+            );
+            return;
+        };
+        match self.cache.save_snapshot(&self.root_input, store) {
+            Ok(()) => self.set_maintenance_feedback(
+                self.t(
+                    "已手动保存当前快照。",
+                    "Saved the current snapshot manually.",
+                )
+                .to_string(),
+                true,
+            ),
+            Err(err) => self.set_maintenance_feedback(
+                format!(
+                    "{}: {}",
+                    self.t("保存快照失败", "Failed to save snapshot"),
+                    err
+                ),
+                false,
+            ),
+        }
+    }
+
+    fn record_current_history_manually(&mut self) {
+        match self.cache.record_scan_history(
+            &self.root_input,
+            self.summary.scanned_files,
+            self.summary.scanned_dirs,
+            self.summary.bytes_observed,
+            self.summary.error_count,
+            &self.errors,
+        ) {
+            Ok(id) => {
+                let _ = self.reload_history();
+                self.selected_history_id = Some(id);
+                self.set_maintenance_feedback(
+                    self.t(
+                        "已手动记录当前扫描摘要。",
+                        "Recorded the current scan summary manually.",
+                    )
+                    .to_string(),
+                    true,
+                );
+            }
+            Err(err) => self.set_maintenance_feedback(
+                format!(
+                    "{}: {}",
+                    self.t("记录扫描历史失败", "Failed to record scan history"),
+                    err
+                ),
+                false,
+            ),
+        }
+    }
+
+    fn export_errors_csv_manually(&mut self) {
+        match export_errors_csv(&self.errors, "dirotter_errors.csv") {
+            Ok(()) => self.set_maintenance_feedback(
+                self.t("已导出错误 CSV。", "Exported the errors CSV.")
+                    .to_string(),
+                true,
+            ),
+            Err(err) => self.set_maintenance_feedback(
+                format!(
+                    "{}: {}",
+                    self.t("导出错误 CSV 失败", "Failed to export errors CSV"),
+                    err
+                ),
+                false,
+            ),
+        }
+    }
+
+    fn release_dir_otter_memory(&mut self) {
+        self.pending_batch_events.clear();
+        self.pending_snapshots.clear();
+        self.live_files.clear();
+        self.live_top_files.clear();
+        self.live_top_dirs.clear();
+        self.completed_top_files.clear();
+        self.completed_top_dirs.clear();
+        self.cleanup = CleanupPanelState::default();
+        self.execution_report = None;
+        self.explorer_feedback = None;
+        self.selection = SelectionState::default();
+        self.history.clear();
+        self.errors.clear();
+        self.selected_history_id = None;
+        self.store = None;
+        self.summary = ScanSummary::default();
+        self.scan_current_path = None;
+        self.scan_last_event_at = None;
+        self.status = AppStatus::Idle;
+        self.treemap_focus_path = None;
+        self.diagnostics_json.clear();
+        let trimmed = dirotter_platform::trim_process_memory();
+        self.refresh_diagnostics();
+        match trimmed {
+            Ok(()) => self.set_maintenance_feedback(
+                self.t(
+                    "已清空当前结果并尝试释放 DirOtter 内存占用。",
+                    "Cleared the current result and requested DirOtter memory trimming.",
+                )
+                .to_string(),
+                true,
+            ),
+            Err(err) => self.set_maintenance_feedback(
+                format!(
+                    "{}: {}",
+                    self.t(
+                        "已清空当前结果，但释放内存请求失败",
+                        "Cleared current results, but memory trimming failed"
+                    ),
+                    err.message
+                ),
+                false,
+            ),
+        }
+    }
+
+    fn purge_staging_manually(&mut self) {
+        match dirotter_platform::purge_all_staging_roots() {
+            Ok(()) => self.set_maintenance_feedback(
+                self.t(
+                    "已手动清理残留 staging 项。",
+                    "Manually cleaned remaining staging items.",
+                )
+                .to_string(),
+                true,
+            ),
+            Err(err) => self.set_maintenance_feedback(
+                format!(
+                    "{}: {}",
+                    self.t("清理 staging 失败", "Failed to clean staging"),
+                    err.message
+                ),
+                false,
+            ),
+        }
+    }
+
     fn start_scan(&mut self) {
         self.page = Page::CurrentScan;
         self.status = AppStatus::Scanning;
         self.scan_current_path = None;
         self.scan_last_event_at = Some(Instant::now());
+        self.scan_cancel_requested = false;
         self.scan_dropped_batches = 0;
         self.scan_dropped_snapshots = 0;
         self.scan_dropped_progress = 0;
@@ -1956,39 +2360,42 @@ impl DirOtterNativeApp {
         }
 
         if let Some(finished) = finished {
-            self.store = Some(finished.store);
-            self.summary = finished.summary.clone();
-            self.status = AppStatus::Completed;
-            self.scan_current_path = None;
-            self.scan_last_event_at = None;
-            self.completed_top_files = finished.top_files;
-            self.completed_top_dirs = finished.top_dirs;
-            self.treemap_focus_path = None;
-            let _ = export_errors_csv(&finished.errors, "dirotter_errors.csv");
-            if let Some(store) = self.store.as_ref() {
-                let _ = self.cache.save_snapshot(&self.root_input, store);
+            if self.scan_cancel_requested {
+                self.errors = finished.errors;
+                self.finish_cancelled_scan();
+                return;
             }
-            let history_id = self
-                .cache
-                .record_scan_history(
-                    &self.root_input,
-                    finished.summary.scanned_files,
-                    finished.summary.scanned_dirs,
-                    finished.summary.bytes_observed,
-                    finished.summary.error_count,
-                    &finished.errors,
-                )
-                .ok();
 
-            self.errors = finished.errors;
+            self.status = AppStatus::Finalizing;
+            self.summary = finished.summary.clone();
+            self.scan_current_path = Some(
+                self.t("正在整理最终结果…", "Finalizing final results...")
+                    .to_string(),
+            );
+            self.scan_last_event_at = Some(Instant::now());
+            self.completed_top_files = finished.top_files.clone();
+            self.completed_top_dirs = finished.top_dirs.clone();
             self.execution_report = None;
-            self.refresh_cleanup_analysis();
-            if let Some(id) = history_id {
-                self.selected_history_id = Some(id);
-            }
-            let _ = self.reload_history();
-            self.refresh_diagnostics();
             self.scan_session = None;
+            let relay = Arc::new(Mutex::new(ScanFinalizeRelayState::default()));
+            let relay_state = Arc::clone(&relay);
+            let ctx = self.egui_ctx.clone();
+            std::thread::spawn(move || {
+                let cleanup_analysis = Self::build_cleanup_analysis(&finished.store);
+                let mut state = relay_state.lock().expect("scan finalize relay lock");
+                state.finished = Some(ScanFinalizePayload {
+                    summary: finished.summary,
+                    store: finished.store,
+                    errors: finished.errors,
+                    top_files: finished.top_files,
+                    top_dirs: finished.top_dirs,
+                    cleanup_analysis,
+                });
+                drop(state);
+                ctx.request_repaint();
+            });
+            self.scan_finalize_session = Some(ScanFinalizeSession { relay });
+            self.refresh_diagnostics();
         }
 
         let t = telemetry::snapshot();
@@ -2028,9 +2435,6 @@ impl DirOtterNativeApp {
             (Page::Dashboard, "概览", "Overview"),
             (Page::CurrentScan, "扫描进行中", "Live Scan"),
             (Page::Treemap, "结果视图", "Result View"),
-            (Page::History, "历史记录", "History"),
-            (Page::Errors, "错误中心", "Errors"),
-            (Page::Diagnostics, "诊断导出", "Diagnostics"),
             (Page::Settings, "偏好设置", "Settings"),
         ] {
             let selected = self.page == p;
@@ -2047,6 +2451,38 @@ impl DirOtterNativeApp {
                 self.page = p;
             }
         }
+
+        if self.advanced_tools_enabled {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new(self.t("高级工具", "Advanced Tools"))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(6.0);
+            for (p, label_zh, label_en) in [
+                (Page::History, "历史记录", "History"),
+                (Page::Errors, "错误中心", "Errors"),
+                (Page::Diagnostics, "诊断导出", "Diagnostics"),
+            ] {
+                let selected = self.page == p;
+                let text = egui::RichText::new(self.t(label_zh, label_en))
+                    .size(14.0)
+                    .strong();
+                if ui
+                    .add_sized(
+                        [ui.available_width(), NAV_ITEM_HEIGHT],
+                        egui::SelectableLabel::new(selected, text),
+                    )
+                    .clicked()
+                {
+                    if matches!(p, Page::History) {
+                        let _ = self.reload_history();
+                    }
+                    self.page = p;
+                }
+            }
+        }
     }
 
     fn ui_dashboard(&mut self, ui: &mut egui::Ui) {
@@ -2055,82 +2491,10 @@ impl DirOtterNativeApp {
             self.t("DirOtter 工作台", "DirOtter Workspace"),
             self.t("磁盘概览", "Drive Overview"),
             self.t(
-                "像主流磁盘分析器一样，先看卷空间，再看最大的文件夹和文件。",
-                "Like mainstream disk analyzers: start with volume space, then inspect the largest folders and files.",
+                "先看结论和动作，再进入扫描设置，以及最大的文件夹和文件。",
+                "Start with the conclusion and action, then move into scan setup and the largest folders and files.",
             ),
         );
-        ui.add_space(10.0);
-        if !self.scan_active() {
-            let preferred_scope = if self.root_input.trim().is_empty() {
-                self.t("先选一个盘符开始扫描。", "Pick a drive to begin scanning.")
-            } else {
-                self.t(
-                    "用快速盘符立刻开始，或调整路径后再扫描。",
-                    "Start from a quick-drive button, or refine the path before scanning.",
-                )
-            };
-            tone_banner(
-                ui,
-                self.t("准备开始一次目录巡检", "Ready for a New Pass"),
-                &format!(
-                    "{} {}",
-                    preferred_scope,
-                    self.t(
-                        "完成后，这个页面会优先给出卷空间、最大目录和最大文件。",
-                        "When the scan completes, this page will surface volume usage, largest folders, and largest files first.",
-                    )
-                ),
-            );
-            ui.add_space(12.0);
-        }
-        if self.scan_active() {
-            let current_path = self
-                .scan_current_path
-                .as_deref()
-                .map(|path| truncate_middle(path, 72))
-                .unwrap_or_else(|| {
-                    self.t("正在准备扫描路径…", "Preparing scan path...")
-                        .to_string()
-                });
-            tone_banner(
-                ui,
-                self.t("扫描仍在进行", "Scan Still Running"),
-                &format!(
-                    "{} {}\n{}",
-                    self.t("当前正在处理：", "Currently working on:"),
-                    current_path,
-                    self.scan_health_summary()
-                ),
-            );
-            ui.add_space(10.0);
-        }
-
-        if !self.scan_active() {
-            self.render_cleanup_suggestions_card(ui);
-            if self.cleanup.analysis.is_some() {
-                ui.add_space(14.0);
-            }
-        }
-
-        let gap = 14.0;
-        let usable_width = (ui.available_width() - gap).max(0.0);
-        let left_width = (usable_width * 0.50).round();
-        let right_width = (usable_width - left_width).max(0.0);
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(left_width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| self.render_scan_target_card(ui),
-            );
-            ui.add_space(gap);
-            ui.allocate_ui_with_layout(
-                egui::vec2(right_width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| self.render_volume_summary_card(ui),
-            );
-        });
-
-        ui.add_space(14.0);
         let ranked_dirs = self.current_ranked_dirs(10);
         let ranked_files = self.current_ranked_files(10);
         let folders_title = self.t("最大文件夹", "Largest Folders").to_string();
@@ -2147,211 +2511,557 @@ impl DirOtterNativeApp {
                 "These are usually the quickest wins for reclaiming space.",
             )
             .to_string();
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(left_width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    render_ranked_size_list(
-                        ui,
-                        &folders_title,
-                        &folders_subtitle,
-                        &ranked_dirs,
-                        self.summary.bytes_observed,
-                        &mut self.selection,
-                        &mut self.execution_report,
-                    )
-                },
+        if !self.scan_active() {
+            self.render_overview_hero(ui);
+        } else {
+            self.render_live_overview_hero(ui);
+        }
+        ui.add_space(14.0);
+        self.render_overview_metrics_strip(ui);
+        ui.add_space(18.0);
+        self.render_scan_target_card(ui);
+        ui.add_space(18.0);
+        let wide_layout = ui.available_width() >= 740.0;
+        if wide_layout {
+            let gap = 20.0;
+            let total = ui.available_width();
+            let left_width = (total - gap) / 2.0;
+            let right_width = total - gap - left_width;
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(left_width, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        render_ranked_size_list(
+                            ui,
+                            &folders_title,
+                            &folders_subtitle,
+                            &ranked_dirs,
+                            self.summary.bytes_observed,
+                            &mut self.selection,
+                            &mut self.execution_report,
+                        );
+                    },
+                );
+                ui.add_space(gap);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(right_width, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        render_ranked_size_list(
+                            ui,
+                            &files_title,
+                            &files_subtitle,
+                            &ranked_files,
+                            self.summary.bytes_observed,
+                            &mut self.selection,
+                            &mut self.execution_report,
+                        );
+                    },
+                );
+            });
+        } else {
+            render_ranked_size_list(
+                ui,
+                &folders_title,
+                &folders_subtitle,
+                &ranked_dirs,
+                self.summary.bytes_observed,
+                &mut self.selection,
+                &mut self.execution_report,
             );
-            ui.add_space(gap);
-            ui.allocate_ui_with_layout(
-                egui::vec2(right_width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    render_ranked_size_list(
-                        ui,
-                        &files_title,
-                        &files_subtitle,
-                        &ranked_files,
-                        self.summary.bytes_observed,
-                        &mut self.selection,
-                        &mut self.execution_report,
-                    )
-                },
+            ui.add_space(18.0);
+            render_ranked_size_list(
+                ui,
+                &files_title,
+                &files_subtitle,
+                &ranked_files,
+                self.summary.bytes_observed,
+                &mut self.selection,
+                &mut self.execution_report,
             );
-        });
+        }
     }
 
-    fn render_cleanup_suggestions_card(&mut self, ui: &mut egui::Ui) {
-        let Some(analysis) = self.cleanup.analysis.as_ref() else {
-            return;
-        };
-        let reclaimable_bytes = analysis.reclaimable_bytes;
-        let quick_clean_bytes = analysis.quick_clean_bytes;
-        let has_items = !analysis.items.is_empty();
-        let default_category = analysis
-            .categories
-            .first()
-            .map(|category| category.category);
+    fn render_overview_hero(&mut self, ui: &mut egui::Ui) {
+        let analysis = self.cleanup.analysis.as_ref();
+        let reclaimable = analysis.map(|a| a.reclaimable_bytes).unwrap_or(0);
+        let quick_clean = analysis.map(|a| a.quick_clean_bytes).unwrap_or(0);
+        let has_items = analysis.is_some_and(|analysis| !analysis.items.is_empty());
+        let default_category =
+            analysis.and_then(|analysis| analysis.categories.first().map(|entry| entry.category));
         let top_categories: Vec<_> = analysis
-            .categories
+            .map(|analysis| {
+                analysis
+                    .categories
+                    .iter()
+                    .filter(|category| category.reclaimable_bytes > 0)
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let hero_label = if reclaimable > 0 {
+            self.t("清理建议", "Cleanup Suggestions")
+        } else if self.summary.bytes_observed > 0 {
+            self.t("磁盘概览", "Drive Overview")
+        } else {
+            self.t("准备开始一次目录巡检", "Ready for a New Pass")
+        };
+        let hero_value = if reclaimable > 0 {
+            format_bytes(reclaimable)
+        } else if self.summary.bytes_observed > 0 {
+            format_bytes(self.summary.bytes_observed)
+        } else {
+            self.t("先选一个盘符开始扫描。", "Pick a drive to begin scanning.")
+                .to_string()
+        };
+        let hero_body = if reclaimable > 0 {
+            self.t(
+                "只统计通过规则筛选后的建议项，先告诉你哪里最值得处理。",
+                "Only counts rule-based suggestions so the next action is obvious.",
+            )
+        } else if self.summary.bytes_observed > 0 {
+            self.t(
+                "如果当前还没有明确建议，就先从最大文件夹和最大文件开始处理。",
+                "If there is no clear cleanup suggestion yet, start from the largest folders and files.",
+            )
+        } else {
+            self.t(
+                "从盘符按钮直接开始，或先调整根目录和扫描模式。",
+                "Start from a drive button, or adjust the root path and scan mode first.",
+            )
+        };
+        let current_scope = if self.root_input.trim().is_empty() {
+            self.t("未设置", "Not set").to_string()
+        } else {
+            truncate_middle(&self.root_input, 44)
+        };
+        let scope_mode_title = self.t("当前范围与模式", "Current Scope & Mode").to_string();
+        let root_label = self.t("根目录", "Root path").to_string();
+        let root_subtitle = self.t("当前扫描目标", "Current scope").to_string();
+        let mode_label = self.t("当前模式", "Current Mode").to_string();
+        let mode_title = self.scan_mode_title(self.scan_mode).to_string();
+        let mode_description = self.scan_mode_description(self.scan_mode).to_string();
+        let no_suggestions_title = self.t("还没有建议项", "No Suggestions Yet").to_string();
+        let no_suggestions_body = self
+            .t(
+                "继续完成一次扫描，或直接看下方的最大文件夹和最大文件。",
+                "Finish a scan or move straight to the largest folders and files below.",
+            )
+            .to_string();
+        let top_sources_label = self.t("主要来源", "Top Sources").to_string();
+        let top_source_rows: Vec<_> = top_categories
             .iter()
-            .filter(|category| category.reclaimable_bytes > 0)
-            .take(4)
-            .cloned()
+            .map(|category| {
+                (
+                    self.cleanup_category_color(category.category),
+                    self.cleanup_category_label(category.category).to_string(),
+                    format_bytes(category.reclaimable_bytes),
+                )
+            })
             .collect();
-        if reclaimable_bytes == 0 && top_categories.is_empty() {
-            return;
-        }
+        let wide_layout = ui.available_width() >= 760.0;
 
-        surface_frame(ui).show(ui, |ui| {
+        dashboard_panel(ui, |ui| {
             ui.label(
-                egui::RichText::new(self.t("清理建议", "Cleanup Suggestions"))
-                    .text_style(egui::TextStyle::Name("title".into())),
-            );
-            ui.label(
-                egui::RichText::new(self.t(
-                    "DirOtter 会先按规则筛出安全项，再把需要你确认的内容单独标出来。",
-                    "DirOtter screens safe items first, then separates anything that still needs your review.",
-                ))
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
+                egui::RichText::new(hero_label)
+                    .text_style(egui::TextStyle::Small)
+                    .color(river_teal()),
             );
             ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.vertical(|ui| {
+            if wide_layout {
+                let gap = 20.0;
+                let total = ui.available_width();
+                let left_width = (((total - gap) * 0.58).floor()).clamp(320.0, total - gap - 280.0);
+                let right_width = total - gap - left_width;
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_width, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.label(
+                                egui::RichText::new(hero_value)
+                                    .size(if reclaimable > 0 || self.summary.bytes_observed > 0 {
+                                        36.0
+                                    } else {
+                                        26.0
+                                    })
+                                    .strong(),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(hero_body)
+                                    .text_style(egui::TextStyle::Small)
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                            ui.add_space(14.0);
+                            ui.horizontal_wrapped(|ui| {
+                                if quick_clean > 0 {
+                                    if ui
+                                        .add_enabled_ui(!self.delete_active(), |ui| {
+                                            sized_primary_button(
+                                                ui,
+                                                220.0,
+                                                self.t(
+                                                    "一键清理缓存（推荐）",
+                                                    "Quick Cache Cleanup",
+                                                ),
+                                            )
+                                        })
+                                        .inner
+                                        .clicked()
+                                    {
+                                        self.queue_cleanup_cache_delete();
+                                    }
+                                } else if ui
+                                    .add_enabled_ui(!self.scan_active(), |ui| {
+                                        sized_primary_button(
+                                            ui,
+                                            180.0,
+                                            self.t("开始扫描", "Start Scan"),
+                                        )
+                                    })
+                                    .inner
+                                    .clicked()
+                                {
+                                    self.start_scan();
+                                }
+
+                                if ui
+                                    .add_enabled_ui(has_items, |ui| {
+                                        sized_button(
+                                            ui,
+                                            180.0,
+                                            self.t("查看建议详情", "Review Suggestions"),
+                                        )
+                                    })
+                                    .inner
+                                    .clicked()
+                                {
+                                    self.cleanup.detail_category = default_category;
+                                }
+                            });
+                        },
+                    );
+                    ui.add_space(gap);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_width, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.label(egui::RichText::new(&scope_mode_title).strong());
+                            ui.add_space(6.0);
+                            stat_row(ui, &root_label, &current_scope, &root_subtitle);
+                            ui.add_space(8.0);
+                            stat_row(ui, &mode_label, &mode_title, &mode_description);
+                            ui.add_space(10.0);
+                            if top_source_rows.is_empty() {
+                                empty_state_panel(ui, &no_suggestions_title, &no_suggestions_body);
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(&top_sources_label)
+                                        .text_style(egui::TextStyle::Small)
+                                        .color(ui.visuals().weak_text_color()),
+                                );
+                                ui.add_space(6.0);
+                                for (color, label, value) in &top_source_rows {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(*color, "●");
+                                        ui.label(egui::RichText::new(label).strong());
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(egui::RichText::new(value).strong());
+                                            },
+                                        );
+                                    });
+                                    ui.add_space(6.0);
+                                }
+                            }
+                        },
+                    );
+                });
+            } else {
+                ui.label(
+                    egui::RichText::new(hero_value)
+                        .size(if reclaimable > 0 || self.summary.bytes_observed > 0 {
+                            36.0
+                        } else {
+                            26.0
+                        })
+                        .strong(),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(hero_body)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(14.0);
+                ui.horizontal_wrapped(|ui| {
+                    if quick_clean > 0 {
+                        if ui
+                            .add_enabled_ui(!self.delete_active(), |ui| {
+                                sized_primary_button(
+                                    ui,
+                                    220.0,
+                                    self.t("一键清理缓存（推荐）", "Quick Cache Cleanup"),
+                                )
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            self.queue_cleanup_cache_delete();
+                        }
+                    } else if ui
+                        .add_enabled_ui(!self.scan_active(), |ui| {
+                            sized_primary_button(ui, 180.0, self.t("开始扫描", "Start Scan"))
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        self.start_scan();
+                    }
+                    if ui
+                        .add_enabled_ui(has_items, |ui| {
+                            sized_button(ui, 180.0, self.t("查看建议详情", "Review Suggestions"))
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        self.cleanup.detail_category = default_category;
+                    }
+                });
+                ui.add_space(14.0);
+                stat_row(ui, &root_label, &current_scope, &root_subtitle);
+                ui.add_space(8.0);
+                stat_row(ui, &mode_label, &mode_title, &mode_description);
+                ui.add_space(10.0);
+                if top_source_rows.is_empty() {
+                    empty_state_panel(ui, &no_suggestions_title, &no_suggestions_body);
+                } else {
                     ui.label(
-                        egui::RichText::new(self.t("你可以释放", "You Can Reclaim"))
+                        egui::RichText::new(&top_sources_label)
                             .text_style(egui::TextStyle::Small)
                             .color(ui.visuals().weak_text_color()),
                     );
+                    ui.add_space(6.0);
+                    for (color, label, value) in &top_source_rows {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(*color, "●");
+                            ui.label(egui::RichText::new(label).strong());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(egui::RichText::new(value).strong());
+                                },
+                            );
+                        });
+                        ui.add_space(6.0);
+                    }
+                }
+            }
+        });
+    }
+
+    fn render_live_overview_hero(&mut self, ui: &mut egui::Ui) {
+        let current_path = self
+            .scan_current_path
+            .as_deref()
+            .map(|path| truncate_middle(path, 84))
+            .unwrap_or_else(|| {
+                self.t("正在准备扫描路径…", "Preparing scan path...")
+                    .to_string()
+            });
+        let coverage_label = self
+            .scanned_coverage_ratio()
+            .map(|ratio| format!("{:.0}%", ratio * 100.0))
+            .unwrap_or_else(|| self.t("估算中", "Estimating").to_string());
+        dashboard_panel(ui, |ui| {
+            ui.label(
+                egui::RichText::new(self.t("实时总览", "Live Overview"))
+                    .text_style(egui::TextStyle::Small)
+                    .color(river_teal()),
+            );
+            ui.add_space(8.0);
+            dashboard_split(
+                ui,
+                320.0,
+                20.0,
+                |ui| {
                     ui.label(
-                        egui::RichText::new(format_bytes(reclaimable_bytes))
-                            .size(28.0)
+                        egui::RichText::new(format_bytes(self.summary.bytes_observed))
+                            .size(36.0)
                             .strong(),
                     );
+                    ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new(self.t(
-                            "只统计通过规则筛选后的建议项",
-                            "Only counts items that pass the rule-based suggestion filter",
+                            "扫描中首页只保留当前态势，不提前给最终结论。",
+                            "While scanning, the overview stays focused on current state instead of premature conclusions.",
                         ))
                         .text_style(egui::TextStyle::Small)
                         .color(ui.visuals().weak_text_color()),
                     );
-                });
-                ui.add_space(18.0);
-                compact_metric_block(
-                    ui,
-                    self.t("一键缓存清理", "Quick Cache Cleanup"),
-                    &format_bytes(quick_clean_bytes),
-                    self.t("只清理安全缓存项", "Only safe cache items"),
-                );
-            });
-            ui.add_space(8.0);
-
-            if top_categories.is_empty() {
-                tone_banner(
-                    ui,
-                    self.t("还没有建议项", "No Suggestions Yet"),
-                    self.t(
-                        "当前扫描结果里还没有足够明确的清理建议。你仍然可以继续从最大文件和目录入手。",
-                        "The current scan does not yet contain strong cleanup suggestions. You can still start from the largest files and folders.",
-                    ),
-                );
-            } else {
-                for category in top_categories {
-                    let color = self.cleanup_category_color(category.category);
-                    ui.horizontal(|ui| {
-                        ui.colored_label(color, "■");
-                        ui.label(
-                            egui::RichText::new(self.cleanup_category_label(category.category))
-                                .strong(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let label = if category.blocked_bytes > 0
-                                && category.reclaimable_bytes == 0
-                            {
-                                format!(
-                                    "{} {}",
-                                    format_bytes(category.blocked_bytes),
-                                    self.t("已拦截", "blocked")
-                                )
-                            } else {
-                                format_bytes(category.reclaimable_bytes)
-                            };
-                            ui.label(egui::RichText::new(label).strong());
-                        });
-                    });
-                }
-            }
-
-            ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled_ui(has_items, |ui| {
-                        sized_button(ui, 180.0, self.t("查看详情", "View Details"))
-                    })
-                    .inner
-                    .clicked()
-                {
-                    self.cleanup.detail_category = self
-                        .cleanup
-                        .detail_category
-                        .or(default_category);
-                }
-                if ui
-                    .add_enabled_ui(quick_clean_bytes > 0 && !self.delete_active(), |ui| {
-                        sized_primary_button(
-                            ui,
-                            220.0,
-                            self.t("一键清理缓存（推荐）", "Quick Cache Cleanup"),
-                        )
-                    })
-                    .inner
-                    .clicked()
-                {
-                    self.queue_cleanup_cache_delete();
-                }
-            });
+                    ui.add_space(12.0);
+                    stat_row(
+                        ui,
+                        self.t("当前处理路径", "Current Path"),
+                        &current_path,
+                        self.scan_health_summary().as_str(),
+                    );
+                },
+                |ui| {
+                    ui.label(egui::RichText::new(self.t("扫描态势", "Scan Status")).strong());
+                    ui.add_space(6.0);
+                    stat_row(
+                        ui,
+                        self.t("扫描覆盖率", "Coverage"),
+                        &coverage_label,
+                        self.t("按卷容量估算", "Estimated against volume size"),
+                    );
+                    ui.add_space(8.0);
+                    stat_row(
+                        ui,
+                        self.t("错误", "Errors"),
+                        &format_count(self.summary.error_count),
+                        self.t("当前已累计的问题项", "Issues accumulated so far"),
+                    );
+                    ui.add_space(8.0);
+                    stat_row(
+                        ui,
+                        self.t("已观察体积", "Observed Bytes"),
+                        &format_bytes(self.summary.bytes_observed),
+                        self.t(
+                            "这是实时增量状态，不是最终结论。",
+                            "This is live incremental state, not the final conclusion.",
+                        ),
+                    );
+                },
+            );
         });
     }
 
+    fn render_overview_metrics_strip(&self, ui: &mut egui::Ui) {
+        let cards = if let Some((used, free, total)) = self.volume_numbers() {
+            [
+                (
+                    self.t("磁盘已用", "Used"),
+                    format_bytes(used),
+                    format!(
+                        "{} {}",
+                        format_bytes(total),
+                        self.t("总容量", "total capacity")
+                    ),
+                    river_teal(),
+                ),
+                (
+                    self.t("磁盘可用", "Free"),
+                    format_bytes(free),
+                    self.t("当前卷剩余可用空间", "Remaining free space on this volume")
+                        .to_string(),
+                    info_blue(),
+                ),
+                (
+                    self.t("已扫描体积", "Observed"),
+                    format_bytes(self.summary.bytes_observed),
+                    self.t(
+                        "本次扫描已经确认的文件体积",
+                        "File bytes already confirmed in this scan",
+                    )
+                    .to_string(),
+                    success_green(),
+                ),
+                (
+                    self.t("错误", "Errors"),
+                    format_count(self.summary.error_count),
+                    self.t("无法读取或被跳过的路径", "Unreadable or skipped paths")
+                        .to_string(),
+                    if self.summary.error_count > 0 {
+                        danger_red()
+                    } else {
+                        egui::Color32::from_rgb(0x5F, 0x8D, 0x96)
+                    },
+                ),
+            ]
+        } else {
+            [
+                (
+                    self.t("文件", "Files"),
+                    format_count(self.summary.scanned_files),
+                    self.t("已发现文件数", "Files discovered").to_string(),
+                    river_teal(),
+                ),
+                (
+                    self.t("目录", "Folders"),
+                    format_count(self.summary.scanned_dirs),
+                    self.t("已遍历目录数", "Folders traversed").to_string(),
+                    info_blue(),
+                ),
+                (
+                    self.t("已扫描体积", "Observed"),
+                    format_bytes(self.summary.bytes_observed),
+                    self.t(
+                        "本次扫描已经确认的文件体积",
+                        "File bytes already confirmed in this scan",
+                    )
+                    .to_string(),
+                    success_green(),
+                ),
+                (
+                    self.t("错误", "Errors"),
+                    format_count(self.summary.error_count),
+                    self.t("无法读取或被跳过的路径", "Unreadable or skipped paths")
+                        .to_string(),
+                    if self.summary.error_count > 0 {
+                        danger_red()
+                    } else {
+                        egui::Color32::from_rgb(0x5F, 0x8D, 0x96)
+                    },
+                ),
+            ]
+        };
+        if ui.available_width() >= 980.0 {
+            dashboard_metric_row(ui, &cards);
+        } else if ui.available_width() >= 620.0 {
+            dashboard_metric_row(ui, &cards[..2]);
+            ui.add_space(12.0);
+            dashboard_metric_row(ui, &cards[2..]);
+        } else {
+            for card in cards {
+                dashboard_metric_tile(ui, card.0, &card.1, &card.2, card.3);
+                ui.add_space(12.0);
+            }
+        }
+    }
+
     fn render_scan_target_card(&mut self, ui: &mut egui::Ui) {
-        surface_frame(ui).show(ui, |ui| {
-            let root_hint = self
-                .t("输入目录，例如 D:\\", "Enter a folder, e.g. D:\\")
-                .to_string();
+        dashboard_panel(ui, |ui| {
             ui.label(
-                egui::RichText::new(self.t("扫描目标", "Scan Target"))
+                egui::RichText::new(self.t("开始扫描", "Start Scan"))
                     .text_style(egui::TextStyle::Name("title".into())),
             );
+
+            ui.add_space(12.0);
+            ui.label(egui::RichText::new(self.t("快速盘符", "Quick Drives")).strong());
             ui.label(
                 egui::RichText::new(self.t(
-                    "先确定扫描范围，再选择更容易理解的扫描模式。",
-                    "Set the scan scope first, then choose a scan mode that matches the job.",
+                    "优先点击盘符直接开始；只有要扫子目录时再手动输入。",
+                    "Start with a drive button first. Only type a manual path when you need a subfolder.",
                 ))
                 .text_style(egui::TextStyle::Small)
                 .color(ui.visuals().weak_text_color()),
             );
             ui.add_space(8.0);
-            ui.label(self.t("根目录", "Root path"));
-            ui.add_sized(
-                [ui.available_width(), CONTROL_HEIGHT],
-                egui::TextEdit::singleline(&mut self.root_input)
-                    .desired_width(f32::INFINITY)
-                    .hint_text(root_hint),
-            );
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(self.t("快速盘符", "Quick Drives"))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-            );
             if self.available_volumes.is_empty() {
-                ui.label(self.t(
-                    "未检测到可用卷，仍可手动输入任意目录。",
-                    "No mounted volumes were detected. You can still enter any path manually.",
-                ));
+                empty_state_panel(
+                    ui,
+                    self.t("没有检测到卷", "No Volumes Detected"),
+                    self.t(
+                        "仍可手动输入任意目录作为扫描目标。",
+                        "You can still enter any folder manually as the scan target.",
+                    ),
+                );
             } else {
                 let volumes = self.available_volumes.clone();
                 ui.horizontal_wrapped(|ui| {
@@ -2366,7 +3076,7 @@ impl DirOtterNativeApp {
                         );
                         let response = ui
                             .add_enabled_ui(!self.scan_active(), |ui| {
-                                sized_selectable(ui, 144.0, selected, label.clone())
+                                sized_selectable(ui, 156.0, selected, label.clone())
                             })
                             .inner
                             .on_hover_text(format!(
@@ -2382,25 +3092,29 @@ impl DirOtterNativeApp {
                         }
                     }
                 });
-                ui.label(
-                    egui::RichText::new(self.t(
-                        "点击盘符按钮可直接开始扫描；文本框仍可输入任意目录。",
-                        "Click a drive button to scan it immediately, or type any custom path in the field above.",
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-                );
             }
-            ui.add_space(8.0);
+
+            ui.add_space(14.0);
             ui.label(
-                egui::RichText::new(self.t("扫描模式", "Scan Mode"))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
+                egui::RichText::new(self.t("手动目录（可选）", "Manual path (optional)")).strong(),
             );
+            ui.add_space(6.0);
+            let root_hint = self
+                .t("例如 D:\\Projects", "For example D:\\Projects")
+                .to_string();
+            ui.add_sized(
+                [ui.available_width().min(420.0), CONTROL_HEIGHT],
+                egui::TextEdit::singleline(&mut self.root_input)
+                    .desired_width(420.0)
+                    .hint_text(root_hint),
+            );
+
+            ui.add_space(14.0);
+            ui.label(egui::RichText::new(self.t("扫描模式", "Scan Mode")).strong());
             ui.label(
                 egui::RichText::new(self.t(
-                    "DirOtter 会自动处理 batch / snapshot 等内部节奏，不再要求手动调参数。",
-                    "DirOtter now handles batch and snapshot pacing automatically. You no longer need to tune technical knobs.",
+                    "三种模式都会完整扫描当前范围，差异只在扫描节奏和界面刷新方式。",
+                    "All three modes scan the same scope. The only difference is pacing and UI update cadence.",
                 ))
                 .text_style(egui::TextStyle::Small)
                 .color(ui.visuals().weak_text_color()),
@@ -2411,7 +3125,7 @@ impl DirOtterNativeApp {
                     for mode in [ScanMode::Quick, ScanMode::Deep, ScanMode::LargeDisk] {
                         let response = sized_selectable(
                             ui,
-                            188.0,
+                            190.0,
                             self.scan_mode == mode,
                             self.scan_mode_title(mode),
                         )
@@ -2422,7 +3136,7 @@ impl DirOtterNativeApp {
                     }
                 });
             });
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             tone_banner(
                 ui,
                 self.scan_mode_title(self.scan_mode),
@@ -2431,10 +3145,33 @@ impl DirOtterNativeApp {
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(self.scan_mode_note())
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
             );
-            ui.add_space(12.0);
+
+            if let Some((used, free, _)) = self.volume_numbers() {
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    compact_stat_chip(ui, self.t("磁盘已用", "Used"), &format_bytes(used));
+                    compact_stat_chip(ui, self.t("磁盘可用", "Free"), &format_bytes(free));
+                    if let Some(ratio) = self.scanned_coverage_ratio() {
+                        compact_stat_chip(
+                            ui,
+                            self.t("扫描覆盖率", "Coverage"),
+                            &format!("{:.0}%", ratio * 100.0),
+                        );
+                    }
+                    compact_stat_chip(
+                        ui,
+                        self.t("文件", "Files"),
+                        &format_count(self.summary.scanned_files),
+                    );
+                });
+            }
+
+            ui.add_space(14.0);
             let start_label = if self.scan_active() {
                 self.t("扫描进行中", "Scanning")
             } else {
@@ -2456,92 +3193,6 @@ impl DirOtterNativeApp {
         });
     }
 
-    fn render_volume_summary_card(&mut self, ui: &mut egui::Ui) {
-        surface_frame(ui).show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(self.t("卷空间摘要", "Volume Summary"))
-                    .text_style(egui::TextStyle::Name("title".into())),
-            );
-            ui.label(
-                egui::RichText::new(self.t(
-                    "先用卷级别摘要确认空间方向，再决定接下来要展开哪些目录。",
-                    "Use the volume-level summary to orient yourself before drilling into directories.",
-                ))
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
-            );
-            ui.add_space(8.0);
-            status_badge(ui, self.status_text(), self.scan_active());
-            ui.add_space(12.0);
-
-            if let Some((used, free, total)) = self.volume_numbers() {
-                ui.columns(2, |columns| {
-                    compact_metric_block(
-                        &mut columns[0],
-                        self.t("磁盘已用", "Used"),
-                        &format_bytes(used),
-                        &format!("{} {}", format_bytes(total), self.t("总容量", "total")),
-                    );
-                    compact_metric_block(
-                        &mut columns[1],
-                        self.t("磁盘可用", "Free"),
-                        &format_bytes(free),
-                        self.t("系统卷信息", "System volume info"),
-                    );
-                });
-                ui.add_space(8.0);
-                ui.columns(2, |columns| {
-                    compact_metric_block(
-                        &mut columns[0],
-                        self.t("已扫描", "Scanned"),
-                        &format_bytes(self.summary.bytes_observed),
-                        self.t(
-                            "本次已遍历到的文件总大小",
-                            "Total file bytes scanned so far",
-                        ),
-                    );
-                    compact_metric_block(
-                        &mut columns[1],
-                        self.t("错误", "Errors"),
-                        &format_count(self.summary.error_count),
-                        self.t("无法读取或被跳过的路径", "Unreadable or skipped paths"),
-                    );
-                });
-
-                ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new(self.t("扫描覆盖率", "Scan Coverage"))
-                        .text_style(egui::TextStyle::Small),
-                );
-                ui.add(
-                    egui::ProgressBar::new(self.scanned_coverage_ratio().unwrap_or_default())
-                        .text(format!(
-                            "{} / {}",
-                            format_bytes(self.summary.bytes_observed),
-                            format_bytes(used)
-                        ))
-                        .desired_width(ui.available_width().max(120.0)),
-                );
-            }
-
-            ui.add_space(12.0);
-            ui.columns(2, |columns| {
-                compact_metric_block(
-                    &mut columns[0],
-                    self.t("文件数", "Files"),
-                    &format_count(self.summary.scanned_files),
-                    self.t("当前已统计文件", "Files counted"),
-                );
-                compact_metric_block(
-                    &mut columns[1],
-                    self.t("目录数", "Folders"),
-                    &format_count(self.summary.scanned_dirs),
-                    self.t("当前已遍历目录", "Folders traversed"),
-                );
-            });
-        });
-    }
-
     fn ui_current_scan(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
@@ -2553,7 +3204,17 @@ impl DirOtterNativeApp {
             ),
         );
         ui.add_space(8.0);
-        if self.scan_active() {
+        if self.scan_finalizing() {
+            tone_banner(
+                ui,
+                self.t("正在整理最终结果", "Finalizing Final Results"),
+                self.t(
+                    "目录遍历已经结束，当前正在后台保存快照、写入历史并生成清理建议。界面应保持可操作，完成后会自动切到正常完成态。",
+                    "Directory traversal has finished. DirOtter is now saving the snapshot, writing history, and preparing cleanup suggestions in the background. The UI should stay responsive and will switch to the normal completed state automatically.",
+                ),
+            );
+            ui.add_space(10.0);
+        } else if self.scan_active() {
             let current_path = self
                 .scan_current_path
                 .as_deref()
@@ -2629,7 +3290,7 @@ impl DirOtterNativeApp {
         });
 
         ui.add_space(12.0);
-        surface_frame(ui).show(ui, |ui| {
+        surface_panel(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(self.t("最近扫描到的文件", "Recently Scanned Files"))
@@ -2806,7 +3467,7 @@ impl DirOtterNativeApp {
         }
 
         let panel_height = ui.available_height().max(320.0);
-        surface_frame(ui).show(ui, |ui| {
+        surface_panel(ui, |ui| {
             ui.set_min_height(panel_height);
             ui.label(
                 egui::RichText::new(self.t("目录结果条形图", "Directory Result Bars"))
@@ -2858,7 +3519,7 @@ impl DirOtterNativeApp {
                                     NodeKind::File => self.t("文件项", "File item").to_string(),
                                 };
 
-                                surface_frame(ui).show(ui, |ui| {
+                                surface_panel(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         if ui
                                             .add_sized(
@@ -2933,7 +3594,7 @@ impl DirOtterNativeApp {
             .cloned();
 
         if let Some(h) = selected {
-            surface_frame(ui).show(ui, |ui| {
+            surface_panel(ui, |ui| {
                 ui.label(
                     egui::RichText::new(self.t("快照详情", "Snapshot Detail"))
                         .text_style(egui::TextStyle::Name("title".into())),
@@ -3083,7 +3744,7 @@ impl DirOtterNativeApp {
 
         ui.add_space(10.0);
         let list_height = ui.available_height().max(240.0);
-        surface_frame(ui).show(ui, |ui| {
+        surface_panel(ui, |ui| {
             ui.set_min_height(list_height);
             ui.set_min_width(ui.available_width());
             egui::ScrollArea::vertical()
@@ -3099,7 +3760,7 @@ impl DirOtterNativeApp {
                                 if is_selected {
                                     frame = frame.stroke(egui::Stroke::new(1.5, river_teal()));
                                 }
-                                frame.show(ui, |ui| {
+                                show_frame_with_relaxed_clip(ui, frame, |ui| {
                                     if ui
                                         .add_sized(
                                             [ui.available_width(), 24.0],
@@ -3151,16 +3812,69 @@ impl DirOtterNativeApp {
             ),
         );
         ui.add_space(8.0);
-        if ui
-            .button(self.t("刷新诊断", "Refresh diagnostics"))
-            .clicked()
-        {
+        let mut refresh_diag = false;
+        let mut export_bundle = false;
+        let mut save_snapshot = false;
+        let mut record_history = false;
+        let mut export_error_csv = false;
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button(self.t("刷新诊断", "Refresh diagnostics"))
+                .clicked()
+            {
+                refresh_diag = true;
+            }
+            if ui
+                .button(self.t("导出诊断包", "Export diagnostics bundle"))
+                .clicked()
+            {
+                export_bundle = true;
+            }
+            if ui
+                .add_enabled_ui(self.store.is_some(), |ui| {
+                    sized_button(
+                        ui,
+                        170.0,
+                        self.t("手动保存当前快照", "Save Current Snapshot"),
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                save_snapshot = true;
+            }
+            if ui
+                .add_enabled_ui(self.summary.bytes_observed > 0, |ui| {
+                    sized_button(ui, 188.0, self.t("手动记录扫描摘要", "Record Scan Summary"))
+                })
+                .inner
+                .clicked()
+            {
+                record_history = true;
+            }
+            if ui
+                .button(self.t("手动导出错误 CSV", "Export Errors CSV"))
+                .clicked()
+            {
+                export_error_csv = true;
+            }
+        });
+        if let Some((message, success)) = self.maintenance_feedback.as_ref() {
+            ui.add_space(8.0);
+            tone_banner(
+                ui,
+                if *success {
+                    self.t("已完成", "Done")
+                } else {
+                    self.t("操作失败", "Action Failed")
+                },
+                message,
+            );
+        }
+        if refresh_diag {
             self.refresh_diagnostics();
         }
-        if ui
-            .button(self.t("导出诊断包", "Export diagnostics bundle"))
-            .clicked()
-        {
+        if export_bundle {
             let mut manifest = default_manifest();
             manifest.diagnostics_payload_file = "dirotter_diagnostics.json".to_string();
             manifest.summary_report_file = "dirotter_summary.json".to_string();
@@ -3177,13 +3891,27 @@ impl DirOtterNativeApp {
                 "dirotter",
                 &manifest,
             );
+            self.set_maintenance_feedback(
+                self.t("已导出诊断包。", "Exported the diagnostics bundle.")
+                    .to_string(),
+                true,
+            );
+        }
+        if save_snapshot {
+            self.save_current_snapshot_manually();
+        }
+        if record_history {
+            self.record_current_history_manually();
+        }
+        if export_error_csv {
+            self.export_errors_csv_manually();
         }
         ui.separator();
         let panel_width = ui.available_width();
         let viewport_height = ui.ctx().input(|i| i.screen_rect().height());
         let editor_height =
             (viewport_height - TOOLBAR_HEIGHT - STATUSBAR_HEIGHT - 220.0).max(420.0);
-        surface_frame(ui).show(ui, |ui| {
+        surface_panel(ui, |ui| {
             ui.set_min_width(panel_width);
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), editor_height),
@@ -3225,92 +3953,60 @@ impl DirOtterNativeApp {
                 "Language, theme, and font fallback all apply immediately. The goal here is not flashy UI, but a steadier workspace for long file-tree sessions.",
             ),
         );
-        ui.add_space(10.0);
-
-        ui.columns(2, |columns| {
-                    surface_frame(&columns[0]).show(&mut columns[0], |ui| {
-                        ui.label(
-                            egui::RichText::new(self.t("界面语言", "Interface Language"))
-                                .text_style(egui::TextStyle::Name("title".into())),
-                        );
-                        ui.label(
-                            egui::RichText::new(self.t(
-                                "手动选择会覆盖系统语言检测。",
-                                "Manual selection overrides automatic locale detection.",
-                            ))
-                            .text_style(egui::TextStyle::Small)
-                            .color(ui.visuals().weak_text_color()),
-                        );
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_sized(
-                                    [96.0, CONTROL_HEIGHT],
-                                    egui::SelectableLabel::new(
-                                        self.language == Lang::Zh,
-                                        lang_native_label(Lang::Zh),
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                self.set_language(Lang::Zh);
-                            }
-                            if ui
-                                .add_sized(
-                                    [96.0, CONTROL_HEIGHT],
-                                    egui::SelectableLabel::new(
-                                        self.language == Lang::En,
-                                        lang_native_label(Lang::En),
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                self.set_language(Lang::En);
-                            }
-                            if ui
-                                .add_sized(
-                                    [96.0, CONTROL_HEIGHT],
-                                    egui::SelectableLabel::new(
-                                        self.language == Lang::Fr,
-                                        lang_native_label(Lang::Fr),
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                self.set_language(Lang::Fr);
-                            }
-                            if ui
-                                .add_sized(
-                                    [96.0, CONTROL_HEIGHT],
-                                    egui::SelectableLabel::new(
-                                        self.language == Lang::Es,
-                                        lang_native_label(Lang::Es),
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                self.set_language(Lang::Es);
+        ui.add_space(14.0);
+        settings_section(
+            ui,
+            self.t("常用设置", "Common Settings"),
+            self.t(
+                "主流设置页会把高频项放在最上面，并保持分组稳定、可预期。",
+                "Mainstream settings pages place high-frequency controls first and keep groups stable and predictable.",
+            ),
+            |ui| {
+                settings_row(
+                    ui,
+                    self.t("界面语言", "Interface Language"),
+                    self.t(
+                        "手动选择会覆盖系统语言检测。",
+                        "Manual selection overrides automatic locale detection.",
+                    ),
+                    |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            for lang in [Lang::Zh, Lang::En, Lang::Fr, Lang::Es] {
+                                if ui
+                                    .add_sized(
+                                        [110.0, CONTROL_HEIGHT],
+                                        egui::SelectableLabel::new(
+                                            self.language == lang,
+                                            lang_native_label(lang),
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    self.set_language(lang);
+                                }
                             }
                         });
-                        ui.add_space(14.0);
-                        ui.label(
-                            egui::RichText::new(self.t("界面主题", "Interface Theme"))
-                                .text_style(egui::TextStyle::Name("title".into())),
-                        );
-                        ui.label(
-                            egui::RichText::new(self.t(
-                                "深色更适合长时间分析；浅色则保持低对比和柔和明度。",
-                                "Dark is better for long analysis sessions; light stays restrained and low contrast.",
-                            ))
-                            .text_style(egui::TextStyle::Small)
-                            .color(ui.visuals().weak_text_color()),
-                        );
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
+                    },
+                );
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(14.0);
+                settings_row(
+                    ui,
+                    self.t("界面主题", "Interface Theme"),
+                    self.t(
+                        "深色更适合长时间分析；浅色则保持低对比和柔和明度。",
+                        "Dark is better for long analysis sessions; light stays restrained and low contrast.",
+                    ),
+                    |ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add_sized(
-                                    [120.0, CONTROL_HEIGHT],
-                                    egui::SelectableLabel::new(!self.theme_dark, self.t("浅色", "Light")),
+                                    [132.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(
+                                        !self.theme_dark,
+                                        self.t("浅色", "Light"),
+                                    ),
                                 )
                                 .clicked()
                             {
@@ -3320,8 +4016,11 @@ impl DirOtterNativeApp {
                             }
                             if ui
                                 .add_sized(
-                                    [120.0, CONTROL_HEIGHT],
-                                    egui::SelectableLabel::new(self.theme_dark, self.t("深色", "Dark")),
+                                    [132.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(
+                                        self.theme_dark,
+                                        self.t("深色", "Dark"),
+                                    ),
                                 )
                                 .clicked()
                             {
@@ -3330,94 +4029,138 @@ impl DirOtterNativeApp {
                                 let _ = self.cache.set_setting("theme", "dark");
                             }
                         });
-                    });
+                    },
+                );
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(14.0);
+                settings_row(
+                    ui,
+                    self.t("高级工具", "Advanced Tools"),
+                    self.t(
+                        "把历史、错误和诊断页面收进二级入口。普通清理流程默认不需要它们。",
+                        "Keeps history, errors, and diagnostics behind a secondary entry. Most cleanup flows do not need them by default.",
+                    ),
+                    |ui| {
+                        let button_width = 168.0;
+                        if ui
+                            .add_sized(
+                                [button_width, CONTROL_HEIGHT],
+                                egui::SelectableLabel::new(
+                                    self.advanced_tools_enabled,
+                                    if self.advanced_tools_enabled {
+                                        self.t("已开启", "Enabled")
+                                    } else {
+                                        self.t("已隐藏", "Hidden")
+                                    },
+                                ),
+                            )
+                            .clicked()
+                        {
+                            self.set_advanced_tools_enabled(!self.advanced_tools_enabled);
+                        }
+                    },
+                );
+            },
+        );
 
-                    surface_frame(&columns[1]).show(&mut columns[1], |ui| {
-                        ui.label(
-                            egui::RichText::new(self.t("视觉方向", "Visual Direction"))
-                                .text_style(egui::TextStyle::Name("title".into())),
-                        );
-                        ui.label(
-                            egui::RichText::new(self.t(
-                                "DirOtter 不是“垃圾清理器”的高噪音视觉，而是偏冷静、偏克制的分析界面。",
-                                "DirOtter is not a loud cleaner UI. It is a quieter, analytical workspace with restrained emphasis.",
-                            ))
-                            .text_style(egui::TextStyle::Small)
-                            .color(ui.visuals().weak_text_color()),
-                        );
-                        ui.add_space(10.0);
-                        color_note_row(
-                            ui,
-                            river_teal(),
-                            self.t("River Teal", "River Teal"),
-                            self.t("主品牌色，用于主按钮、选中与重点数据。", "Primary brand accent for key actions, selection, and emphasis."),
-                        );
-                        ui.add_space(8.0);
-                        color_note_row(
-                            ui,
-                            if self.theme_dark {
-                                egui::Color32::from_rgb(0x18, 0x22, 0x27)
-                            } else {
-                                egui::Color32::from_rgb(0xEE, 0xF1, 0xF0)
-                            },
-                            self.t("基础面板", "Base Surfaces"),
-                            self.t("保持低对比、长时间查看不刺眼。", "Kept low-contrast so long sessions stay easy on the eyes."),
-                        );
-                        ui.add_space(8.0);
-                        color_note_row(
-                            ui,
-                            sand_accent(),
-                            self.t("暖色辅助", "Warm Accent"),
-                            self.t("只做轻微平衡，不大面积出现。", "Used sparingly to soften the palette, not dominate it."),
-                        );
-                        ui.add_space(12.0);
-                        tone_banner(
-                            ui,
-                            self.t("当前模式", "Current Mode"),
-                            if self.theme_dark {
-                                self.t(
-                                    "深色主题已启用：更适合长时间扫描和对比文件体积。",
-                                    "Dark theme is enabled: better for extended scanning and file-size comparison.",
-                                )
-                            } else {
-                                self.t(
-                                    "浅色主题已启用：保持低对比和柔和明度，避免纯白带来的刺眼感。",
-                                    "Light theme is enabled: low contrast and softer luminance to avoid harsh white surfaces.",
-                                )
-                            },
-                        );
-                    });
-        });
+        ui.add_space(14.0);
+        settings_section(
+            ui,
+            self.t("视觉方向", "Visual Direction"),
+            self.t(
+                "这一组只保留品牌语义和当前状态，不把说明文字拆成零散卡片。",
+                "This section keeps brand semantics and current state together instead of splitting them into disconnected cards.",
+            ),
+            |ui| {
+                color_note_row(
+                    ui,
+                    river_teal(),
+                    self.t("River Teal", "River Teal"),
+                    self.t(
+                        "主品牌色，用于主按钮、选中与重点数据。",
+                        "Primary brand accent for key actions, selection, and emphasis.",
+                    ),
+                );
+                ui.add_space(10.0);
+                color_note_row(
+                    ui,
+                    if self.theme_dark {
+                        egui::Color32::from_rgb(0x18, 0x22, 0x27)
+                    } else {
+                        egui::Color32::from_rgb(0xEE, 0xF1, 0xF0)
+                    },
+                    self.t("基础面板", "Base Surfaces"),
+                    self.t(
+                        "保持低对比、长时间查看不刺眼。",
+                        "Kept low-contrast so long sessions stay easy on the eyes.",
+                    ),
+                );
+                ui.add_space(10.0);
+                color_note_row(
+                    ui,
+                    sand_accent(),
+                    self.t("暖色辅助", "Warm Accent"),
+                    self.t(
+                        "只做轻微平衡，不大面积出现。",
+                        "Used sparingly to soften the palette, not dominate it.",
+                    ),
+                );
+                ui.add_space(14.0);
+                tone_banner(
+                    ui,
+                    self.t("当前模式", "Current Mode"),
+                    if self.theme_dark {
+                        self.t(
+                            "深色主题已启用：更适合长时间扫描和对比文件体积。",
+                            "Dark theme is enabled: better for extended scanning and file-size comparison.",
+                        )
+                    } else {
+                        self.t(
+                            "浅色主题已启用：保持低对比和柔和明度，避免纯白带来的刺眼感。",
+                            "Light theme is enabled: low contrast and softer luminance to avoid harsh white surfaces.",
+                        )
+                    },
+                );
+            },
+        );
 
-        ui.add_space(10.0);
-        ui.columns(2, |columns| {
-                    surface_frame(&columns[0]).show(&mut columns[0], |ui| {
-                        ui.label(
-                            egui::RichText::new(self.t("本地化说明", "Localization Notes"))
-                                .text_style(egui::TextStyle::Name("title".into())),
-                        );
-                        ui.label(self.t(
-                            "应用会优先加载系统中的中文字体回退（Windows 优先 Microsoft YaHei / DengXian），避免中文标题和设置项显示为方框。",
-                            "The app now prefers CJK-capable system fallback fonts (Windows prioritizes Microsoft YaHei / DengXian) so Chinese labels do not render as tofu boxes.",
-                        ));
-                        ui.add_space(6.0);
-                        ui.label(self.t(
-                            "首次启动仍可根据系统语言环境推断中英文，但这里的手动选择会覆盖自动检测结果。",
-                            "The first launch can still infer language from the system locale, but the manual choice here overrides auto-detection.",
-                        ));
-                    });
+        ui.add_space(14.0);
+        settings_section(
+            ui,
+            self.t("本地化说明", "Localization Notes"),
+            self.t(
+                "把与语言相关的规则放在一起，减少用户在不同卡片间来回找解释。",
+                "Keep language-related rules together so people do not have to hunt across separate cards.",
+            ),
+            |ui| {
+                ui.label(self.t(
+                    "应用会优先加载系统中的中文字体回退（Windows 优先 Microsoft YaHei / DengXian），避免中文标题和设置项显示为方框。",
+                    "The app now prefers CJK-capable system fallback fonts (Windows prioritizes Microsoft YaHei / DengXian) so Chinese labels do not render as tofu boxes.",
+                ));
+                ui.add_space(8.0);
+                ui.label(self.t(
+                    "首次启动仍可根据系统语言环境推断中英文，但这里的手动选择会覆盖自动检测结果。",
+                    "The first launch can still infer language from the system locale, but the manual choice here overrides auto-detection.",
+                ));
+            },
+        );
 
-                    surface_frame(&columns[1]).show(&mut columns[1], |ui| {
-                        ui.label(
-                            egui::RichText::new(self.t("品牌含义", "Why DirOtter"))
-                                .text_style(egui::TextStyle::Name("title".into())),
-                        );
-                        ui.label(self.t(
-                            "Dir 指 directory，Otter 借用水獭聪明、灵活、善于整理的联想。它更像一个冷静探索存储结构的分析工具，而不是只会“清理垃圾”的工具。",
-                            "Dir points to directories, while Otter brings a clever, tidy, exploratory character. The product should feel like a calm storage analyzer, not a noisy junk cleaner.",
-                        ));
-                    });
-        });
+        ui.add_space(14.0);
+        settings_section(
+            ui,
+            self.t("品牌含义", "Why DirOtter"),
+            self.t(
+                "把品牌语义单独留成一个说明章节，而不是塞进控制区旁边。",
+                "Keep brand meaning in its own explanatory section instead of squeezing it beside controls.",
+            ),
+            |ui| {
+                ui.label(self.t(
+                    "Dir 指 directory，Otter 借用水獭聪明、灵活、善于整理的联想。它更像一个冷静探索存储结构的分析工具，而不是只会“清理垃圾”的工具。",
+                    "Dir points to directories, while Otter brings a clever, tidy, exploratory character. The product should feel like a calm storage analyzer, not a noisy junk cleaner.",
+                ));
+            },
+        );
     }
 
     fn ui_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -3429,39 +4172,50 @@ impl DirOtterNativeApp {
                     .color(ui.visuals().text_color()),
             );
             ui.add_space(10.0);
+            let scanning = self.scan_session.is_some();
+            let finalizing = self.scan_finalizing();
             status_badge(
                 ui,
                 self.status_text(),
-                self.scan_active() || self.delete_active(),
+                scanning || finalizing || self.delete_active(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let active = self.scan_active();
+                let active = scanning;
                 let deleting = self.delete_active();
-                let stop_label = if active {
+                let stop_label = if self.scan_cancel_requested {
+                    self.t("正在停止", "Stopping")
+                } else if active {
                     self.t("停止扫描", "Stop Scan")
+                } else if finalizing {
+                    self.t("整理中", "Finalizing")
                 } else {
                     self.t("取消", "Cancel")
                 };
                 if ui
-                    .add_enabled_ui(active, |ui| sized_button(ui, 108.0, stop_label))
+                    .add_enabled_ui(active && !self.scan_cancel_requested, |ui| {
+                        sized_button(ui, 108.0, stop_label)
+                    })
                     .inner
                     .clicked()
                 {
                     if let Some(session) = &self.scan_session {
                         session.cancel.store(true, Ordering::SeqCst);
+                        self.scan_cancel_requested = true;
                         self.status = AppStatus::Cancelled;
                         self.scan_current_path = None;
                     }
                 }
                 let start_label = if active {
                     self.t("扫描中", "Scanning")
+                } else if finalizing {
+                    self.t("整理中", "Finalizing")
                 } else if deleting {
                     self.t("删除中", "Deleting")
                 } else {
                     self.t("开始扫描", "Start Scan")
                 };
                 if ui
-                    .add_enabled_ui(!active && !deleting, |ui| {
+                    .add_enabled_ui(!active && !finalizing && !deleting, |ui| {
                         sized_button(ui, 108.0, start_label)
                     })
                     .inner
@@ -3487,7 +4241,7 @@ impl DirOtterNativeApp {
         );
         ui.add_space(10.0);
 
-        surface_frame(ui).show(ui, |ui| {
+        surface_panel(ui, |ui| {
             if let Some(target) = selected_target.as_ref() {
                 stat_row(
                     ui,
@@ -3518,8 +4272,8 @@ impl DirOtterNativeApp {
                 );
             } else {
                 ui.label(self.t(
-                    "尚未选择任何文件或目录。可以从实时列表、历史、错误页或 treemap 中点选对象。",
-                    "No file or folder selected yet. Pick one from the live list, history, errors, or treemap.",
+                    "尚未选择任何文件或目录。可以从实时列表、结果视图或其他页面点选对象。",
+                    "No file or folder is selected yet. Pick one from the live list, result view, or another page.",
                 ));
             }
         });
@@ -3527,12 +4281,15 @@ impl DirOtterNativeApp {
         if let Some(session) = self.delete_session.as_ref() {
             let snapshot = session.snapshot();
             ui.add_space(10.0);
-            surface_frame(ui).show(ui, |ui| {
+            surface_panel(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(match snapshot.mode {
                             ExecutionMode::RecycleBin => {
                                 self.t("后台任务：移到回收站", "Background Task: Recycle Bin")
+                            }
+                            ExecutionMode::FastPurge => {
+                                self.t("后台任务：快速清理", "Background Task: Fast Cleanup")
                             }
                             ExecutionMode::Permanent => {
                                 self.t("后台任务：永久删除", "Background Task: Permanent Delete")
@@ -3568,8 +4325,9 @@ impl DirOtterNativeApp {
                     self.t("已耗时", "Elapsed"),
                     &format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
                     match snapshot.mode {
-                        ExecutionMode::RecycleBin => {
-                            self.t("回收站删除", "Recycle-bin delete")
+                        ExecutionMode::RecycleBin => self.t("回收站删除", "Recycle-bin delete"),
+                        ExecutionMode::FastPurge => {
+                            self.t("秒移走后后台清除", "Instant move, background purge")
                         }
                         ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
                     },
@@ -3578,7 +4336,7 @@ impl DirOtterNativeApp {
         }
 
         ui.add_space(10.0);
-        surface_frame(ui).show(ui, |ui| {
+        surface_panel(ui, |ui| {
             ui.label(
                 egui::RichText::new(self.t("快速操作", "Quick Actions"))
                     .text_style(egui::TextStyle::Name("title".into())),
@@ -3594,10 +4352,18 @@ impl DirOtterNativeApp {
             ui.add_space(8.0);
             let has_selection = selected_target.is_some();
             let delete_active = self.delete_active();
+            let can_fast_purge_selection = selected_target
+                .as_ref()
+                .map(|target| self.can_fast_purge_path(&target.path))
+                .unwrap_or(false);
             ui.vertical(|ui| {
                 if ui
                     .add_enabled_ui(has_selection, |ui| {
-                        sized_button(ui, ui.available_width(), self.t("打开所在位置", "Open File Location"))
+                        sized_button(
+                            ui,
+                            ui.available_width(),
+                            self.t("打开所在位置", "Open File Location"),
+                        )
                     })
                     .inner
                     .clicked()
@@ -3628,16 +4394,38 @@ impl DirOtterNativeApp {
                     }
                 }
                 if ui
+                    .add_enabled_ui(
+                        has_selection && can_fast_purge_selection && !delete_active,
+                        |ui| {
+                            sized_primary_button(
+                                ui,
+                                ui.available_width(),
+                                self.t("快速清理缓存", "Fast Cleanup"),
+                            )
+                        },
+                    )
+                    .inner
+                    .clicked()
+                {
+                    if let Some(target) = selected_target.clone() {
+                        self.queue_delete_for_target(target, ExecutionMode::FastPurge);
+                    }
+                }
+                if ui
                     .add_enabled_ui(has_selection && !delete_active, |ui| {
-                        sized_button(ui, ui.available_width(), self.t("移到回收站", "Move to Recycle Bin"))
+                        sized_button(
+                            ui,
+                            ui.available_width(),
+                            self.t("移到回收站", "Move to Recycle Bin"),
+                        )
                     })
                     .inner
                     .clicked()
                 {
                     self.execute_selected_delete(ExecutionMode::RecycleBin);
                 }
-                let permanent = egui::Button::new(self.t("永久删除", "Delete Permanently"))
-                    .fill(danger_red());
+                let permanent =
+                    egui::Button::new(self.t("永久删除", "Delete Permanently")).fill(danger_red());
                 if ui
                     .add_enabled_ui(has_selection && !delete_active, |ui| {
                         ui.add_sized([ui.available_width(), CONTROL_HEIGHT], permanent)
@@ -3652,6 +4440,35 @@ impl DirOtterNativeApp {
                         });
                     }
                 }
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(10.0);
+                if ui
+                    .add_enabled_ui(!self.scan_active() && !delete_active, |ui| {
+                        sized_button(
+                            ui,
+                            ui.available_width(),
+                            self.t("释放 DirOtter 内存", "Release DirOtter Memory"),
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    self.release_dir_otter_memory();
+                }
+                if ui
+                    .add_enabled_ui(!self.scan_active() && !delete_active, |ui| {
+                        sized_button(
+                            ui,
+                            ui.available_width(),
+                            self.t("清理残留 staging", "Clean Up Staging"),
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    self.purge_staging_manually();
+                }
             });
             if delete_active {
                 ui.label(
@@ -3665,8 +4482,8 @@ impl DirOtterNativeApp {
             } else if !has_selection {
                 ui.label(
                     egui::RichText::new(self.t(
-                        "先从列表、树图、历史或错误列表里选中一个文件或文件夹。",
-                        "Select a file or folder from a list, treemap, history, or errors first.",
+                        "先从列表、结果视图或其他页面里选中一个文件或文件夹。",
+                        "Select a file or folder from a list, result view, or another page first.",
                     ))
                     .text_style(egui::TextStyle::Small)
                     .color(ui.visuals().weak_text_color()),
@@ -3675,17 +4492,9 @@ impl DirOtterNativeApp {
             if let Some((message, success)) = self.explorer_feedback.as_ref() {
                 ui.add_space(8.0);
                 if *success {
-                    tone_banner(
-                        ui,
-                        self.t("已打开所在位置", "Opened Location"),
-                        message,
-                    );
+                    tone_banner(ui, self.t("已打开所在位置", "Opened Location"), message);
                 } else {
-                    tone_banner(
-                        ui,
-                        self.t("打开位置失败", "Open Location Failed"),
-                        message,
-                    );
+                    tone_banner(ui, self.t("打开位置失败", "Open Location Failed"), message);
                 }
             }
             if let Some((title, hint, success)) = self.delete_feedback_message() {
@@ -3702,6 +4511,7 @@ impl DirOtterNativeApp {
                     self.t("最近执行", "Last Action"),
                     match report.mode {
                         ExecutionMode::RecycleBin => self.t("移到回收站", "Moved to recycle bin"),
+                        ExecutionMode::FastPurge => self.t("快速清理缓存", "Fast cleanup"),
                         ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
                     },
                     &format!(
@@ -3735,7 +4545,7 @@ impl DirOtterNativeApp {
         });
 
         ui.add_space(10.0);
-        surface_frame(ui).show(ui, |ui| {
+        surface_panel(ui, |ui| {
             ui.label(
                 egui::RichText::new(self.t("工作上下文", "Workspace Context"))
                     .text_style(egui::TextStyle::Name("title".into())),
@@ -3836,11 +4646,38 @@ impl DirOtterNativeApp {
         };
         let items = self.cleanup_items_for_category(category);
         let mut keep_open = true;
+        let mut request_close = false;
         let mut trigger_clean = false;
+        let mut trigger_recycle = false;
+        let mut trigger_permanent = false;
+        let mut select_all_safe = false;
+        let mut clear_selected = false;
+        let mut open_selected = false;
+        let screen_size = ctx.input(|i| i.screen_rect().size());
         egui::Window::new(self.t("清理建议详情", "Cleanup Details"))
+            .open(&mut keep_open)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .default_size(egui::vec2(780.0, 560.0))
+            .max_size(egui::vec2(
+                (screen_size.x - 48.0).max(760.0),
+                (screen_size.y - 48.0).max(520.0),
+            ))
             .show(ctx, |ui| {
                 ui.set_min_size(egui::vec2(720.0, 480.0));
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(self.t("按分类检查后再决定清理范围。", "Review by category before deciding what to clean."))
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(self.t("关闭", "Close")).clicked() {
+                            request_close = true;
+                        }
+                    });
+                });
+                ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     let categories = self
                         .cleanup
@@ -3865,23 +4702,92 @@ impl DirOtterNativeApp {
                     ui,
                     self.cleanup_category_label(category),
                     self.t(
-                        "绿色会默认勾选，黄色默认不勾选，红色会被锁定为不可删除。",
-                        "Safe items are selected by default, warning items stay unchecked, and blocked items remain locked.",
+                        "绿色会默认勾选，黄色默认不勾选；红色项请点击条目后用“打开所选位置”自行确认处理。",
+                        "Safe items are selected by default and warning items stay unchecked. For red items, click the row and use Open Selected Location for manual review.",
                     ),
                 );
                 ui.add_space(10.0);
-
-                let selected_count = items
-                    .iter()
-                    .filter(|item| {
-                        item.risk != RiskLevel::High
-                            && self.cleanup.selected_paths.contains(item.target.path.as_str())
-                    })
-                    .count();
+                let (selected_count, selected_bytes) = self.selected_cleanup_totals(category);
+                ui.horizontal_wrapped(|ui| {
+                    compact_stat_chip(
+                        ui,
+                        self.t("已选项目", "Selected"),
+                        &format_count(selected_count as u64),
+                    );
+                    compact_stat_chip(
+                        ui,
+                        self.t("预计释放", "Estimated Reclaim"),
+                        &format_bytes(selected_bytes),
+                    );
+                    if ui
+                        .add_enabled_ui(!self.delete_active(), |ui| {
+                            sized_button(ui, 124.0, self.t("全选安全项", "Select Safe"))
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        select_all_safe = true;
+                    }
+                    if ui
+                        .add_enabled_ui(!self.delete_active(), |ui| {
+                            sized_button(ui, 118.0, self.t("清空所选", "Clear Selected"))
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        clear_selected = true;
+                    }
+                    if ui
+                        .add_enabled_ui(self.selected_target().is_some(), |ui| {
+                            sized_button(ui, 124.0, self.t("打开所选位置", "Open Selected"))
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        open_selected = true;
+                    }
+                    if ui
+                        .add_enabled_ui(selected_count > 0 && !self.delete_active(), |ui| {
+                            sized_button(
+                                ui,
+                                176.0,
+                                if category == CleanupCategory::Cache {
+                                    self.t("快速清理选中缓存", "Fast Cleanup Selected")
+                                } else {
+                                    self.t("移到回收站", "Move to Recycle Bin")
+                                },
+                            )
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        if category == CleanupCategory::Cache {
+                            trigger_clean = true;
+                        } else {
+                            trigger_recycle = true;
+                        }
+                    }
+                    if ui
+                        .add_enabled_ui(selected_count > 0 && !self.delete_active(), |ui| {
+                            let button = egui::Button::new(
+                                self.t("永久删除", "Delete Permanently"),
+                            )
+                            .fill(danger_red());
+                            ui.add_sized([156.0, CONTROL_HEIGHT], button)
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        trigger_permanent = true;
+                    }
+                });
+                ui.add_space(10.0);
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for item in &items {
-                        surface_frame(ui).show(ui, |ui| {
+                        surface_panel(ui, |ui| {
+                            let size_width = 104.0;
+                            let path_width = (ui.available_width() - size_width - 42.0).max(220.0);
                             ui.horizontal(|ui| {
                                 let mut checked =
                                     self.cleanup.selected_paths.contains(item.target.path.as_str());
@@ -3900,7 +4806,8 @@ impl DirOtterNativeApp {
                                     }
                                 }
                                 if ui
-                                    .add(
+                                    .add_sized(
+                                        [path_width, 22.0],
                                         egui::SelectableLabel::new(
                                             self.selection.selected_path.as_deref()
                                                 == Some(item.target.path.as_str()),
@@ -3914,9 +4821,12 @@ impl DirOtterNativeApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        ui.label(
+                                    ui.add_sized(
+                                        [size_width, 20.0],
+                                        egui::Label::new(
                                             egui::RichText::new(format_bytes(item.target.size_bytes))
                                                 .strong(),
+                                        ),
                                         );
                                     },
                                 );
@@ -3953,29 +4863,74 @@ impl DirOtterNativeApp {
                 ui.add_space(10.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add_enabled_ui(selected_count > 0 && !self.delete_active(), |ui| {
-                            sized_primary_button(
-                                ui,
-                                180.0,
-                                self.t("清理选中项", "Clean Selected"),
-                            )
-                        })
-                        .inner
+                            .add_enabled_ui(selected_count > 0 && !self.delete_active(), |ui| {
+                                sized_primary_button(
+                                    ui,
+                                    220.0,
+                                    if category == CleanupCategory::Cache {
+                                        self.t("快速清理选中缓存", "Fast Cleanup Selected")
+                                    } else {
+                                        self.t("清理选中项", "Clean Selected")
+                                    },
+                                )
+                            })
+                            .inner
                         .clicked()
                     {
                         trigger_clean = true;
                     }
                     if ui.button(self.t("关闭", "Close")).clicked() {
-                        keep_open = false;
+                        request_close = true;
                     }
                 });
             });
 
+        if request_close {
+            keep_open = false;
+        }
+        if select_all_safe {
+            self.select_all_safe_cleanup_items(category);
+        }
+        if clear_selected {
+            self.clear_selected_cleanup_items(category);
+        }
+        if open_selected {
+            if let Some(target) = self.selected_target() {
+                match dirotter_platform::select_in_explorer(&target.path) {
+                    Ok(_) => {
+                        self.explorer_feedback = Some((
+                            self.t(
+                                "已在系统文件管理器中打开目标位置。",
+                                "Opened the target location in the system file manager.",
+                            )
+                            .to_string(),
+                            true,
+                        ));
+                    }
+                    Err(err) => {
+                        self.explorer_feedback = Some((
+                            format!(
+                                "{}: {}",
+                                self.t("打开位置失败", "Failed to open location"),
+                                err.message
+                            ),
+                            false,
+                        ));
+                    }
+                }
+            }
+        }
         if !keep_open {
             self.cleanup.detail_category = None;
         }
         if trigger_clean {
             self.queue_cleanup_category_delete(category);
+        }
+        if trigger_recycle {
+            self.queue_cleanup_category_delete_with_mode(category, ExecutionMode::RecycleBin);
+        }
+        if trigger_permanent {
+            self.queue_cleanup_category_delete_with_mode(category, ExecutionMode::Permanent);
         }
     }
 
@@ -3992,10 +4947,19 @@ impl DirOtterNativeApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.set_min_width(420.0);
+                let is_fast_cleanup = request.mode == ExecutionMode::FastPurge;
                 ui.label(
                     egui::RichText::new(self.t(
-                        "将优先把建议项移到回收站，避免直接永久删除。",
-                        "Suggested items will be moved to the recycle bin first instead of being deleted permanently.",
+                        if is_fast_cleanup {
+                            "将先把建议项快速移出当前目录，再在后台继续释放空间。"
+                        } else {
+                            "将优先把建议项移到回收站，避免直接永久删除。"
+                        },
+                        if is_fast_cleanup {
+                            "Suggested items will be moved out of the current view first, then reclaimed in the background."
+                        } else {
+                            "Suggested items will be moved to the recycle bin first instead of being deleted permanently."
+                        },
                     ))
                     .strong(),
                 );
@@ -4010,13 +4974,21 @@ impl DirOtterNativeApp {
                     ui,
                     self.t("项目数", "Items"),
                     &format_count(request.targets.len() as u64),
-                    self.t("将进入回收站", "Will be moved to recycle bin"),
+                    if is_fast_cleanup {
+                        self.t("会先进入后台清理区", "Will be staged for background cleanup")
+                    } else {
+                        self.t("将进入系统回收站", "Will move to the system recycle bin")
+                    },
                 );
                 stat_row(
                     ui,
                     self.t("预计释放", "Estimated Reclaim"),
                     &format_bytes(request.estimated_bytes),
-                    self.t("实际释放量取决于系统删除结果", "Actual reclaim depends on execution results"),
+                    if is_fast_cleanup {
+                        self.t("磁盘空间会在后台逐步释放", "Disk space will continue to be reclaimed in the background")
+                    } else {
+                        self.t("实际释放量取决于系统删除结果", "Actual reclaim depends on execution results")
+                    },
                 );
                 ui.add_space(8.0);
                 for target in request.targets.iter().take(6) {
@@ -4041,7 +5013,15 @@ impl DirOtterNativeApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add_enabled_ui(!self.delete_active(), |ui| {
-                            sized_primary_button(ui, 150.0, self.t("开始清理", "Start Cleanup"))
+                            sized_primary_button(
+                                ui,
+                                150.0,
+                                if is_fast_cleanup {
+                                    self.t("立即清理", "Clean Now")
+                                } else {
+                                    self.t("移到回收站", "Move to Recycle Bin")
+                                },
+                            )
                         })
                         .inner
                         .clicked()
@@ -4064,7 +5044,7 @@ impl DirOtterNativeApp {
                     label: request.label,
                     targets: request.targets,
                 },
-                ExecutionMode::RecycleBin,
+                request.mode,
             );
         }
     }
@@ -4123,6 +5103,18 @@ impl DirOtterNativeApp {
                     .color(ui.visuals().weak_text_color()),
                 );
             }
+            if let Some((message, success)) = self.maintenance_feedback.as_ref() {
+                ui.add_space(8.0);
+                tone_banner(
+                    ui,
+                    if *success {
+                        self.t("维护完成", "Maintenance Done")
+                    } else {
+                        self.t("维护失败", "Maintenance Failed")
+                    },
+                    message,
+                );
+            }
         });
     }
 
@@ -4139,6 +5131,9 @@ impl DirOtterNativeApp {
             match snapshot.mode {
                 ExecutionMode::RecycleBin => {
                     self.t("正在后台移到回收站", "Moving to Recycle Bin in Background")
+                }
+                ExecutionMode::FastPurge => {
+                    self.t("正在后台释放空间", "Reclaiming Space in Background")
                 }
                 ExecutionMode::Permanent => {
                     self.t("正在后台永久删除", "Deleting Permanently in Background")
@@ -4172,8 +5167,14 @@ impl DirOtterNativeApp {
 impl eframe::App for DirOtterNativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_scan_events();
+        self.process_scan_finalize_events();
         self.process_delete_events();
         self.process_queued_delete();
+        if !self.advanced_tools_enabled
+            && matches!(self.page, Page::History | Page::Errors | Page::Diagnostics)
+        {
+            self.page = Page::Dashboard;
+        }
         self.apply_theme(ctx);
         let delete_active = self.delete_active();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
@@ -4224,7 +5225,9 @@ impl eframe::App for DirOtterNativeApp {
                 }
                 match self.page {
                     Page::Dashboard => {
-                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH, |ui| self.ui_dashboard(ui))
+                        with_scrollable_page_width(ui, DASHBOARD_PAGE_MAX_WIDTH, |ui| {
+                            self.ui_dashboard(ui)
+                        })
                     }
                     Page::CurrentScan => {
                         with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 40.0, |ui| {
@@ -4245,9 +5248,11 @@ impl eframe::App for DirOtterNativeApp {
                             self.ui_diagnostics(ui)
                         })
                     }
-                    Page::Settings => with_scrollable_page_width(ui, PAGE_MAX_WIDTH, |ui| {
-                        self.ui_settings(ui, ctx)
-                    }),
+                    Page::Settings => {
+                        with_scrollable_page_width(ui, SETTINGS_PAGE_MAX_WIDTH, |ui| {
+                            self.ui_settings(ui, ctx)
+                        })
+                    }
                 }
             });
 
@@ -4457,6 +5462,26 @@ fn surface_frame(ui: &egui::Ui) -> egui::Frame {
         .stroke(egui::Stroke::new(CARD_STROKE_WIDTH, border_color(visuals)))
 }
 
+fn show_frame_with_relaxed_clip<R>(
+    ui: &mut egui::Ui,
+    frame: egui::Frame,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let clip_rect = ui.clip_rect();
+    ui.scope(|ui| {
+        ui.set_clip_rect(clip_rect.expand(6.0));
+        frame.show(ui, add_contents)
+    })
+    .inner
+}
+
+fn surface_panel<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    show_frame_with_relaxed_clip(ui, surface_frame(ui), add_contents)
+}
+
 fn border_color(visuals: &egui::Visuals) -> egui::Color32 {
     if visuals.dark_mode {
         egui::Color32::from_rgb(0x2B, 0x38, 0x3E)
@@ -4471,25 +5496,16 @@ fn with_page_width<R>(
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     let available = ui.available_width();
-    let width = (available - 24.0).max(320.0).min(max_width);
-    let left_space = ((available - width) / 2.0).floor().max(0.0);
-    let right_space = (available - width - left_space).max(0.0);
-    ui.horizontal(|ui| {
-        if left_space > 0.0 {
-            ui.add_space(left_space);
-        }
-        let inner = ui
-            .allocate_ui_with_layout(
-                egui::vec2(width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                add_contents,
-            )
-            .inner;
-        if right_space > 0.0 {
-            ui.add_space(right_space);
-        }
-        inner
-    })
+    let width = (available - PAGE_SIDE_GUTTER).max(320.0).min(max_width);
+    ui.allocate_ui_with_layout(
+        egui::vec2(available, 0.0),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.set_width(width);
+            ui.set_max_width(width);
+            add_contents(ui)
+        },
+    )
     .inner
 }
 
@@ -4517,29 +5533,20 @@ fn with_page_width_fill_height<R>(
 ) -> R {
     let available_width = ui.available_width();
     let available_height = ui.available_height();
-    let width = (available_width - 24.0).max(320.0).min(max_width);
-    let left_space = ((available_width - width) / 2.0).floor().max(0.0);
-    let right_space = (available_width - width - left_space).max(0.0);
+    let width = (available_width - PAGE_SIDE_GUTTER)
+        .max(320.0)
+        .min(max_width);
 
-    ui.horizontal(|ui| {
-        if left_space > 0.0 {
-            ui.add_space(left_space);
-        }
-        let inner = ui
-            .allocate_ui_with_layout(
-                egui::vec2(width, available_height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_min_height(available_height);
-                    add_contents(ui)
-                },
-            )
-            .inner;
-        if right_space > 0.0 {
-            ui.add_space(right_space);
-        }
-        inner
-    })
+    ui.allocate_ui_with_layout(
+        egui::vec2(available_width, available_height),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.set_width(width);
+            ui.set_max_width(width);
+            ui.set_min_height(available_height);
+            add_contents(ui)
+        },
+    )
     .inner
 }
 
@@ -4563,8 +5570,158 @@ fn page_header(ui: &mut egui::Ui, eyebrow: &str, title: &str, subtitle: &str) {
     );
 }
 
+fn settings_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    subtitle: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    surface_panel(ui, |ui| {
+        ui.label(egui::RichText::new(title).text_style(egui::TextStyle::Name("title".into())));
+        ui.label(
+            egui::RichText::new(subtitle)
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(12.0);
+        add_contents(ui);
+    });
+}
+
+fn dashboard_panel<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let mut frame = surface_frame(ui);
+    frame.outer_margin = egui::Margin::same(0.0);
+    frame.show(ui, add_contents)
+}
+
+fn dashboard_split(
+    ui: &mut egui::Ui,
+    min_column_width: f32,
+    gap: f32,
+    left: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui),
+) {
+    let width = ui.available_width();
+    if width < min_column_width * 2.0 + gap {
+        left(ui);
+        ui.add_space(gap);
+        right(ui);
+        return;
+    }
+
+    let left_width = ((width - gap) / 2.0).floor();
+    let right_width = (width - gap - left_width).max(min_column_width);
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(left_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            left,
+        );
+        ui.add_space(gap);
+        ui.allocate_ui_with_layout(
+            egui::vec2(right_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            right,
+        );
+    });
+}
+
+fn dashboard_metric_tile(
+    ui: &mut egui::Ui,
+    title: &str,
+    value: &str,
+    subtitle: &str,
+    accent: egui::Color32,
+) {
+    dashboard_panel(ui, |ui| {
+        let width = ui.available_width();
+        ui.set_min_width(width);
+        ui.set_max_width(width);
+        ui.colored_label(accent, egui::RichText::new(title).strong());
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(value).size(22.0).strong());
+        ui.label(
+            egui::RichText::new(subtitle)
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+        );
+    });
+}
+
+fn dashboard_metric_row(ui: &mut egui::Ui, cards: &[(&str, String, String, egui::Color32)]) {
+    let gap = 14.0;
+    let width = ui.available_width();
+    let card_width =
+        ((width - gap * (cards.len().saturating_sub(1) as f32)) / cards.len() as f32).max(140.0);
+    ui.horizontal_top(|ui| {
+        for (idx, card) in cards.iter().enumerate() {
+            ui.allocate_ui_with_layout(
+                egui::vec2(card_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| dashboard_metric_tile(ui, card.0, &card.1, &card.2, card.3),
+            );
+            if idx + 1 < cards.len() {
+                ui.add_space(gap);
+            }
+        }
+    });
+}
+
+fn compact_stat_chip(ui: &mut egui::Ui, label: &str, value: &str) {
+    let visuals = ui.visuals().clone();
+    egui::Frame::default()
+        .fill(visuals.extreme_bg_color)
+        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .rounding(egui::Rounding::same(CONTROL_RADIUS as f32))
+        .stroke(egui::Stroke::new(1.0, border_color(&visuals)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(label)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.label(egui::RichText::new(value).strong());
+            });
+        });
+}
+
+fn settings_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    subtitle: &str,
+    add_controls: impl FnOnce(&mut egui::Ui),
+) {
+    let row_width = ui.available_width();
+    let label_width = (row_width * 0.34).clamp(180.0, 280.0);
+    let control_width = (row_width - label_width - 18.0).max(240.0);
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.label(egui::RichText::new(title).strong());
+                ui.label(
+                    egui::RichText::new(subtitle)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+            },
+        );
+        ui.add_space(18.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(control_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            add_controls,
+        );
+    });
+}
+
 fn metric_card(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str, accent: egui::Color32) {
-    surface_frame(ui).show(ui, |ui| {
+    surface_panel(ui, |ui| {
         ui.colored_label(accent, egui::RichText::new(title).strong());
         ui.add_space(4.0);
         ui.label(egui::RichText::new(value).size(22.0).strong());
@@ -4619,7 +5776,7 @@ fn render_ranked_size_list(
     selection: &mut SelectionState,
     execution_report: &mut Option<ExecutionReport>,
 ) {
-    surface_frame(ui).show(ui, |ui| {
+    surface_panel(ui, |ui| {
         ui.push_id(("ranked-panel", title), |ui| {
             ui.label(egui::RichText::new(title).text_style(egui::TextStyle::Name("title".into())));
             ui.label(
@@ -4682,7 +5839,7 @@ fn render_ranked_size_list(
 
 fn empty_state_panel(ui: &mut egui::Ui, title: &str, body: &str) {
     let visuals = ui.visuals();
-    egui::Frame::default()
+    let frame = egui::Frame::default()
         .fill(if visuals.dark_mode {
             egui::Color32::from_rgb(0x1A, 0x24, 0x29)
         } else {
@@ -4690,26 +5847,26 @@ fn empty_state_panel(ui: &mut egui::Ui, title: &str, body: &str) {
         })
         .rounding(egui::Rounding::same(12.0))
         .inner_margin(egui::Margin::same(14.0))
-        .stroke(egui::Stroke::new(1.0, border_color(visuals)))
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(title)
-                    .text_style(egui::TextStyle::Small)
-                    .color(river_teal()),
-            );
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(body)
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-            );
-        });
+        .stroke(egui::Stroke::new(1.0, border_color(visuals)));
+    show_frame_with_relaxed_clip(ui, frame, |ui| {
+        ui.label(
+            egui::RichText::new(title)
+                .text_style(egui::TextStyle::Small)
+                .color(river_teal()),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(body)
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+        );
+    });
 }
 
 fn tone_banner(ui: &mut egui::Ui, title: &str, body: &str) {
     let visuals = ui.visuals();
     let width = ui.available_width();
-    egui::Frame::default()
+    let frame = egui::Frame::default()
         .fill(if visuals.dark_mode {
             egui::Color32::from_rgb(0x1D, 0x2A, 0x30)
         } else {
@@ -4724,12 +5881,12 @@ fn tone_banner(ui: &mut egui::Ui, title: &str, body: &str) {
             } else {
                 sand_accent()
             },
-        ))
-        .show(ui, |ui| {
-            ui.set_min_width(width);
-            ui.label(egui::RichText::new(title).strong().color(river_teal()));
-            ui.label(body);
-        });
+        ));
+    show_frame_with_relaxed_clip(ui, frame, |ui| {
+        ui.set_min_width(width);
+        ui.label(egui::RichText::new(title).strong().color(river_teal()));
+        ui.label(body);
+    });
 }
 
 fn color_note_row(ui: &mut egui::Ui, swatch: egui::Color32, title: &str, body: &str) {
@@ -5210,10 +6367,12 @@ mod ui_tests {
             summary: ScanSummary::default(),
             store: Some(store),
             scan_session: None,
+            scan_finalize_session: None,
             delete_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
             scan_last_event_at: None,
+            scan_cancel_requested: false,
             scan_dropped_batches: 0,
             scan_dropped_snapshots: 0,
             scan_dropped_progress: 0,
@@ -5231,11 +6390,13 @@ mod ui_tests {
             pending_delete_confirmation: None,
             queued_delete: None,
             explorer_feedback: None,
+            maintenance_feedback: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
+            advanced_tools_enabled: false,
             cache: CacheStore::new(":memory:").expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
@@ -5284,10 +6445,12 @@ mod ui_tests {
             summary: ScanSummary::default(),
             store: Some(store),
             scan_session: None,
+            scan_finalize_session: None,
             delete_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
             scan_last_event_at: None,
+            scan_cancel_requested: false,
             scan_dropped_batches: 0,
             scan_dropped_snapshots: 0,
             scan_dropped_progress: 0,
@@ -5305,11 +6468,13 @@ mod ui_tests {
             pending_delete_confirmation: None,
             queued_delete: None,
             explorer_feedback: None,
+            maintenance_feedback: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
+            advanced_tools_enabled: false,
             cache: CacheStore::new(":memory:").expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
@@ -5366,10 +6531,12 @@ mod ui_tests {
             summary: ScanSummary::default(),
             store: Some(store),
             scan_session: None,
+            scan_finalize_session: None,
             delete_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
             scan_last_event_at: None,
+            scan_cancel_requested: false,
             scan_dropped_batches: 0,
             scan_dropped_snapshots: 0,
             scan_dropped_progress: 0,
@@ -5387,11 +6554,13 @@ mod ui_tests {
             pending_delete_confirmation: None,
             queued_delete: None,
             explorer_feedback: None,
+            maintenance_feedback: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
+            advanced_tools_enabled: false,
             cache: CacheStore::new(":memory:").expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
@@ -5430,10 +6599,12 @@ mod ui_tests {
             summary: ScanSummary::default(),
             store: Some(store),
             scan_session: None,
+            scan_finalize_session: None,
             delete_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
             scan_last_event_at: None,
+            scan_cancel_requested: false,
             scan_dropped_batches: 0,
             scan_dropped_snapshots: 0,
             scan_dropped_progress: 0,
@@ -5451,11 +6622,13 @@ mod ui_tests {
             pending_delete_confirmation: None,
             queued_delete: None,
             explorer_feedback: None,
+            maintenance_feedback: None,
             history: Vec::new(),
             errors: Vec::new(),
             selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
+            advanced_tools_enabled: false,
             cache: CacheStore::new(":memory:").expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),

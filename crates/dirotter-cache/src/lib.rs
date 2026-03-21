@@ -1,6 +1,6 @@
 use dirotter_core::{ErrorKind, NodeStore, ScanErrorRecord};
 use rusqlite::{params, Connection};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA_VERSION: i64 = 3;
@@ -17,15 +17,21 @@ pub struct HistoryRecord {
 }
 
 pub struct CacheStore {
+    db_path: PathBuf,
     conn: Connection,
 }
 
 impl CacheStore {
     pub fn new(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
-        let conn = Connection::open(path)?;
-        let store = Self { conn };
+        let db_path = path.as_ref().to_path_buf();
+        let conn = Connection::open(&db_path)?;
+        let store = Self { db_path, conn };
         store.migrate()?;
         Ok(store)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.db_path
     }
 
     fn migrate(&self) -> rusqlite::Result<()> {
@@ -161,10 +167,14 @@ impl CacheStore {
         let compressed = zstd::stream::encode_all(encoded.as_slice(), 3)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let payload_size = compressed.len() as i64;
+        self.conn
+            .execute("DELETE FROM snapshots WHERE root = ?", params![root])?;
         self.conn.execute(
             "INSERT INTO snapshots(root, created_at, payload_json, payload_blob, payload_encoding, node_count, payload_size, schema_version) VALUES(?, ?, NULL, ?, 'zstd+bincode', ?, ?, ?)",
             params![root, now_ts(), compressed, store.nodes.len() as i64, payload_size, SCHEMA_VERSION],
         )?;
+        self.conn
+            .execute_batch("PRAGMA optimize; PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())
     }
 
@@ -357,6 +367,7 @@ fn now_ts() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dirotter_core::NodeKind;
 
     #[test]
     fn schema_migrates_and_writes() {
@@ -370,6 +381,53 @@ mod tests {
 
         cache.set_setting("k", "v").expect("set");
         assert_eq!(cache.get_setting("k").expect("get"), Some("v".to_string()));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_snapshot_replaces_previous_snapshot_for_same_root() {
+        let path = std::env::temp_dir().join(format!(
+            "dirotter_cache_snapshot_test_{}.db",
+            std::process::id()
+        ));
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+        let cache = CacheStore::new(&path).expect("cache");
+        let mut store = NodeStore::default();
+        let root = store.add_node(
+            None,
+            "root".to_string(),
+            "C:\\".to_string(),
+            NodeKind::Dir,
+            0,
+        );
+        store.nodes[root.0].size_subtree = 1;
+        store.nodes[root.0].file_count = 1;
+        store.nodes[root.0].dir_count = 1;
+
+        cache.save_snapshot("C:\\", &store).expect("first snapshot");
+        store.nodes[0].size_subtree = 2;
+        cache
+            .save_snapshot("C:\\", &store)
+            .expect("second snapshot");
+
+        let snapshot_count: i64 = cache
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM snapshots WHERE root = ?",
+                params!["C:\\"],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(snapshot_count, 1);
+
+        let latest = cache
+            .load_latest_snapshot("C:\\")
+            .expect("load")
+            .expect("snapshot");
+        assert_eq!(latest.nodes[0].size_subtree, 2);
 
         let _ = std::fs::remove_file(path);
     }

@@ -9,6 +9,8 @@ use std::sync::{
     Arc, Condvar, Mutex,
 };
 
+const INTERNAL_STAGING_DIR_NAME: &str = ".dirotter-staging";
+
 #[derive(Debug, Clone)]
 pub struct EntryEvent {
     pub path: String,
@@ -60,7 +62,10 @@ impl DirQueue {
             if pending.load(Ordering::SeqCst) == 0 {
                 return None;
             }
-            guard = cv.wait(guard).expect("queue wait");
+            let (next_guard, _) = cv
+                .wait_timeout(guard, std::time::Duration::from_millis(50))
+                .expect("queue wait");
+            guard = next_guard;
         }
     }
 
@@ -141,6 +146,10 @@ fn process_directory(
                     kind: classify_error(&reason),
                 }));
 
+                if cancel.load(Ordering::SeqCst) {
+                    return;
+                }
+
                 if read_dir_attempt >= tuning.error_retry_limit {
                     return;
                 }
@@ -173,6 +182,9 @@ fn process_directory(
         };
 
         let path = entry.path();
+        if entry.file_name().to_string_lossy() == INTERNAL_STAGING_DIR_NAME {
+            continue;
+        }
         let path_string = path.display().to_string();
         if path_string == root_string {
             continue;
@@ -189,6 +201,10 @@ fn process_directory(
                         reason: reason.clone(),
                         kind: classify_error(&reason),
                     }));
+
+                    if cancel.load(Ordering::SeqCst) {
+                        break None;
+                    }
 
                     if metadata_attempt >= tuning.error_retry_limit {
                         break None;
