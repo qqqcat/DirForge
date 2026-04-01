@@ -33,11 +33,14 @@ impl Aggregator {
     }
 
     pub fn on_entry(&mut self, event: EntryEvent) -> Vec<BatchEntry> {
-        if self.store.path_index.contains_key(&event.path) {
+        if self.store.path_index.contains_key(event.path.as_str()) {
             return Vec::new();
         }
 
-        if !self.store.path_index.contains_key(&event.parent_path)
+        if !self
+            .store
+            .path_index
+            .contains_key(event.parent_path.as_str())
             && event.parent_path != self.root_path
         {
             self.pending_by_parent
@@ -50,11 +53,15 @@ impl Aggregator {
         let mut emitted = Vec::new();
         let mut queue = vec![event];
         while let Some(event) = queue.pop() {
-            if self.store.path_index.contains_key(&event.path) {
+            if self.store.path_index.contains_key(event.path.as_str()) {
                 continue;
             }
 
-            let parent = self.store.path_index.get(&event.parent_path).copied();
+            let parent = self
+                .store
+                .path_index
+                .get(event.parent_path.as_str())
+                .copied();
             let kind = if event.is_dir {
                 self.summary.scanned_dirs += 1;
                 NodeKind::Dir
@@ -94,31 +101,36 @@ impl Aggregator {
             .store
             .top_n_largest_files(10)
             .into_iter()
-            .map(|n| (n.path.clone(), n.size_self))
+            .map(|n| (self.store.node_path(n).to_string(), n.size_self))
             .collect::<Vec<_>>();
         let top_dirs = self
             .store
             .largest_dirs(10)
             .into_iter()
-            .map(|n| (n.path.clone(), n.size_subtree))
+            .map(|n| (self.store.node_path(n).to_string(), n.size_subtree))
             .collect::<Vec<_>>();
 
         let top_files_delta = top_files
             .iter()
-            .filter_map(|(path, _)| self.store.path_index.get(path).copied())
+            .filter_map(|(path, _)| self.store.path_index.get(path.as_str()).copied())
             .collect();
         let top_dirs_delta = top_dirs
             .iter()
-            .filter_map(|(path, _)| self.store.path_index.get(path).copied())
+            .filter_map(|(path, _)| self.store.path_index.get(path.as_str()).copied())
             .collect();
 
         let changed_nodes = std::mem::take(&mut self.changed_since_snapshot);
         let view_nodes = if include_full_tree {
-            self.store.nodes.clone()
+            self.store
+                .nodes
+                .iter()
+                .map(|node| self.store.resolved_node(node))
+                .collect()
         } else {
             changed_nodes
                 .iter()
-                .filter_map(|id| self.store.nodes.get(id.0).cloned())
+                .filter_map(|id| self.store.nodes.get(id.0))
+                .map(|node| self.store.resolved_node(node))
                 .collect()
         };
 
@@ -191,6 +203,6 @@ mod tests {
         assert!(aggr
             .store
             .path_index
-            .contains_key(&format!("{root}/a/b.txt")));
+            .contains_key(format!("{root}/a/b.txt").as_str()));
     }
 }

@@ -6,7 +6,7 @@
 - 二级工具页面：History / Errors / Diagnostics（仅在 `高级工具 / Advanced Tools` 开启后显示）
 - 已移除页面：Operations
 - 已落地布局：顶部工具栏、左导航、中央工作区、右侧 Inspector、底部状态栏
-- 已落地能力：四语言切换（中文/英文/法语/西班牙语）、中文字体回退、人类可读大小/计数格式、轻量结果视图、页面级滚动、对称 gutter
+- 已落地能力：19 语言选择（其中中文/英文/法语/西班牙语为完整文案，其余新增语言当前回退英文 UI）、多脚本系统字体回退、人类可读大小/计数格式、轻量结果视图、页面级滚动、对称 gutter
 - 已落地动作：Inspector 内 `Move to Recycle Bin` / `Delete Permanently` / `Open File Location`
 - 已落地刷新：删除成功后局部刷新榜单、概览统计、treemap 与 Inspector
 - 已落地反馈：删除确认窗口会先关闭，再转为顶部横幅、Inspector 任务卡片与状态栏提示
@@ -14,7 +14,7 @@
 - 已落地扫描体验：扫描入口已切换为三档用户模式，不再暴露 `batch / snapshot` 数值控件
 - 已落地上下文：选中文件夹后，“最大文件”榜单会切换到该目录范围
 - 已落地清理建议：Overview 已出现规则驱动的建议卡、详情窗与安全缓存一键清理流
-- 已落地维护动作：Inspector 已提供 `释放 DirOtter 内存 / 清理残留 staging`，Diagnostics 已提供手动快照/摘要/错误导出
+- 已落地维护动作：Overview 主路径继续聚焦磁盘扫描与空间清理；右侧 Quick Actions 已提供 `一键释放系统内存`；技术性维护已下沉到 Diagnostics，包含 `优化 DirOtter 内存占用 / 清理异常中断的临时删除区`
 
 产品方向：专业、克制、高信息密度，但必须优先服务“找出最大占用并直接处理”的主目标。
 
@@ -52,6 +52,7 @@
 - 首页不得复用 Settings 的 `设置行` 组件语义；Overview 必须使用专用 dashboard 卡片与显式列宽
 - 双列区域必须使用显式宽度分配和固定 gutter，避免卡片漂移、重叠和左右留白失衡
 - Hero 区必须先回答“现在最值得做什么”，不能把设置页式说明文案堆到顶部
+- Hero 区必须把 `一键提速（推荐）` 做成首屏可见的主卡和主按钮，不能只把推荐动作埋在次级说明里
 - KPI 指标条应优先展示唯一信息，不得再与独立卷摘要卡重复；当前固定展示 `磁盘已用 / 磁盘可用 / 已扫描体积 / 错误`
 - KPI 卡片必须吃满各自分配列宽，不允许因内容本身过窄而缩成左对齐小块
 - 扫描目标卡必须优先展示用户模式，而不是技术参数；卷级补充信息应并入卡内紧凑状态条，而不是再复制一张大摘要卡
@@ -90,6 +91,8 @@
 ### Result View
 
 - 只在扫描完成后展示结果，不跟实时扫描绑定
+- 扫描进行中切到 Result View 时，只允许展示“完成后再看”的说明，不允许在 UI 线程消费实时快照来拼装结果树
+- Result View 不应自动载入历史旧缓存；只有当前会话已经有结果摘要时，才允许按需回载对应快照
 - 只展示当前目录的直接子项，不递归整树
 - 支持逐层进入下一层和返回上级
 - 必须优先保证低开销与稳定性，而不是追求复杂布局算法
@@ -165,9 +168,21 @@
 - `Open File Location`
 - `Move to Recycle Bin`
 - `Delete Permanently`
-- `Release DirOtter Memory`
-- `Clean Up Staging`
+- `Release System Memory`
+- `Clean Interrupted Cleanup Area`
 - `Cleanup Suggestions` 触发的批量清理也必须复用同一条删除执行链路
+
+要求补充：
+
+- `Release System Memory` 必须固定放在右侧 Quick Actions 中，不能和扫描入口混成“提速扫描”语义
+- `Release System Memory` 必须后台执行，避免按钮点击把 UI 主线程拖进 `Not Responding`
+- `Release System Memory` 的反馈必须展示系统级 before/after 指标，不得继续只汇报应用自身 working set
+- `优化 DirOtter 内存占用` 只能针对应用自身占用，不能误导成系统级提速承诺
+- 删除完成后的结果同步不得为每个目标都复制整棵结果树；必须采用单次更新，避免 UI 卡死和峰值内存翻倍
+- 当结果树被释放时，必须先有可恢复的磁盘快照，再允许在结果视图中按需回载
+- 状态栏应能看到进程工作集和系统可用内存，便于验证维护动作是否生效
+- Inspector 主路径应只保留普通用户能理解的文件操作，不再并列暴露技术性维护动作
+- Overview 必须优先出现单一推荐动作，避免同时摆出多个让普通用户难以判断的“提速”按钮
 
 要求：
 
@@ -213,7 +228,7 @@
 
 - 默认依据系统语言环境推断语言
 - 设置页手动选择优先级高于自动检测
-- 当前自动检测覆盖 `zh / fr / es / en`
+- 当前自动检测覆盖 `zh / en / ar / nl / fr / de / he / hi / id / it / ja / ko / pl / ru / es / th / tr / uk / vi`
 - 法语与西班牙语必须提供完整 UI 文案覆盖，不得把说明文案或状态提示退回英文
 - Windows UI 字体优先采用 `Segoe UI / Segoe UI Variable` 风格，中文继续回退到 `Microsoft YaHei / DengXian / SimHei / SimSun`
 - 浅色与深色主题都必须保持完整 panel/surface 对比度，不能出现浅色控件叠黑底

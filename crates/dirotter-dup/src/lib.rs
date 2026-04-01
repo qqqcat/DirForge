@@ -39,7 +39,10 @@ pub fn detect_duplicates(store: &NodeStore, cfg: DupConfig) -> Vec<DuplicateGrou
     let mut by_size: HashMap<u64, Vec<String>> = HashMap::new();
     for n in &store.nodes {
         if matches!(n.kind, NodeKind::File) && n.size_self > 0 {
-            by_size.entry(n.size_self).or_default().push(n.path.clone());
+            by_size
+                .entry(n.size_self)
+                .or_default()
+                .push(store.node_path(n).to_string());
         }
     }
 

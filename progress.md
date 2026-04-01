@@ -151,11 +151,41 @@
 - 启动时如果未开启高级工具，不再默认加载历史或快照，进一步减少无关启动成本。
 - 诊断页新增按需维护动作：`手动保存当前快照 / 手动记录扫描摘要 / 手动导出错误 CSV`。
 - 清理建议生成已从“全树全量候选”收口为“规则命中 + 每类 Top-N + 全局上限”，优先返回真正可执行的候选。
-- Inspector 新增辅助维护工具：`释放 DirOtter 内存`、`清理残留 staging`。
-- `释放 DirOtter 内存` 会主动清空当前会话内结果、建议、历史缓存与选择态，并在 Windows 上请求收缩工作集。
-- `清理残留 staging` 会手动清空 `.dirotter-staging` 遗留项，避免把应用自己的临时目录再次变成磁盘占用来源。
+- 首页主路径已收口为 `一键提速（推荐）`，会在“开始提速扫描 / 一键提速（推荐） / 查看提速建议”之间自动选择最合适的下一步。
+- Inspector 已移除技术性维护动作，只保留普通用户更容易理解的文件操作。
+- `优化 DirOtter 内存占用` 会先保存当前结果快照，再主动释放当前会话内重结果树与相关状态，并在 Windows 上请求收缩工作集。
+- `dirotter-core::NodeStore` 已进一步做 Rust 级瘦身：常驻节点不再重复持有 `name/path String`，而是只保留 intern 后的字符串 ID；结构体体积对比测试显示 `Node` 从旧布局等效的 `128 bytes` 降到 `80 bytes`。
+- 新增 Windows 进程/系统内存采样：状态栏可直接看到 DirOtter 工作集、系统可用内存和内存负载。
+- 新增低内存压力自动维护：当应用空闲且系统内存紧张时，会优先把结果树转成磁盘快照并释放内存，结果视图在需要时再自动回载。
+- Diagnostics 新增恢复型维护动作 `清理异常中断的临时删除区`，用于处理上次缓存快清异常中断后遗留的内部待删内容。
 - 法语与西班牙语词典已同步补齐新增的高级工具、维护动作和完成态文案，四语言覆盖测试继续通过。
 - 已完成最终工程复验：`cargo fmt --all`、`cargo test --workspace`、`cargo build -p dirotter-app` 全部通过。
+
+## 2026-03-31（首页主动作显性化与结果视图卡顿修复）
+- Overview 顶部 Hero 已重排为真正的 `一键提速（推荐）` 首卡：主动作标题、说明和主按钮现在会直接出现在首屏，而不是埋在次级说明区里。
+- 空白初始态下，首页主卡本身也已经改成 `一键提速（推荐）` 入口，普通用户首屏不再先看到旧的“开始扫描”语义。
+- 扫描期的实时快照不再在 UI 线程里逐条并入 `NodeStore`；实时页只保留排行榜和摘要，完整结果树继续等扫描完成后一次性交付。
+- Result View 在扫描进行中继续保持“完成后再看”的轻量提示，不再因为实时快照合并把窗口拖入 `Not Responding`。
+- Result View 不再自动载入历史旧缓存；只有当前会话已经有结果摘要时，才允许按需回载对应快照，避免空白态点击时把旧大结果重新拖进内存。
+- 新增 UI 回归测试 `live_snapshot_updates_rankings_without_building_store_on_ui_thread`，锁住“更新实时榜单但不物化整树”的行为。
+- 新增 UI 回归测试 `result_view_only_reloads_cache_for_current_session_results`，锁住“结果页不自动载入旧缓存”的边界。
+- 本轮修复后已重新执行 `cargo fmt --all`、`cargo test --workspace`、`cargo build -p dirotter-app`，并重新启动最新桌面应用。
+
+## 2026-04-01（内存入口回归右侧与删除卡顿修复）
+- 右侧 Inspector 的 `Quick Actions` 已新增独立 `一键释放内存 / Release Memory`，不再把“提速”语义和扫描入口混在一起。
+- 扫描卡已恢复为纯扫描语义：首页扫描入口再次只负责磁盘扫描，说明文案明确把内存释放指向右侧独立入口。
+- 删除完成后的结果同步已从“每个成功目标都 clone 一整份 `NodeStore` 再重建”改成单次批量更新，避免多目标清理时 UI 锁死和内存瞬时翻倍。
+- `NodeStore` 的完整路径已改成共享分配，不再同时在节点和索引里各自保留独立副本；`compact_node_bytes` 目前为 `88`，旧等效重字符串布局为 `120`。
+- 法语 / 西班牙语词典已补齐新增的内存释放与扫描解耦文案。
+- 已重新执行 `cargo fmt --all`、`cargo test --workspace`、`cargo build -p dirotter-app`，通过后重新启动最新桌面应用。
+
+## 2026-04-01（系统内存释放改造）
+- 右侧 Quick Actions 的内存入口已升级为 `一键释放系统内存 / Release System Memory`，语义不再停留在“只释放 DirOtter 自己”。
+- `dirotter-platform` 新增 `release_system_memory()`：会先读取系统内存状态，再尝试收缩当前进程、当前交互会话中的高占用进程，并在权限允许时裁剪系统文件缓存，最后回传 before/after 报告。
+- 内存释放已改成后台线程执行；UI 只负责发起和接收结果，避免点击后把主线程拖进 `Not Responding`。
+- Diagnostics JSON 现已包含最近一次系统内存释放报告，方便对照系统可用内存变化。
+- 法语 / 西班牙语词典已同步补齐 `Release System Memory`、系统缓存裁剪和 before/after 反馈等新增文案。
+- 已再次执行 `cargo fmt --all`、`cargo test --workspace`，全部通过。
 
 ## 2026-03-19（法语 / 西班牙语支持）
 - 在 `dirotter-ui` 中新增 `Fr / Es` 语言枚举、设置持久化解析与系统语言自动检测，覆盖 `zh / fr / es / en`。

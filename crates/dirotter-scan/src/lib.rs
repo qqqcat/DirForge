@@ -4,7 +4,8 @@ mod walker;
 
 use aggregator::Aggregator;
 use dirotter_core::{
-    ErrorKind, Node, NodeId, NodeStore, ScanErrorRecord, ScanProfile, ScanSummary, SnapshotDelta,
+    ErrorKind, NodeId, NodeStore, ResolvedNode, ScanErrorRecord, ScanProfile, ScanSummary,
+    SnapshotDelta,
 };
 use dirotter_telemetry as telemetry;
 use publisher::Publisher;
@@ -43,7 +44,7 @@ pub struct SelectionState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotView {
-    pub nodes: Vec<Node>,
+    pub nodes: Vec<ResolvedNode>,
     pub top_files: Vec<(String, u64)>,
     pub top_dirs: Vec<(String, u64)>,
     pub selection: SelectionState,

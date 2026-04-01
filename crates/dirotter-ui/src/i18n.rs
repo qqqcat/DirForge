@@ -1,43 +1,225 @@
 use crate::Lang;
 
+#[path = "i18n_generated_group0.rs"]
+mod generated_group0;
+#[path = "i18n_generated_group1.rs"]
+mod generated_group1;
+#[path = "i18n_generated_group2.rs"]
+mod generated_group2;
+#[path = "i18n_generated_group3a.rs"]
+mod generated_group3a;
+#[path = "i18n_generated_group3b.rs"]
+mod generated_group3b;
+
 pub(crate) fn parse_lang_setting(value: &str) -> Option<Lang> {
     match value {
+        "ar" => Some(Lang::Ar),
+        "de" => Some(Lang::De),
         "en" => Some(Lang::En),
+        "he" => Some(Lang::He),
+        "hi" => Some(Lang::Hi),
+        "id" => Some(Lang::Id),
+        "it" => Some(Lang::It),
+        "ja" => Some(Lang::Ja),
+        "ko" => Some(Lang::Ko),
+        "nl" => Some(Lang::Nl),
+        "pl" => Some(Lang::Pl),
+        "ru" => Some(Lang::Ru),
         "zh" => Some(Lang::Zh),
         "fr" => Some(Lang::Fr),
         "es" => Some(Lang::Es),
+        "th" => Some(Lang::Th),
+        "tr" => Some(Lang::Tr),
+        "uk" => Some(Lang::Uk),
+        "vi" => Some(Lang::Vi),
         _ => None,
     }
 }
 
 pub(crate) fn lang_setting_value(lang: Lang) -> &'static str {
     match lang {
+        Lang::Ar => "ar",
+        Lang::De => "de",
         Lang::En => "en",
+        Lang::He => "he",
+        Lang::Hi => "hi",
+        Lang::Id => "id",
+        Lang::It => "it",
+        Lang::Ja => "ja",
+        Lang::Ko => "ko",
+        Lang::Nl => "nl",
+        Lang::Pl => "pl",
+        Lang::Ru => "ru",
         Lang::Zh => "zh",
         Lang::Fr => "fr",
         Lang::Es => "es",
+        Lang::Th => "th",
+        Lang::Tr => "tr",
+        Lang::Uk => "uk",
+        Lang::Vi => "vi",
     }
 }
 
 pub(crate) fn lang_native_label(lang: Lang) -> &'static str {
     match lang {
+        Lang::Ar => "العربية",
+        Lang::De => "Deutsch",
         Lang::En => "English",
+        Lang::He => "עברית",
+        Lang::Hi => "हिन्दी",
+        Lang::Id => "Bahasa Indonesia",
+        Lang::It => "Italiano",
+        Lang::Ja => "日本語",
+        Lang::Ko => "한국어",
+        Lang::Nl => "Nederlands",
+        Lang::Pl => "Polski",
+        Lang::Ru => "Русский",
         Lang::Zh => "中文",
         Lang::Fr => "Français",
         Lang::Es => "Español",
+        Lang::Th => "ไทย",
+        Lang::Tr => "Türkçe",
+        Lang::Uk => "Українська",
+        Lang::Vi => "Tiếng Việt",
     }
+}
+
+pub(crate) fn lang_picker_label(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ar => "العربية · Arabic",
+        Lang::De => "Deutsch · German",
+        Lang::En => "English",
+        Lang::He => "עברית · Hebrew",
+        Lang::Hi => "हिन्दी · Hindi",
+        Lang::Id => "Bahasa Indonesia · Indonesian",
+        Lang::It => "Italiano · Italian",
+        Lang::Ja => "日本語 · Japanese",
+        Lang::Ko => "한국어 · Korean",
+        Lang::Nl => "Nederlands · Dutch",
+        Lang::Pl => "Polski · Polish",
+        Lang::Ru => "Русский · Russian",
+        Lang::Zh => "中文 · Chinese",
+        Lang::Fr => "Français · French",
+        Lang::Es => "Español · Spanish",
+        Lang::Th => "ไทย · Thai",
+        Lang::Tr => "Türkçe · Turkish",
+        Lang::Uk => "Українська · Ukrainian",
+        Lang::Vi => "Tiếng Việt · Vietnamese",
+    }
+}
+
+pub(crate) fn supported_languages() -> &'static [Lang] {
+    &[
+        Lang::Zh,
+        Lang::En,
+        Lang::Ar,
+        Lang::Nl,
+        Lang::Fr,
+        Lang::De,
+        Lang::He,
+        Lang::Hi,
+        Lang::Id,
+        Lang::It,
+        Lang::Ja,
+        Lang::Ko,
+        Lang::Pl,
+        Lang::Ru,
+        Lang::Es,
+        Lang::Th,
+        Lang::Tr,
+        Lang::Uk,
+        Lang::Vi,
+    ]
 }
 
 pub(crate) fn detect_lang_from_locale(locale: &str) -> Lang {
     let locale = locale.trim().to_lowercase();
-    if locale.starts_with("zh") {
+    if locale.starts_with("ar") {
+        Lang::Ar
+    } else if locale.starts_with("de") {
+        Lang::De
+    } else if locale.starts_with("zh") {
         Lang::Zh
     } else if locale.starts_with("fr") {
         Lang::Fr
     } else if locale.starts_with("es") {
         Lang::Es
+    } else if locale.starts_with("he") || locale.starts_with("iw") {
+        Lang::He
+    } else if locale.starts_with("hi") {
+        Lang::Hi
+    } else if locale.starts_with("id") || locale.starts_with("in") {
+        Lang::Id
+    } else if locale.starts_with("it") {
+        Lang::It
+    } else if locale.starts_with("ja") {
+        Lang::Ja
+    } else if locale.starts_with("ko") {
+        Lang::Ko
+    } else if locale.starts_with("nl") {
+        Lang::Nl
+    } else if locale.starts_with("pl") {
+        Lang::Pl
+    } else if locale.starts_with("ru") {
+        Lang::Ru
+    } else if locale.starts_with("th") {
+        Lang::Th
+    } else if locale.starts_with("tr") {
+        Lang::Tr
+    } else if locale.starts_with("uk") {
+        Lang::Uk
+    } else if locale.starts_with("vi") {
+        Lang::Vi
     } else {
         Lang::En
+    }
+}
+
+pub(crate) fn translate_ui<'a>(lang: Lang, zh: &'a str, en: &'a str) -> &'a str {
+    match lang {
+        Lang::Ar => generated_group1::translate_ar(en),
+        Lang::De => generated_group1::translate_de(en),
+        Lang::En => en,
+        Lang::He => generated_group1::translate_he(en),
+        Lang::Hi => generated_group1::translate_hi(en),
+        Lang::Id => generated_group1::translate_id(en),
+        Lang::It => generated_group2::translate_it(en),
+        Lang::Ja => generated_group2::translate_ja(en),
+        Lang::Ko => generated_group2::translate_ko(en),
+        Lang::Nl => generated_group2::translate_nl(en),
+        Lang::Pl => generated_group2::translate_pl(en),
+        Lang::Ru => generated_group3a::translate_ru(en),
+        Lang::Zh => zh,
+        Lang::Fr => translate_fr(en),
+        Lang::Es => translate_es(en),
+        Lang::Th => generated_group3a::translate_th(en),
+        Lang::Tr => generated_group3a::translate_tr(en),
+        Lang::Uk => generated_group3b::translate_uk(en),
+        Lang::Vi => generated_group3b::translate_vi(en),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn has_translation(lang: Lang, en: &str) -> bool {
+    match lang {
+        Lang::En | Lang::Zh => true,
+        Lang::Fr => has_translation_fr(en),
+        Lang::Es => has_translation_es(en),
+        Lang::Ar => generated_group1::has_translation_ar(en),
+        Lang::De => generated_group1::has_translation_de(en),
+        Lang::He => generated_group1::has_translation_he(en),
+        Lang::Hi => generated_group1::has_translation_hi(en),
+        Lang::Id => generated_group1::has_translation_id(en),
+        Lang::It => generated_group2::has_translation_it(en),
+        Lang::Ja => generated_group2::has_translation_ja(en),
+        Lang::Ko => generated_group2::has_translation_ko(en),
+        Lang::Nl => generated_group2::has_translation_nl(en),
+        Lang::Pl => generated_group2::has_translation_pl(en),
+        Lang::Ru => generated_group3a::has_translation_ru(en),
+        Lang::Th => generated_group3a::has_translation_th(en),
+        Lang::Tr => generated_group3a::has_translation_tr(en),
+        Lang::Uk => generated_group3b::has_translation_uk(en),
+        Lang::Vi => generated_group3b::has_translation_vi(en),
     }
 }
 
@@ -164,6 +346,7 @@ translation_table!(lookup_fr, {
     "Scan Mode" => "Mode d'analyse",
     "DirOtter now handles batch and snapshot pacing automatically. You no longer need to tune technical knobs." => "DirOtter gère maintenant automatiquement le rythme des lots et des instantanés. Vous n'avez plus besoin de régler des paramètres techniques.",
     "Start Scan" => "Démarrer l'analyse",
+    "Scan Setup" => "Paramètres d'analyse",
     "Use the top-right stop button while a scan is running." => "Utilisez le bouton d'arrêt en haut à droite pendant une analyse.",
     "Volume Summary" => "Résumé du volume",
     "Use the volume-level summary to orient yourself before drilling into directories." => "Utilisez le résumé du volume pour vous orienter avant d'explorer les répertoires.",
@@ -289,6 +472,12 @@ translation_table!(lookup_fr, {
     "Permanent delete" => "Suppression définitive",
     "Quick Actions" => "Actions rapides",
     "Delete directly from the inspector instead of jumping to a separate page." => "Supprimez directement depuis l'inspecteur au lieu d'ouvrir une page séparée.",
+    "Release Memory" => "Libérer la mémoire",
+    "Release System Memory" => "Libérer la mémoire système",
+    "Clear transient app caches and try to shrink the current process. Disabled during scan or delete work." => "Efface les caches temporaires de l'application et tente de réduire le processus actuel. Désactivé pendant une analyse ou une suppression.",
+    "Uses Windows-supported memory trimming to shrink large interactive processes and, when allowed, trim the system file cache." => "Utilise les mécanismes pris en charge par Windows pour réduire les processus interactifs les plus gourmands et, si les droits le permettent, rogner le cache fichiers système.",
+    "Memory release stays disabled while scan or delete tasks are active so the current work is not interrupted." => "La libération de mémoire reste désactivée pendant les analyses ou suppressions afin de ne pas interrompre le travail en cours.",
+    "System memory release is running in the background. The UI stays responsive and will show the before/after result automatically." => "La libération de mémoire système s’exécute en arrière-plan. L’interface reste réactive et affichera automatiquement le résultat avant/après.",
     "Open File Location" => "Ouvrir l'emplacement",
     "Opened the target location in the system file manager." => "L'emplacement cible a été ouvert dans le gestionnaire de fichiers système.",
     "Failed to open location" => "Échec d'ouverture de l'emplacement",
@@ -338,6 +527,7 @@ translation_table!(lookup_fr, {
     "Finalizing Final Results" => "Finalisation des résultats",
     "Manual path (optional)" => "Chemin manuel (optionnel)",
     "Start with a drive button first. Only type a manual path when you need a subfolder." => "Commencez d'abord par un bouton de lecteur. Saisissez un chemin manuel uniquement si vous avez besoin d'un sous-dossier.",
+    "Scanning finds storage hotspots. Use the separate memory action in Quick Actions for memory release." => "L'analyse repère les points chauds de stockage. Utilisez l'action mémoire séparée dans Actions rapides pour libérer la mémoire.",
     "There is no scan result to save yet." => "Aucun résultat de scan n'est encore disponible à enregistrer.",
     "Saved the current snapshot manually." => "L'instantané actuel a été enregistré manuellement.",
     "Failed to save snapshot" => "Échec de l'enregistrement de l'instantané",
@@ -346,14 +536,44 @@ translation_table!(lookup_fr, {
     "Exported the errors CSV." => "Le CSV des erreurs a été exporté.",
     "Failed to export errors CSV" => "Échec de l'export du CSV des erreurs",
     "Exported the diagnostics bundle." => "Le paquet de diagnostic a été exporté.",
-    "Release DirOtter Memory" => "Libérer la mémoire de DirOtter",
+    "One-Tap Boost" => "Accélération en un clic",
+    "Boost Now (Recommended)" => "Accélérer maintenant (recommandé)",
+    "Start Boost Scan" => "Lancer l’analyse d’accélération",
+    "Review Boost Suggestions" => "Voir les suggestions d’accélération",
+    "Review Largest Items" => "Voir les plus gros éléments",
+    "Advanced Maintenance" => "Maintenance avancée",
+    "The safest and most direct one-tap boost right now is cache cleanup, with about" => "L’action d’accélération en un clic la plus sûre et la plus directe pour le moment est le nettoyage du cache, avec environ",
+    "Run a scan first so DirOtter can identify safe cache and the largest cleanup targets." => "Lancez d’abord une analyse afin que DirOtter puisse identifier les caches sûrs et les plus grosses cibles de nettoyage.",
+    "Potential system-slowing storage targets were found, but they still need your confirmation before execution." => "Des éléments de stockage susceptibles de ralentir le système ont été trouvés, mais ils nécessitent encore votre confirmation avant exécution.",
+    "No safe one-tap boost stands out right now. Starting from the largest folders and files is usually the most effective next step." => "Aucune accélération sûre en un clic ne se démarque pour le moment. Commencer par les plus grands dossiers et fichiers est généralement l’étape suivante la plus efficace.",
+    "There is no obvious one-tap boost action right now. Start from the largest folders and files below." => "Aucune action évidente d’accélération en un clic n’est disponible pour le moment. Commencez par les plus grands dossiers et fichiers ci-dessous.",
+    "These actions are mainly for diagnostics and recovery. They are not part of the normal one-tap speed path for everyday users." => "Ces actions servent surtout au diagnostic et à la récupération. Elles ne font pas partie du parcours normal d’accélération en un clic pour les utilisateurs quotidiens.",
+    "Clean Interrupted Cleanup Area" => "Nettoyer la zone de suppression interrompue",
+    "Optimize DirOtter Memory" => "Optimiser la mémoire de DirOtter",
     "Clean Up Staging" => "Nettoyer la zone staging",
     "Maintenance Done" => "Maintenance terminée",
     "Maintenance Failed" => "Échec de maintenance",
+    "Working set reclaimed about" => "Mémoire de travail récupérée d’environ",
+    "System free memory increased by about" => "La mémoire libre du système a augmenté d’environ",
+    "Trimmed processes" => "Processus réduits",
+    "Scanned candidates" => "Candidats analysés",
+    "System file cache trimmed" => "Cache fichiers système rogné",
+    "System memory release failed" => "La libération de mémoire système a échoué",
+    "A disk snapshot was saved first, so the result can be reloaded later." => "Un instantané disque a d’abord été enregistré, afin que le résultat puisse être rechargé plus tard.",
+    "Cleared the current result and optimized DirOtter memory usage." => "Le résultat actuel a été vidé et l’empreinte mémoire de DirOtter a été optimisée.",
+    "Cleared current results, but Windows working-set trimming failed" => "Les résultats actuels ont été vidés, mais la réduction du working set Windows a échoué",
+    "system free" => "mémoire système libre",
+    "load" => "charge",
     "Cleared the current result and requested DirOtter memory trimming." => "Le résultat actuel a été vidé et une réduction de la mémoire de DirOtter a été demandée.",
     "Cleared current results, but memory trimming failed" => "Les résultats actuels ont été vidés, mais la réduction mémoire a échoué",
     "Manually cleaned remaining staging items." => "Les éléments restants en staging ont été nettoyés manuellement.",
     "Failed to clean staging" => "Échec du nettoyage de la zone staging",
+    "Cleaned leftover items from the interrupted cleanup area." => "Les éléments restants de la zone de suppression interrompue ont été nettoyés.",
+    "Failed to clean the interrupted cleanup area" => "Échec du nettoyage de la zone de suppression interrompue",
+    "Wait for scan or delete tasks to finish before releasing memory." => "Attendez la fin des tâches d'analyse ou de suppression avant de libérer la mémoire.",
+    "Memory release completed: transient caches were cleared and the current process was trimmed." => "Libération de mémoire terminée : les caches temporaires ont été vidés et le processus actuel a été réduit.",
+    "There is no additional application-side memory to release right now." => "Il n'y a pas de mémoire supplémentaire côté application à libérer pour le moment.",
+    "Complete a scan first before using this result view. DirOtter does not auto-load old cached results here, so the UI stays responsive." => "Terminez d'abord une analyse avant d'utiliser cette vue des résultats. DirOtter ne recharge pas automatiquement ici les anciens résultats en cache afin de préserver la réactivité de l'interface.",
 });
 
 translation_table!(lookup_es, {
@@ -468,6 +688,7 @@ translation_table!(lookup_es, {
     "Scan Mode" => "Modo de escaneo",
     "DirOtter now handles batch and snapshot pacing automatically. You no longer need to tune technical knobs." => "DirOtter ahora gestiona automáticamente el ritmo de lotes e instantáneas. Ya no necesitas ajustar controles técnicos.",
     "Start Scan" => "Iniciar escaneo",
+    "Scan Setup" => "Configuración de escaneo",
     "Use the top-right stop button while a scan is running." => "Usa el botón de detener arriba a la derecha mientras el escaneo esté en curso.",
     "Volume Summary" => "Resumen del volumen",
     "Use the volume-level summary to orient yourself before drilling into directories." => "Usa el resumen del volumen para orientarte antes de profundizar en directorios.",
@@ -593,6 +814,12 @@ translation_table!(lookup_es, {
     "Permanent delete" => "Eliminación permanente",
     "Quick Actions" => "Acciones rápidas",
     "Delete directly from the inspector instead of jumping to a separate page." => "Elimina directamente desde el inspector en lugar de abrir una página separada.",
+    "Release Memory" => "Liberar memoria",
+    "Release System Memory" => "Liberar memoria del sistema",
+    "Clear transient app caches and try to shrink the current process. Disabled during scan or delete work." => "Limpia las cachés temporales de la aplicación e intenta reducir el proceso actual. Se desactiva durante el escaneo o la eliminación.",
+    "Uses Windows-supported memory trimming to shrink large interactive processes and, when allowed, trim the system file cache." => "Usa las capacidades admitidas por Windows para reducir procesos interactivos con alto consumo y, cuando los permisos lo permiten, recortar la caché de archivos del sistema.",
+    "Memory release stays disabled while scan or delete tasks are active so the current work is not interrupted." => "La liberación de memoria permanece desactivada mientras haya tareas de escaneo o eliminación activas para no interrumpir el trabajo actual.",
+    "System memory release is running in the background. The UI stays responsive and will show the before/after result automatically." => "La liberación de memoria del sistema se está ejecutando en segundo plano. La interfaz seguirá respondiendo y mostrará automáticamente el resultado antes/después.",
     "Open File Location" => "Abrir ubicación",
     "Opened the target location in the system file manager." => "La ubicación del destino se abrió en el explorador de archivos del sistema.",
     "Failed to open location" => "No se pudo abrir la ubicación",
@@ -642,6 +869,7 @@ translation_table!(lookup_es, {
     "Finalizing Final Results" => "Finalizando resultados",
     "Manual path (optional)" => "Ruta manual (opcional)",
     "Start with a drive button first. Only type a manual path when you need a subfolder." => "Empieza primero con un botón de unidad. Escribe una ruta manual solo cuando necesites una subcarpeta.",
+    "Scanning finds storage hotspots. Use the separate memory action in Quick Actions for memory release." => "El escaneo encuentra los puntos críticos de almacenamiento. Usa la acción de memoria separada en Acciones rápidas para liberar memoria.",
     "There is no scan result to save yet." => "Todavía no hay resultados de escaneo para guardar.",
     "Saved the current snapshot manually." => "La instantánea actual se guardó manualmente.",
     "Failed to save snapshot" => "No se pudo guardar la instantánea",
@@ -650,30 +878,60 @@ translation_table!(lookup_es, {
     "Exported the errors CSV." => "Se exportó el CSV de errores.",
     "Failed to export errors CSV" => "No se pudo exportar el CSV de errores",
     "Exported the diagnostics bundle." => "Se exportó el paquete de diagnóstico.",
-    "Release DirOtter Memory" => "Liberar memoria de DirOtter",
+    "One-Tap Boost" => "Aceleración con un clic",
+    "Boost Now (Recommended)" => "Acelerar ahora (recomendado)",
+    "Start Boost Scan" => "Iniciar escaneo para acelerar",
+    "Review Boost Suggestions" => "Ver sugerencias para acelerar",
+    "Review Largest Items" => "Ver elementos más grandes",
+    "Advanced Maintenance" => "Mantenimiento avanzado",
+    "The safest and most direct one-tap boost right now is cache cleanup, with about" => "La aceleración con un clic más segura y directa en este momento es limpiar caché, con aproximadamente",
+    "Run a scan first so DirOtter can identify safe cache and the largest cleanup targets." => "Primero ejecuta un escaneo para que DirOtter pueda identificar cachés seguros y los mayores objetivos de limpieza.",
+    "Potential system-slowing storage targets were found, but they still need your confirmation before execution." => "Se encontraron elementos de almacenamiento que podrían ralentizar el sistema, pero aún necesitan tu confirmación antes de ejecutarse.",
+    "No safe one-tap boost stands out right now. Starting from the largest folders and files is usually the most effective next step." => "Ahora mismo no destaca ninguna aceleración segura con un clic. Empezar por las carpetas y archivos más grandes suele ser el siguiente paso más efectivo.",
+    "There is no obvious one-tap boost action right now. Start from the largest folders and files below." => "Ahora mismo no hay una acción evidente de aceleración con un clic. Empieza por las carpetas y archivos más grandes de abajo.",
+    "These actions are mainly for diagnostics and recovery. They are not part of the normal one-tap speed path for everyday users." => "Estas acciones son principalmente para diagnóstico y recuperación. No forman parte de la ruta normal de aceleración con un clic para usuarios cotidianos.",
+    "Clean Interrupted Cleanup Area" => "Limpiar área de limpieza interrumpida",
+    "Optimize DirOtter Memory" => "Optimizar memoria de DirOtter",
     "Clean Up Staging" => "Limpiar staging",
     "Maintenance Done" => "Mantenimiento completado",
     "Maintenance Failed" => "Error de mantenimiento",
+    "Working set reclaimed about" => "Conjunto de trabajo recuperado aprox.",
+    "System free memory increased by about" => "La memoria libre del sistema aumentó aproximadamente",
+    "Trimmed processes" => "Procesos reducidos",
+    "Scanned candidates" => "Candidatos analizados",
+    "System file cache trimmed" => "Caché de archivos del sistema recortada",
+    "System memory release failed" => "La liberación de memoria del sistema falló",
+    "A disk snapshot was saved first, so the result can be reloaded later." => "Primero se guardó una instantánea en disco, para que el resultado pueda recargarse más tarde.",
+    "Cleared the current result and optimized DirOtter memory usage." => "Se limpió el resultado actual y se optimizó el uso de memoria de DirOtter.",
+    "Cleared current results, but Windows working-set trimming failed" => "Se limpiaron los resultados actuales, pero falló la reducción del conjunto de trabajo de Windows",
+    "system free" => "memoria libre del sistema",
+    "load" => "carga",
     "Cleared the current result and requested DirOtter memory trimming." => "Se limpió el resultado actual y se solicitó reducir la memoria de DirOtter.",
     "Cleared current results, but memory trimming failed" => "Se limpiaron los resultados actuales, pero falló la reducción de memoria",
     "Manually cleaned remaining staging items." => "Se limpiaron manualmente los elementos restantes de staging.",
     "Failed to clean staging" => "No se pudo limpiar staging",
+    "Cleaned leftover items from the interrupted cleanup area." => "Se limpiaron los elementos restantes del área de limpieza interrumpida.",
+    "Failed to clean the interrupted cleanup area" => "No se pudo limpiar el área de limpieza interrumpida",
+    "Wait for scan or delete tasks to finish before releasing memory." => "Espera a que terminen las tareas de escaneo o eliminación antes de liberar memoria.",
+    "Memory release completed: transient caches were cleared and the current process was trimmed." => "La liberación de memoria se completó: se limpiaron las cachés temporales y se redujo el proceso actual.",
+    "There is no additional application-side memory to release right now." => "Ahora mismo no hay memoria adicional del lado de la aplicación para liberar.",
+    "Complete a scan first before using this result view. DirOtter does not auto-load old cached results here, so the UI stays responsive." => "Completa primero un escaneo antes de usar esta vista de resultados. DirOtter no carga aquí automáticamente resultados antiguos en caché para mantener la interfaz receptiva.",
 });
 
 pub(crate) fn translate_fr(en: &str) -> &str {
-    lookup_fr(en).unwrap_or(en)
+    lookup_fr(en).unwrap_or_else(|| generated_group0::translate_fr(en))
 }
 
 pub(crate) fn translate_es(en: &str) -> &str {
-    lookup_es(en).unwrap_or(en)
+    lookup_es(en).unwrap_or_else(|| generated_group0::translate_es(en))
 }
 
 #[cfg(test)]
 pub(crate) fn has_translation_fr(en: &str) -> bool {
-    lookup_fr(en).is_some()
+    lookup_fr(en).is_some() || generated_group0::has_translation_fr(en)
 }
 
 #[cfg(test)]
 pub(crate) fn has_translation_es(en: &str) -> bool {
-    lookup_es(en).is_some()
+    lookup_es(en).is_some() || generated_group0::has_translation_es(en)
 }

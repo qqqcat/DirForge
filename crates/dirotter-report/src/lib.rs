@@ -73,7 +73,7 @@ pub fn build_summary_report(store: &NodeStore) -> SummaryReport {
         .nodes
         .par_iter()
         .map(|n| SummaryRow {
-            path: n.path.clone(),
+            path: store.node_path(n).to_string(),
             kind: if matches!(n.kind, NodeKind::Dir) {
                 "dir"
             } else {

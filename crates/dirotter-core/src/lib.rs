@@ -1,6 +1,7 @@
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub usize);
@@ -18,10 +19,22 @@ pub enum NodeKind {
 pub struct Node {
     pub id: NodeId,
     pub parent: Option<NodeId>,
+    pub name_id: StringId,
+    pub path: Arc<str>,
+    pub kind: NodeKind,
+    pub size_self: u64,
+    pub size_subtree: u64,
+    pub file_count: u64,
+    pub dir_count: u64,
+    pub dirty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedNode {
+    pub id: NodeId,
+    pub parent: Option<NodeId>,
     pub name: String,
     pub path: String,
-    pub name_id: StringId,
-    pub path_id: StringId,
     pub kind: NodeKind,
     pub size_self: u64,
     pub size_subtree: u64,
@@ -34,9 +47,9 @@ pub struct Node {
 pub struct NodeStore {
     pub nodes: Vec<Node>,
     pub children: HashMap<NodeId, Vec<NodeId>>,
-    pub path_index: HashMap<String, NodeId>,
-    pub string_pool: Vec<String>,
-    pub string_index: HashMap<String, StringId>,
+    pub path_index: HashMap<Arc<str>, NodeId>,
+    pub string_pool: Vec<Arc<str>>,
+    pub string_index: HashMap<Arc<str>, StringId>,
 }
 
 impl NodeStore {
@@ -45,14 +58,37 @@ impl NodeStore {
             return *id;
         }
         let id = StringId(self.string_pool.len());
-        let owned = value.to_string();
+        let owned: Arc<str> = Arc::from(value);
         self.string_pool.push(owned.clone());
         self.string_index.insert(owned, id);
         id
     }
 
     pub fn resolve_string(&self, id: StringId) -> Option<&str> {
-        self.string_pool.get(id.0).map(|s| s.as_str())
+        self.string_pool.get(id.0).map(|s| s.as_ref())
+    }
+
+    pub fn node_name(&self, node: &Node) -> &str {
+        self.resolve_string(node.name_id).unwrap_or("")
+    }
+
+    pub fn node_path<'a>(&self, node: &'a Node) -> &'a str {
+        node.path.as_ref()
+    }
+
+    pub fn resolved_node(&self, node: &Node) -> ResolvedNode {
+        ResolvedNode {
+            id: node.id,
+            parent: node.parent,
+            name: self.node_name(node).to_string(),
+            path: self.node_path(node).to_string(),
+            kind: node.kind,
+            size_self: node.size_self,
+            size_subtree: node.size_subtree,
+            file_count: node.file_count,
+            dir_count: node.dir_count,
+            dirty: node.dirty,
+        }
     }
 
     pub fn mark_dirty(&mut self, id: NodeId) {
@@ -75,19 +111,17 @@ impl NodeStore {
         kind: NodeKind,
         size_self: u64,
     ) -> NodeId {
-        if let Some(id) = self.path_index.get(&path) {
+        if let Some(id) = self.path_index.get(path.as_str()) {
             return *id;
         }
         let id = NodeId(self.nodes.len());
         let name_id = self.intern(&name);
-        let path_id = self.intern(&path);
+        let path: Arc<str> = Arc::from(path);
         let node = Node {
             id,
             parent,
-            name,
-            path: path.clone(),
             name_id,
-            path_id,
+            path: path.clone(),
             kind,
             size_self,
             size_subtree: size_self,
@@ -102,6 +136,35 @@ impl NodeStore {
             self.mark_dirty(pid);
         }
         id
+    }
+
+    pub fn upsert_resolved_node(&mut self, node: ResolvedNode) {
+        let name_id = self.intern(&node.name);
+        let path: Arc<str> = Arc::from(node.path);
+        let compact = Node {
+            id: node.id,
+            parent: node.parent,
+            name_id,
+            path: path.clone(),
+            kind: node.kind,
+            size_self: node.size_self,
+            size_subtree: node.size_subtree,
+            file_count: node.file_count,
+            dir_count: node.dir_count,
+            dirty: node.dirty,
+        };
+        if compact.id.0 >= self.nodes.len() {
+            self.nodes.push(compact.clone());
+        } else {
+            self.nodes[compact.id.0] = compact.clone();
+        }
+        self.path_index.insert(path, compact.id);
+        if let Some(parent) = compact.parent {
+            let children = self.children.entry(parent).or_default();
+            if !children.contains(&compact.id) {
+                children.push(compact.id);
+            }
+        }
     }
 
     pub fn rollup(&mut self) {
@@ -201,6 +264,7 @@ pub enum RiskLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::size_of;
 
     #[test]
     fn rollup_works() {
@@ -241,8 +305,31 @@ mod tests {
         let mut s = NodeStore::default();
         s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
         s.add_node(None, "root".into(), "/root-2".into(), NodeKind::Dir, 0);
-        assert!(s.string_pool.len() >= 3);
+        assert_eq!(s.string_pool.len(), 1);
         let name_id = s.nodes[0].name_id;
         assert_eq!(s.resolve_string(name_id), Some("root"));
+    }
+
+    #[test]
+    fn compact_node_layout_is_smaller_than_legacy_string_heavy_layout() {
+        #[allow(dead_code)]
+        struct LegacyLikeNode {
+            id: NodeId,
+            parent: Option<NodeId>,
+            name: String,
+            path: String,
+            name_id: StringId,
+            kind: NodeKind,
+            size_self: u64,
+            size_subtree: u64,
+            file_count: u64,
+            dir_count: u64,
+            dirty: bool,
+        }
+
+        let compact = size_of::<Node>();
+        let legacy = size_of::<LegacyLikeNode>();
+        println!("compact_node_bytes={compact} legacy_like_node_bytes={legacy}");
+        assert!(compact < legacy);
     }
 }
