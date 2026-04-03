@@ -253,8 +253,11 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                     aggregator.on_error(err);
                     telemetry::record_scan_error();
                 }
-                WalkerEvent::Entry(entry) => {
-                    telemetry::record_walker_recv_blocked(entry.recv_blocked_ms as u64);
+                WalkerEvent::Entry {
+                    entry,
+                    send_blocked_ms,
+                } => {
+                    telemetry::record_walker_recv_blocked(send_blocked_ms as u64);
 
                     let aggregator_started = Instant::now();
                     let metadata_backlog = entry.metadata_backlog;

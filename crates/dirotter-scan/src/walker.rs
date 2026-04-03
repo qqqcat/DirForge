@@ -19,12 +19,14 @@ pub struct EntryEvent {
     pub is_dir: bool,
     pub size: u64,
     pub metadata_backlog: usize,
-    pub recv_blocked_ms: u32,
 }
 
 #[derive(Debug, Clone)]
 pub enum WalkerEvent {
-    Entry(EntryEvent),
+    Entry {
+        entry: EntryEvent,
+        send_blocked_ms: u32,
+    },
     Error(ScanErrorRecord),
 }
 
@@ -228,16 +230,22 @@ fn process_directory(
             queue.push(path.clone());
         }
 
-        let send_started = std::time::Instant::now();
-        let _ = event_tx.send(WalkerEvent::Entry(EntryEvent {
+        let entry_event = EntryEvent {
             path: path.display().to_string(),
             parent_path: dir.display().to_string(),
             name: entry.file_name().to_string_lossy().to_string(),
             is_dir,
             size: if is_dir { 0 } else { metadata.len() },
             metadata_backlog: pending_dirs.load(Ordering::SeqCst),
-            recv_blocked_ms: send_started.elapsed().as_millis() as u32,
-        }));
+        };
+        let send_started = std::time::Instant::now();
+        let send_result = event_tx.send(WalkerEvent::Entry {
+            entry: entry_event,
+            send_blocked_ms: send_started.elapsed().as_millis() as u32,
+        });
+        if send_result.is_err() {
+            return;
+        }
 
         dir_entries += 1;
         if dir_entries > tuning.large_dir_entry_threshold {

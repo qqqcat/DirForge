@@ -1,64 +1,72 @@
 # Task Plan
 
 ## Goal
-将 DirOtter 的扫描入口从“技术参数调优”改为“用户可理解的扫描模式”，降低普通用户的理解成本，并把实现、测试和文档一次性对齐到 2026-03-18 的代码状态。
+基于 2026-04-03 的整体代码评估结果，推动 DirOtter 从“中上质量、局部已有技术债”的状态，进入“高质量 Rust 工程实现”的下一阶段。
 
 ## Problem Statement
-- 当前扫描入口直接暴露 `profile / batch / snapshot interval`。
-- `SSD / HDD / Network` 与 `batch / snapshot` 都偏向实现细节，不适合普通用户。
-- 文档也在引导用户手动调参数，进一步放大了理解门槛。
+- `dirotter-ui` 已膨胀为单文件核心，状态、调度、业务规则和页面渲染混杂。
+- 扫描快照链路仍包含明显的重复全量计算。
+- 扫描事件流中存在不必要的字符串复制，Rust 的少拷贝优势发挥不充分。
+- 工程门槛尚未完全收口到 `clippy -D warnings`。
+- 现有计划文档停留在旧任务，不足以指导下一轮系统性改进。
 
 ## Optimization Strategy
-1. 用三档用户模式替代技术参数：
-   - `快速扫描（推荐）`
-   - `深度扫描`
-   - `超大硬盘模式`
-2. 保留内部调优能力，但只在代码里维护映射，不再在 UI 暴露数值旋钮。
-3. 明确说明：
-   - 三种模式都会完整扫描当前范围
-   - 差异只在扫描节奏、事件批次和界面刷新方式
-4. 将模式定义集中到扫描层，避免 UI、测试、文档各自维护一套描述。
+1. 先做低风险高收益收口：
+   - 修复当前静态检查失败
+   - 修复已确认的低成本实现问题
+   - 更新专项计划与评估文档
+2. 再拆 UI 架构：
+   - 分离 controller、analysis、diagnostics、pages、widgets
+   - 降低 `DirOtterNativeApp` 的职责密度
+3. 同步推动扫描链路增量化：
+   - 降低快照期间的全量 `rollup + top-k` 成本
+   - 让 dirty 标记真正参与增量更新
+4. 最后收口数据流和持久化：
+   - 减少字符串复制
+   - 提升快照写入一致性
+   - 固化 CI 质量门槛
 
-## Internal Mapping
-| 用户模式 | 内部 profile | batch_size | snapshot_ms | metadata_parallelism | deep_tasks_throttle |
-|---|---:|---:|---:|---:|---:|
-| 快速扫描（推荐） | `Ssd` | `256` | `75` | `4` | `64` |
-| 深度扫描 | `Hdd` | `192` | `60` | `6` | `96` |
-| 超大硬盘模式 | `Network` | `640` | `150` | `3` | `192` |
-
-说明：
-- 用户只看到模式名称和场景说明。
-- `profile / batch / snapshot` 继续作为扫描引擎内部实现细节存在。
+## Plan Document
+- 详细改进计划与实施计划见：
+  - `docs/engineering-improvement-plan-2026-04.md`
 
 ## Execution Plan
-- [x] 梳理代码影响面：扫描 UI、扫描配置、测试、README、使用文档、设计文档、工作记录。
-- [x] 在 `dirotter-scan` 中引入统一的 `ScanMode` 预设模型。
-- [x] 用 `ScanConfig::for_mode(...)` 统一生成内部扫描配置。
-- [x] 将 UI 从 `SSD/HDD/Network + batch/snapshot` 改为三档模式选择。
-- [x] 添加模式说明文案，明确“完整扫描不变，只调整节奏与刷新方式”。
-- [x] 持久化用户所选扫描模式到本地设置。
-- [x] 补充测试，验证模式映射与预设模式可完成扫描。
-- [x] 更新 README、使用指南、快速上手、UI 规格、系统设计、综合评估、任务记录。
+- [x] 重新审视 workspace、核心 crate、扫描链路、平台层和 UI 主体。
+- [x] 产出专项改进计划与实施计划文档。
+- [x] 修复当前 `clippy -D warnings` 失败项。
+- [x] 修复已确认的低成本实现问题：
+  - 扫描发送阻塞时间采样
+  - 删除计划中的路径类型判断
+- [~] 分阶段拆解 `dirotter-ui`。
+  - [x] 抽离 `cleanup analysis` 到独立模块
+  - [x] 抽离 controller
+  - [ ] 抽离页面模块
+- [ ] 分阶段实现扫描快照增量化。
+- [ ] 分阶段瘦身扫描消息链路与快照持久化。
 
 ## Verification Plan
-1. 代码层验证：
-   - `ScanMode` 设置值可 round-trip
-   - `ScanConfig::default()` 回到推荐模式
-   - 三档模式在内部节奏上具备明显差异
-2. 集成验证：
-   - 三档模式都能完成 sample fixture 扫描
-3. 工程验证：
-   - 运行 `cargo fmt --all`
-   - 运行 `cargo test --workspace`
+1. 工程验证：
+   - `cargo fmt --all`
+   - `cargo build --workspace`
+   - `cargo test --workspace`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+2. 文档验证：
+   - 更新专项计划、综合评估、发现记录和进展记录
+3. 后续阶段验证：
+   - 为 UI 拆分和扫描增量化补对应回归测试
 
 ## Verification Status
 - `cargo fmt --all`：已通过
+- `cargo build --workspace`：已通过
 - `cargo test --workspace`：已通过
+- `cargo clippy --workspace --all-targets -- -D warnings`：已通过
 
 ## Result
-- 扫描入口已从技术参数面板收口为用户模式选择。
-- 默认推荐路径更清晰，普通用户不再被迫理解 `batch / snapshot`。
-- 文档、实现和测试已围绕同一套扫描模式定义收口。
+- 本轮重点已切换为“质量收口 + 架构减债”。
+- 详细计划已独立沉淀到 `docs/engineering-improvement-plan-2026-04.md`。
+- 当前阶段的目标不是继续堆功能，而是为下一轮高质量重构建立边界、顺序和验证门槛。
+- 当前仓库已经完成一次质量门槛收口，后续 UI 拆分和扫描增量化可以在更干净的基线上推进。
+- Phase 1 已正式启动，`cleanup analysis` 已完成第一次模块拆分。
 
 ## Follow-up: Result View Simplification
 - Treemap 不再按实时扫描刷新。
@@ -222,3 +230,18 @@
 - `cargo fmt --all`：通过
 - `cargo test --workspace`：通过
 - `cargo build -p dirotter-app`：通过
+
+### Phase 1 增量进展（2026-04-03）
+1. 已完成
+   - 抽离 `cleanup.rs`
+   - 抽离 `controller.rs`
+   - 抽离 `dashboard.rs + dashboard_impl.rs`
+2. 当前收益
+   - `dirotter-ui/src/lib.rs` 不再同时承载 cleanup 规则、后台 controller、以及 dashboard 页面细节
+   - 后续页面层拆分路径已明确为 `current_scan -> treemap -> diagnostics`
+3. 当前验证
+   - `cargo fmt --all`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过

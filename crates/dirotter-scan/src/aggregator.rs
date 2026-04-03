@@ -182,7 +182,6 @@ mod tests {
             is_dir: false,
             size: 7,
             metadata_backlog: 0,
-            recv_blocked_ms: 0,
         });
         assert!(child.is_empty());
 
@@ -193,7 +192,6 @@ mod tests {
             is_dir: true,
             size: 0,
             metadata_backlog: 0,
-            recv_blocked_ms: 0,
         });
 
         assert_eq!(parent_batch.len(), 2);

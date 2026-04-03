@@ -1,5 +1,57 @@
 # Progress Log
 
+## 2026-04-03（整体工程评估、计划落地与质量收口）
+- 已完成一轮针对 workspace、核心 crate、扫描链路、平台层与 UI 主体的整体质量评估。
+- 结论已从“继续加功能”切换为“先做质量收口和架构减债”，并识别出三条主线：
+  - 拆解 `dirotter-ui`
+  - 让扫描快照链路增量化
+  - 收口 Rust 工程质量门槛
+- 已新增 `docs/engineering-improvement-plan-2026-04.md`，系统化整理改进计划与实施计划。
+- 已修复当前 `clippy -D warnings` 暴露的问题，并顺手修正：
+  - 扫描发送阻塞时间采样实现
+  - 删除计划中的路径类型判断
+- 已继续修复 `dirotter-actions` 中被 `clippy` 继续挖出的类型复杂度、重复分支和 `io::Error::other` 风格问题。
+- 已清理 `dirotter-ui` 生成翻译文件中的隐形字符，并修复两处 UI 层 clippy 告警。
+- 已同步更新 `task_plan.md`、`findings.md`、`docs/dirotter-comprehensive-assessment.md`。
+- 本轮最终工程复验已完成：
+  - `cargo fmt --all`：通过
+  - `cargo build --workspace`：通过
+  - `cargo test --workspace`：通过
+  - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+## 2026-04-03（Phase 1：cleanup analysis 模块拆分）
+- 已开始执行 UI 模块拆分的第一阶段，优先从 `cleanup analysis` 下手。
+- 新增 `crates/dirotter-ui/src/cleanup.rs`，将以下纯规则/纯分析逻辑移出 `lib.rs`：
+  - 清理分类
+  - 风险判断
+  - 候选评分
+  - Top-N 收口
+  - 清理分析生成
+  - 缓存快清 eligibility 判断
+- `DirOtterNativeApp` 保留了薄包装方法，现有调用点和 UI 测试无需大改。
+- 已完成回归验证：
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+  - `cargo test --workspace`：通过
+  - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+## 2026-04-03（Phase 1：controller 模块拆分）
+- 继续推进 UI 模块拆分，新增 `crates/dirotter-ui/src/controller.rs`。
+- 已将以下后台任务/controller 逻辑从 `lib.rs` 抽离：
+  - 删除后台执行 session
+  - 删除 relay 状态
+  - 内存释放后台 session
+  - 后台线程启动与完成结果提取
+- `lib.rs` 现在保留的是：
+  - UI 状态切换
+  - 删除结果落回应用状态后的消费逻辑
+  - 页面渲染中对 snapshot 的读取
+- 本轮验证结果：
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+  - `cargo test --workspace`：通过
+  - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
 ## 2026-02-16
 - 已读取并分析参考文档。
 - 已建立持久化执行文件：`task_plan.md`、`findings.md`、`progress.md`。
@@ -196,3 +248,10 @@
 - 补充 UI 单测，覆盖语言设置 round-trip、区域设置检测和核心操作文案翻译。
 - 已完成工程复验：`cargo fmt --all`、`cargo check --workspace`、`cargo build --workspace`、`cargo test --workspace` 全部通过。
 - 已同步更新 `README.md`、`docs/dirotter-install-usage.md`、`docs/quickstart.md`、`docs/dirotter-ui-component-spec.md`、`docs/dirotter-comprehensive-assessment.md`、`docs/dirotter-sdd.md`、`task_plan.md`、`findings.md`、`progress.md`。
+
+## 2026-04-03（Phase 1：dashboard 页面模块拆分）
+- 继续推进 `dirotter-ui` 模块化，新增 `crates/dirotter-ui/src/dashboard.rs` 与 `crates/dirotter-ui/src/dashboard_impl.rs`。
+- 已将 `ui_dashboard`、`render_overview_hero`、`render_live_overview_hero`、`render_overview_metrics_strip`、`render_scan_target_card` 从 `lib.rs` 抽离到独立页面模块。
+- `lib.rs` 现在只保留 `ui_dashboard` 入口转发，页面渲染细节不再继续堆在主文件里。
+- 本轮拆分过程中发现新模块文案复制出现编码污染，已改为基于原始 `lib.rs` 块生成实现并收回到 `src/` 下，最终代码状态已恢复干净可维护。
+- 已完成验证：`cargo fmt --all`、`cargo test -p dirotter-ui`、`cargo clippy -p dirotter-ui --all-targets -- -D warnings`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 全部通过。

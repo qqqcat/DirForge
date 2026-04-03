@@ -95,6 +95,17 @@ pub struct ExecutionConfig {
     pub compare_with_dry_run: bool,
 }
 
+type ExecuteOutcome = (
+    bool,
+    String,
+    Option<ActionFailureKind>,
+    u8,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 impl Default for ExecutionConfig {
     fn default() -> Self {
         Self {
@@ -309,16 +320,7 @@ fn execute_with_retry(
     mode: ExecutionMode,
     meta: TargetMeta,
     retries: u8,
-) -> (
-    bool,
-    String,
-    Option<ActionFailureKind>,
-    u8,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-) {
+) -> ExecuteOutcome {
     let mut attempt = 0u8;
     let _ = (meta.exists, meta.writable, meta.protected_reason);
     loop {
@@ -426,9 +428,7 @@ fn failure_dimensions(
     kind: ActionFailureKind,
     mode: ExecutionMode,
 ) -> (Option<String>, Option<String>) {
-    let platform_kind = if mode == ExecutionMode::RecycleBin {
-        Some(format!("{:?}", kind))
-    } else if mode == ExecutionMode::FastPurge {
+    let platform_kind = if matches!(mode, ExecutionMode::RecycleBin | ExecutionMode::FastPurge) {
         Some(format!("{:?}", kind))
     } else {
         None
@@ -461,20 +461,29 @@ fn map_platform_error(err: dirotter_platform::PlatformError) -> ActionFailureKin
 
 fn path_kind(path: &str) -> &'static str {
     let p = Path::new(path);
-    if p.extension().is_some() {
-        "file_like"
-    } else {
-        "dir_like"
+    if let Ok(meta) = std::fs::metadata(p) {
+        if meta.is_dir() {
+            return "dir_like";
+        }
+        if meta.is_file() {
+            return "file_like";
+        }
     }
+
+    if p.extension().is_some() {
+        return "file_like";
+    }
+
+    "dir_like"
 }
 
 fn delete_file_fast(path: &str) -> io::Result<Option<String>> {
     #[cfg(target_os = "windows")]
     {
         let target = Path::new(path);
-        return dirotter_platform::purge_staged_path(&target.display().to_string())
+        dirotter_platform::purge_staged_path(&target.display().to_string())
             .map(|_| None)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err.message));
+            .map_err(|err| io::Error::other(err.message))
     }
 
     #[cfg(not(target_os = "windows"))]

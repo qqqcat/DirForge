@@ -99,23 +99,23 @@ pub fn assess_path_access(path: &str) -> Result<PathAccessAssessment, PlatformEr
 pub fn capabilities() -> PlatformCapabilities {
     #[cfg(target_os = "windows")]
     {
-        return PlatformCapabilities {
+        PlatformCapabilities {
             reveal_in_explorer: true,
             select_in_explorer: true,
             recycle_bin: true,
             stable_file_identity: true,
             volume_info: true,
-        };
+        }
     }
     #[cfg(target_os = "macos")]
     {
-        return PlatformCapabilities {
+        PlatformCapabilities {
             reveal_in_explorer: true,
             select_in_explorer: true,
             recycle_bin: true,
             stable_file_identity: true,
             volume_info: true,
-        };
+        }
     }
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
@@ -442,7 +442,7 @@ fn trim_system_file_cache() -> Result<bool, PlatformError> {
         return Ok(false);
     }
 
-    let mut privileges = TOKEN_PRIVILEGES {
+    let privileges = TOKEN_PRIVILEGES {
         PrivilegeCount: 1,
         Privileges: [LUID_AND_ATTRIBUTES {
             Luid: luid,
@@ -453,7 +453,7 @@ fn trim_system_file_cache() -> Result<bool, PlatformError> {
         AdjustTokenPrivileges(
             token,
             0,
-            &mut privileges,
+            &privileges,
             0,
             std::ptr::null_mut(),
             std::ptr::null_mut(),

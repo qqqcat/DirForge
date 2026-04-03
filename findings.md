@@ -1,5 +1,37 @@
 # Findings
 
+## 2026-04-03 Engineering Assessment Follow-up
+
+## Verification
+- 已新增专项计划文档：`docs/engineering-improvement-plan-2026-04.md`
+- 已修复当前 `clippy -D warnings` 失败项
+- 已修复两处低成本实现问题：
+  - 扫描发送阻塞时间采样不准确
+  - 删除计划中的文件/目录类型判断过于粗糙
+- 已修复 `dirotter-actions`、`dirotter-ui` 在 `clippy -D warnings` 下继续暴露出的风格和生成文件问题
+- `cargo fmt --all`：通过
+- `cargo build --workspace`：通过
+- `cargo test --workspace`：通过
+- `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+## Key Findings
+- 当前仓库不是典型失控“屎山”，但 `dirotter-ui` 已出现明显 God File / God Object 趋势。
+- 扫描快照链路仍有重复全量计算，后续应优先做增量化。
+- Rust 的类型安全和并发安全发挥得不错，但少拷贝数据流和增量算法优势尚未充分发挥。
+- 工程质量门槛需要收口到 `clippy -D warnings`，否则代码质量会继续缓慢下滑。
+
+## Immediate Actions
+- 将专项改进计划与实施计划落地为独立文档。
+- 先修当前静态检查失败和低风险实现问题，再进入下一轮架构级重构。
+- 清理生成翻译文件中的隐形字符，避免它们持续污染质量门槛。
+
+## Phase 1 Progress
+- `cleanup analysis` 已从 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 抽离到独立模块 [cleanup.rs](E:/DirForge/crates/dirotter-ui/src/cleanup.rs)。
+- 这次抽离优先迁移了纯分析逻辑：分类、风险判断、候选评分、Top-N 收口和清理计划预处理。
+- `DirOtterNativeApp` 目前仍保留薄包装方法，以保证现有 UI 和测试行为不变。
+- `delete / memory` 的后台线程和 relay 逻辑已抽离到 [controller.rs](E:/DirForge/crates/dirotter-ui/src/controller.rs)。
+- 当前 `lib.rs` 仍保留 UI 状态变更和结果消费逻辑，但线程启动与后台结果收取已不再直接写在主文件里。
+
 ## 2026-03-18 Scan Experience Optimization
 
 ## Verification
@@ -172,3 +204,9 @@
 1. 为主页面建立统一的 12-column 栅格和固定 gutter token。
 2. 引入最小视觉回归或截图对比，覆盖留白、对齐、标题状态和列表高度。
 3. 继续压实删除链路中的阶段反馈与回收站可见性体验。
+
+## Phase 1 Update
+- `dashboard` 页面层已从 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 拆出，当前实现位于 [dashboard.rs](E:/DirForge/crates/dirotter-ui/src/dashboard.rs) 与 [dashboard_impl.rs](E:/DirForge/crates/dirotter-ui/src/dashboard_impl.rs)。
+- `dirotter-ui` 主文件的职责继续下降：`cleanup analysis`、后台 `controller`、以及首页 `dashboard` 页面都已脱离单文件堆叠。
+- 本轮唯一新增问题是页面模块初版出现编码污染；该问题已在同轮修复，没有遗留到主分支状态。
+- 下一步最适合继续拆的是 `current_scan / treemap / diagnostics` 页面层，而不是再把更多业务塞回 `lib.rs`。
