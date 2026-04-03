@@ -90,9 +90,13 @@ Stage 6 Finished Publish
 - **L1 内存热缓存**：当前可见列表/treemap 数据。
 - **L2 会话缓存**：当前扫描状态与待处理事件。
 - **L3 持久化缓存**：SQLite 设置、审计与按需历史快照。
-- **Rust 结构优化**：常驻 `NodeStore` 中的 `Node` 只保留 `name_id / path_id`，完整字符串统一驻留在字符串池；扫描中的增量快照使用 resolved 视图，避免把字符串重复常驻在每个节点上。
+- **Rust 结构优化**：常驻 `NodeStore` 中的 `Node` 只对名称做 intern，并把完整路径保留为共享 `Arc<str>`；扫描中的增量快照使用 resolved 视图，避免把字符串重复常驻在每个节点上。
+- **扫描事件优化**：`walker -> aggregator -> publisher` 的热路径已把 entry/batch 中的路径字段改为共享 `Arc<str>`，只在 UI 边界再物化展示字符串。
+- **事件边界优化**：扫描进度当前路径、实时 snapshot Top-N 和完成态 Top-N 也已继续改为共享路径，进一步把字符串物化点推迟到 UI 接管阶段。
+- **UI 状态优化**：UI 会以共享路径持有当前扫描路径和实时/完成态排行，只在具体渲染 helper 需要文本时再做物化。
+- **Snapshot 节点优化**：`ResolvedNode` 的 `name / path` 已改为共享字符串，实时 snapshot 节点列表不再为每个节点重新分配完整文本。
 - 快照策略：同一路径只保留最新一份 `NodeStore` 快照，避免重复扫描同一路径时 SQLite 体积线性增长；默认不在每次扫描结束后自动写入。
-- WAL 管理：快照写入后主动执行 checkpoint，及时收缩 `dirotter.db-wal`。
+- WAL 管理：快照写入保留 WAL 模式，但不再在每次保存热路径上强制 checkpoint；后续维护动作或空闲期再做收口。
 - Staging 清理：应用启动时会扫描并继续清理遗留的 `.dirotter-staging` 项，避免上次异常退出后残留缓存占用。
 
 ## 7. 重复文件检测架构

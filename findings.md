@@ -210,3 +210,36 @@
 - `dirotter-ui` 主文件的职责继续下降：`cleanup analysis`、后台 `controller`、以及首页 `dashboard` 页面都已脱离单文件堆叠。
 - 本轮唯一新增问题是页面模块初版出现编码污染；该问题已在同轮修复，没有遗留到主分支状态。
 - 下一步最适合继续拆的是 `current_scan / treemap / diagnostics` 页面层，而不是再把更多业务塞回 `lib.rs`。
+
+## Phase 1 Update 2
+- `current_scan / treemap` 页面层已继续从 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 拆出，当前实现位于 [result_pages.rs](E:/DirForge/crates/dirotter-ui/src/result_pages.rs)。
+- 现在 `dirotter-ui` 主文件已经不再直接承载三块页面细节：`dashboard`、`current_scan`、`treemap`。
+- 下一步最合适的是继续拆 `diagnostics / settings` 页面层，然后再评估是否需要把页面共享 helper 再下沉一层。
+
+## Phase 1 Update 3
+- `history / errors / diagnostics / settings` 页面层也已继续从 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 拆出，当前实现位于 [advanced_pages.rs](E:/DirForge/crates/dirotter-ui/src/advanced_pages.rs) 与 [settings_pages.rs](E:/DirForge/crates/dirotter-ui/src/settings_pages.rs)。
+- 现在 `dirotter-ui` 主文件已不再直接承载主要页面渲染细节，Phase 1 的“先拆页面层”目标基本完成。
+- 下一步更合适的是回到共享 helper、状态分组和扫描快照成本，而不是继续往 `lib.rs` 里搬页面代码。
+
+## Core Optimization Update
+- `NodeStore` 的 dirty 链路已经从“有字段但基本没用”变成“真正参与 rollup”的实现，位置在 [lib.rs](E:/DirForge/crates/dirotter-core/src/lib.rs)。
+- `top_n_largest_files / largest_dirs` 也已不再走“全量建堆再 pop”的高分配路径，而是改成固定容量候选堆，直接降低 snapshot 节奏上的重复开销。
+- `save_snapshot()` 已收口为事务式替换，位置在 [lib.rs](E:/DirForge/crates/dirotter-cache/src/lib.rs)，并去掉了每次保存后强制 `wal_checkpoint(TRUNCATE)` 的同步重操作。
+- 下一步最合适的是继续下沉共享 helper / 状态分组，或者进一步压缩 `aggregator.make_snapshot_data()` 里的路径解析和 view 组装成本。
+
+## Core Optimization Update 2
+- `NodeStore::add_node()` 已进一步改成 entry-time 维护祖先聚合值，位置在 [lib.rs](E:/DirForge/crates/dirotter-core/src/lib.rs)。
+- 这意味着扫描主路径不再完全依赖“等 snapshot 来补账”，而是在节点进入 store 时就把 `size_subtree / file_count / dir_count` 向上累计。
+- `Aggregator::make_snapshot_data()` 已移除先 `rollup()` 再生成 snapshot 的路径，位置在 [aggregator.rs](E:/DirForge/crates/dirotter-scan/src/aggregator.rs)。
+- `top_files_delta / top_dirs_delta` 现在直接从命中节点导出 `NodeId`，不再先转字符串路径再回查索引。
+- 当前收益是：快照线程继续从“计算者”退回“读取者”，下一步可以更聚焦于消息体瘦身，而不是继续反复补聚合账。
+
+## Scan Message Update
+- `walker -> aggregator -> publisher` 这一段热路径已开始摆脱层层 `String` 复制。
+- [walker.rs](E:/DirForge/crates/dirotter-scan/src/walker.rs) 中的 `EntryEvent` 已切到共享 `Arc<str>`。
+- [lib.rs](E:/DirForge/crates/dirotter-scan/src/lib.rs) 与 [publisher.rs](E:/DirForge/crates/dirotter-scan/src/publisher.rs) 中的 `BatchEntry.path` / `frontier` 也已切到共享路径。
+- [aggregator.rs](E:/DirForge/crates/dirotter-scan/src/aggregator.rs) 中的 `pending_by_parent` 已同步改为共享路径键，减少等待父目录场景下的重复分配。
+- 现在共享路径已经继续推进到事件边界：[lib.rs](E:/DirForge/crates/dirotter-scan/src/lib.rs) 中的 `ScanProgress.current_path`、`SnapshotView.top_files / top_dirs` 和完成态 Top-N 排行都已改为共享路径。
+- 共享路径现在已经继续推进到 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 的实时状态层：`scan_current_path / live_top_* / completed_top_*` 也已改为共享路径持有。
+- `ResolvedNode` 这一层现在也已继续共享化，位置在 [lib.rs](E:/DirForge/crates/dirotter-core/src/lib.rs)。`SnapshotView.nodes` 不再为每个节点重新分配 `name/path String`。
+- 当前还没完全发挥 Rust 的优势，因为部分页面 helper 仍会在渲染前物化文本；但字符串物化点已经从“扫描热路径中多次发生”收口到“真正需要渲染或文本输出时才发生”。

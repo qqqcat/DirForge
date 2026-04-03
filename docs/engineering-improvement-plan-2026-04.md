@@ -293,13 +293,24 @@
   - `crates/dirotter-ui/src/controller.rs`
   - `crates/dirotter-ui/src/dashboard.rs`
   - `crates/dirotter-ui/src/dashboard_impl.rs`
+  - `crates/dirotter-ui/src/result_pages.rs`
+  - `crates/dirotter-ui/src/settings_pages.rs`
+  - `crates/dirotter-ui/src/advanced_pages.rs`
 - `dashboard` 相关方法已从 `lib.rs` 移出：
   - `ui_dashboard`
   - `render_overview_hero`
   - `render_live_overview_hero`
   - `render_overview_metrics_strip`
   - `render_scan_target_card`
-- 这说明 Phase 1 的页面拆分路径已经验证可行，下一步应继续沿 `current_scan / treemap / diagnostics` 逐页拆分，而不是改回“大文件继续加方法”。
+- `current_scan / treemap` 相关方法也已从 `lib.rs` 移出：
+  - `ui_current_scan`
+  - `ui_treemap`
+- `history / errors / diagnostics / settings` 相关方法也已从 `lib.rs` 移出：
+  - `ui_history`
+  - `ui_errors`
+  - `ui_diagnostics`
+  - `ui_settings`
+- 这说明 Phase 1 的页面拆分路径已经基本完成验证。下一步更适合转向共享 helper 下沉、状态结构收口，以及扫描快照链路优化，而不是改回“大文件继续加方法”。
 - 本轮执行中出现过一次模块文案编码污染，已在同轮修复并重新收口到 `src/` 内部实现文件，没有留下额外运行时问题。
 - 当前验证结果：
   - `cargo fmt --all`
@@ -307,3 +318,82 @@
   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`
   - `cargo test --workspace`
   - `cargo clippy --workspace --all-targets -- -D warnings`
+
+### 2026-04-03 Next Layer Update
+
+- 核心扫描链路优化已开始落地：
+  - `crates/dirotter-core/src/lib.rs`
+  - `crates/dirotter-cache/src/lib.rs`
+- 已完成的具体改造：
+  - `mark_dirty()` 改为向祖先传播 dirty
+  - `rollup()` 改为只重算 dirty 节点
+  - `top_n_largest_files()` / `largest_dirs()` 改为固定容量候选堆
+  - `save_snapshot()` 改为事务式替换
+  - 去掉每次快照保存后的强制 `wal_checkpoint(TRUNCATE)`
+- 这意味着计划里“减快照成本”已经不再只是文档项，而是开始进入代码主干。
+- 当前这一层的下一步更适合继续处理：
+  - `aggregator.make_snapshot_data()` 的 view 组装成本
+  - 共享 helper / 状态分组的继续下沉
+  - 针对 snapshot 节奏的更明确性能基准
+
+### 2026-04-03 Next Layer Update 2
+
+- 扫描链路优化已继续深入到 entry-time 聚合维护：
+  - `NodeStore::add_node()` 现在会即时维护祖先 `size_subtree / file_count / dir_count`
+  - `Aggregator::make_snapshot_data()` 已移除补账式 `rollup()` 依赖
+  - `top_files_delta / top_dirs_delta` 改为直接从命中节点导出
+- 这一步的意义是把“增量化”从 snapshot-time 推进到 entry-time：
+  - snapshot 不再负责为 append-only 扫描补整棵树的账
+  - 扫描线程在插入节点时就把账维护到位
+- 当前剩余的下一步优先项：
+  1. 继续压缩 `EntryEvent / BatchEntry / SnapshotView` 中的 owned string
+  2. 评估是否把 live snapshot 的 view payload 再继续收窄
+  3. 增加更明确的 snapshot/perf 基线，避免后续回退到“大树一来就重新全算”
+
+### 2026-04-03 Phase 3 Start
+
+- “少拷贝数据流”已经开始进入代码主干，而不再只是计划：
+  - `EntryEvent.path / parent_path / name` 已切到共享 `Arc<str>`
+  - `BatchEntry.path` 已切到共享 `Arc<str>`
+  - `Publisher.frontier` 已切到共享路径队列
+  - `Aggregator.pending_by_parent` 已切到共享路径键
+- 当前策略是明确分层：
+  - 扫描 crate 内部尽量共享
+  - UI 边界继续保留 `String`，只在显示前物化
+- 这样做的好处是：
+  - 不需要一次性改穿整个应用状态层
+  - 先把最高频的跨线程热路径成本降下来
+  - 继续保持现有 UI 与测试行为稳定
+
+### 2026-04-03 Phase 3 Update
+
+- 共享路径已经继续推进到扫描事件边界：
+  - `ScanProgress.current_path` 已改为 `Option<Arc<str>>`
+  - `SnapshotView.top_files / top_dirs` 已改为共享路径排行
+  - `ScanEvent::Finished` 的 Top-N 排行也已改为共享路径
+- 当前分层更清晰：
+  - 扫描 crate 内部与事件边界尽量共享
+  - UI 接到事件后再统一物化到自身状态
+- 这一步的意义在于，实时扫描阶段最频繁的“路径转字符串”热点已经继续后移，不再混在 publisher/snapshot 组装里。
+
+### 2026-04-03 Phase 3 Update 2
+
+- 共享路径已经进一步推进到 UI 持有层：
+  - `scan_current_path` 已改为 `Option<Arc<str>>`
+  - 实时/完成态 Top-N 排行已改为共享路径状态
+  - 只有排行 helper 或页面渲染真正需要文本时才 `to_string()`
+- 这样做的价值是：
+  - 继续压缩实时扫描期间的瞬时分配
+  - 保持 UI 页面调用接口基本稳定
+  - 让后续是否继续处理 `ResolvedNode` 变成一个可独立评估的问题，而不是和当前改动耦合
+
+### 2026-04-03 Phase 3 Update 3
+
+- `ResolvedNode` 已继续改为共享字符串结构：
+  - `name / path` 使用 `Arc<str>`
+  - `SnapshotView.nodes` 直接复用已有共享分配
+- 这一步的效果是把实时 snapshot 里最后一块明显的节点级字符串复制也压下去。
+- 当前 Phase 3 的剩余重点已经更集中：
+  1. 评估页面 helper 中是否还存在不必要的批量 `to_string()`
+  2. 决定是否为最终结果页引入更轻的 view model，而不是直接从共享状态即时物化
+  3. 增加更明确的快照 payload / 分配基线

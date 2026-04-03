@@ -255,3 +255,105 @@
 - `lib.rs` 现在只保留 `ui_dashboard` 入口转发，页面渲染细节不再继续堆在主文件里。
 - 本轮拆分过程中发现新模块文案复制出现编码污染，已改为基于原始 `lib.rs` 块生成实现并收回到 `src/` 下，最终代码状态已恢复干净可维护。
 - 已完成验证：`cargo fmt --all`、`cargo test -p dirotter-ui`、`cargo clippy -p dirotter-ui --all-targets -- -D warnings`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 全部通过。
+
+## 2026-04-03（Phase 1：current_scan / treemap 页面模块拆分）
+- 继续推进页面层拆分，新增 `crates/dirotter-ui/src/result_pages.rs`。
+- 已将 `ui_current_scan` 与 `ui_treemap` 从 `lib.rs` 抽离到独立页面模块，`lib.rs` 仅保留薄转发入口。
+- 本轮拆分覆盖的页面职责包括：实时扫描概览、实时 Top-N 列表、最近扫描文件表，以及结果视图的轻量层级浏览与目录条形图。
+- 该拆分验证了 `dirotter-ui` 页面层可以直接复用现有私有 helper 和状态方法，不需要先补一层额外抽象。
+- 已完成验证：`cargo fmt --all`、`cargo test -p dirotter-ui`、`cargo clippy -p dirotter-ui --all-targets -- -D warnings`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 全部通过。
+
+## 2026-04-03（Phase 1：advanced / settings 页面模块拆分）
+- 继续推进页面层拆分，新增 `crates/dirotter-ui/src/settings_pages.rs` 与 `crates/dirotter-ui/src/advanced_pages.rs`。
+- 已将 `ui_diagnostics`、`ui_settings`、`ui_history`、`ui_errors` 从 `lib.rs` 抽离到独立页面模块，`lib.rs` 继续收口为状态协调和入口转发。
+- 至此，`dirotter-ui` 的主要页面层已基本全部脱离主文件：`dashboard`、`current_scan`、`treemap`、`history`、`errors`、`diagnostics`、`settings` 均已模块化。
+- 这轮拆分再次证明现有页面 helper 的可见性边界足够支撑继续模块化，暂时不需要为了拆分而先补一层额外抽象。
+- 已完成验证：`cargo fmt --all`、`cargo test -p dirotter-ui`、`cargo clippy -p dirotter-ui --all-targets -- -D warnings`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 全部通过。
+
+## 2026-04-03（下一层：扫描快照链路优化）
+- 已开始从 UI 模块拆分转入核心扫描成本优化。
+- `crates/dirotter-core/src/lib.rs` 中的 `dirty` 标记已真正参与计算：
+  - `mark_dirty()` 现在会向祖先传播，而不是只标脏当前节点。
+  - `rollup()` 改为只重算 dirty 节点，避免每次快照都全量遍历整棵树。
+  - `top_n_largest_files()` / `largest_dirs()` 改为固定容量候选堆，避免每次快照都为全量节点建大堆。
+- `crates/dirotter-cache/src/lib.rs` 中的 `save_snapshot()` 已改为原子事务替换，并去掉每次保存后的强制 `wal_checkpoint(TRUNCATE)`。
+- 已为 `dirotter-core` 补充 dirty 传播和增量 rollup 的回归测试。
+- 已完成验证：`cargo fmt --all`、`cargo test -p dirotter-core`、`cargo test -p dirotter-scan`、`cargo test -p dirotter-cache`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 全部通过。
+
+## 2026-04-03（下一层：entry-time 聚合维护）
+- 继续深入扫描快照链路，不再满足于“snapshot 时少算一点”，而是把聚合维护前移到 `add_node()`。
+- `crates/dirotter-core/src/lib.rs` 中，`NodeStore::add_node()` 现在会在节点插入时即时更新祖先的：
+  - `size_subtree`
+  - `file_count`
+  - `dir_count`
+- `crates/dirotter-scan/src/aggregator.rs` 中，`make_snapshot_data()` 已移除先 `rollup()` 再取数的路径，改为直接清脏并读取当前聚合结果。
+- `aggregator` 的 `top_files_delta / top_dirs_delta` 也改为直接从命中节点导出，不再先把路径字符串组出来再反查 `NodeId`。
+- 已补充回归测试，覆盖：
+  - `add_node` 的祖先聚合值即时更新
+  - `aggregator` 不依赖额外 rollup 也能生成正确 snapshot 排行
+- 本轮验证结果：
+  - `cargo fmt --all`：通过
+  - `cargo test -p dirotter-core`：通过
+  - `cargo test -p dirotter-scan`：通过
+  - `cargo clippy -p dirotter-core --all-targets -- -D warnings`：通过
+  - `cargo clippy -p dirotter-scan --all-targets -- -D warnings`：通过
+
+## 2026-04-03（Phase 3：扫描消息链路共享路径化）
+- 已开始推进“少拷贝数据流”这一层，不再只优化 snapshot 算法。
+- `crates/dirotter-scan/src/walker.rs` 中，`EntryEvent` 的 `path / parent_path / name` 已改为共享 `Arc<str>`。
+- `crates/dirotter-scan/src/lib.rs` 与 [publisher.rs](E:/DirForge/crates/dirotter-scan/src/publisher.rs) 中，`BatchEntry.path` 和 `Publisher.frontier` 也已改为共享路径。
+- `crates/dirotter-scan/src/aggregator.rs` 中，`pending_by_parent` 和 `root_path` 已同步切到共享路径键，避免等待父目录时继续复制同一串路径。
+- 这意味着 `walker -> aggregator -> publisher` 的热路径已从“层层 owned String”改成“内部共享、边界物化”：
+  - 扫描线程内部共享路径
+  - 只有进度事件发给 UI 时才物化当前路径字符串
+  - UI 批量文件榜单也只在真正落入 `live_files` 时才转 `String`
+- 已完成验证：
+  - `cargo fmt --all`：通过
+  - `cargo test -p dirotter-scan`：通过
+  - `cargo test -p dirotter-ui`：通过
+
+## 2026-04-03（Phase 3：共享路径推进到事件边界）
+- 继续推进“内部共享、边界物化”的方向，不再只停在 `walker -> publisher` 内部。
+- `crates/dirotter-scan/src/lib.rs` 中：
+  - `ScanProgress.current_path` 已改为 `Option<Arc<str>>`
+  - `SnapshotView.top_files / top_dirs` 已改为共享路径排行
+  - `ScanEvent::Finished` 的 `top_files / top_dirs` 也已改为共享路径排行
+- `crates/dirotter-scan/src/publisher.rs` 不再在发送进度事件时把 `frontier` 路径提前 `to_string()`。
+- `crates/dirotter-scan/src/aggregator.rs` 的实时 Top-N 现在直接复用节点共享路径，不再为 snapshot 组装额外字符串。
+- `crates/dirotter-ui/src/lib.rs` 中新增统一物化入口：只有在 UI 真实接管 `current_path` 和排行列表时，才把共享路径转成 `String`。
+- 本轮验证结果：
+  - `cargo fmt --all`：通过
+  - `cargo test -p dirotter-scan`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo clippy -p dirotter-scan --all-targets -- -D warnings`：通过
+  - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+
+## 2026-04-03（Phase 3：UI 排行与进度状态共享化）
+- 共享路径不再只停在扫描事件边界，已经继续进入 `dirotter-ui` 的实时状态层。
+- `crates/dirotter-ui/src/lib.rs` 中：
+  - `scan_current_path` 已改为 `Option<Arc<str>>`
+  - `live_top_files / live_top_dirs / completed_top_files / completed_top_dirs` 已改为共享路径排行
+  - 排行与路径只在真正返回给渲染 helper 时再 `to_string()`
+- 这意味着实时扫描期间：
+  - publisher 不再提早生成进度字符串
+  - UI 接到排行后也不再立刻把整组 Top-N 复制成 `String`
+  - 只有实际渲染或生成文本榜单时才做物化
+- 本轮验证结果：
+  - `cargo fmt --all`：通过
+  - `cargo test -p dirotter-scan`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+
+## 2026-04-03（Phase 3：SnapshotView 节点共享化）
+- 继续推进最后一块实时 snapshot 大 payload：`ResolvedNode` 已从字符串拥有型结构改为共享字符串结构。
+- `crates/dirotter-core/src/lib.rs` 中：
+  - `ResolvedNode.name / path` 已改为 `Arc<str>`
+  - `resolved_node()` 现在会直接复用字符串池和节点路径的共享分配
+  - `upsert_resolved_node()` 也已按共享字符串输入重建 `NodeStore`
+- 这意味着 `SnapshotView.nodes` 不再为每个变更节点重新分配完整 `name/path String`，而是沿用已有共享数据。
+- 本轮验证结果：
+  - `cargo fmt --all`：通过
+  - `cargo test -p dirotter-core`：通过
+  - `cargo test -p dirotter-scan`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo clippy -p dirotter-core --all-targets -- -D warnings`：通过

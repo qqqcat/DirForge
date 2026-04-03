@@ -19,6 +19,8 @@ use std::sync::{
 use std::time::Instant;
 use walker::WalkerEvent;
 
+pub type RankedPath = (Arc<str>, u64);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScanStage {
     Planning,
@@ -29,7 +31,7 @@ pub enum ScanStage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanProgress {
     pub stage: ScanStage,
-    pub current_path: Option<String>,
+    pub current_path: Option<Arc<str>>,
     pub summary: ScanSummary,
     pub queue_depth: usize,
     pub metadata_backlog: usize,
@@ -45,14 +47,14 @@ pub struct SelectionState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotView {
     pub nodes: Vec<ResolvedNode>,
-    pub top_files: Vec<(String, u64)>,
-    pub top_dirs: Vec<(String, u64)>,
+    pub top_files: Vec<RankedPath>,
+    pub top_dirs: Vec<RankedPath>,
     pub selection: SelectionState,
 }
 
 #[derive(Debug, Clone)]
 pub struct BatchEntry {
-    pub path: String,
+    pub path: Arc<str>,
     pub is_dir: bool,
     pub size: u64,
 }
@@ -69,8 +71,8 @@ pub enum ScanEvent {
         summary: ScanSummary,
         store: NodeStore,
         errors: Vec<ScanErrorRecord>,
-        top_files: Vec<(String, u64)>,
-        top_dirs: Vec<(String, u64)>,
+        top_files: Vec<RankedPath>,
+        top_dirs: Vec<RankedPath>,
     },
 }
 
@@ -233,7 +235,7 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
 
         let mut aggregator = Aggregator::new(root_name, root_path.clone());
         let mut publisher = Publisher::new(tx, tuning.batch_size.max(1), tuning.snapshot_ms);
-        publisher.send_planning(root_path, aggregator.summary.clone());
+        publisher.send_planning(root_path.clone().into(), aggregator.summary.clone());
 
         let (walker_tx, walker_rx) = mpsc::sync_channel(tuning.ui_backpressure_batch_budget);
         let walker_cancel = Arc::clone(&cancel_clone);

@@ -1,8 +1,9 @@
-use crate::{BatchEntry, ScanEvent, ScanProgress, ScanStage, SnapshotView};
+use crate::{BatchEntry, RankedPath, ScanEvent, ScanProgress, ScanStage, SnapshotView};
 use dirotter_core::{NodeStore, ScanSummary, SnapshotDelta};
 use dirotter_telemetry as telemetry;
 use std::collections::VecDeque;
 use std::sync::mpsc::{SyncSender, TrySendError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct Publisher {
@@ -10,7 +11,7 @@ pub struct Publisher {
     batch_size: usize,
     snapshot_interval: Duration,
     progress_interval: Duration,
-    frontier: VecDeque<String>,
+    frontier: VecDeque<Arc<str>>,
     batch: Vec<BatchEntry>,
     last_snapshot: Instant,
     last_progress: Instant,
@@ -32,7 +33,7 @@ impl Publisher {
         }
     }
 
-    pub fn send_planning(&self, root: String, summary: ScanSummary) {
+    pub fn send_planning(&self, root: Arc<str>, summary: ScanSummary) {
         let _ = self.tx.send(ScanEvent::Progress(ScanProgress {
             stage: ScanStage::Planning,
             current_path: Some(root),
@@ -143,8 +144,8 @@ impl Publisher {
         summary: ScanSummary,
         store: NodeStore,
         errors: Vec<dirotter_core::ScanErrorRecord>,
-        top_files: Vec<(String, u64)>,
-        top_dirs: Vec<(String, u64)>,
+        top_files: Vec<RankedPath>,
+        top_dirs: Vec<RankedPath>,
     ) {
         let _ = self.tx.send(ScanEvent::Finished {
             summary,

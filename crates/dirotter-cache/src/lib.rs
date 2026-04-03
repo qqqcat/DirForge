@@ -167,15 +167,27 @@ impl CacheStore {
         let compressed = zstd::stream::encode_all(encoded.as_slice(), 3)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let payload_size = compressed.len() as i64;
-        self.conn
-            .execute("DELETE FROM snapshots WHERE root = ?", params![root])?;
-        self.conn.execute(
-            "INSERT INTO snapshots(root, created_at, payload_json, payload_blob, payload_encoding, node_count, payload_size, schema_version) VALUES(?, ?, NULL, ?, 'zstd+bincode', ?, ?, ?)",
-            params![root, now_ts(), compressed, store.nodes.len() as i64, payload_size, SCHEMA_VERSION],
-        )?;
-        self.conn
-            .execute_batch("PRAGMA optimize; PRAGMA wal_checkpoint(TRUNCATE);")?;
-        Ok(())
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let write_result = (|| {
+            self.conn
+                .execute("DELETE FROM snapshots WHERE root = ?", params![root])?;
+            self.conn.execute(
+                "INSERT INTO snapshots(root, created_at, payload_json, payload_blob, payload_encoding, node_count, payload_size, schema_version) VALUES(?, ?, NULL, ?, 'zstd+bincode', ?, ?, ?)",
+                params![root, now_ts(), compressed, store.nodes.len() as i64, payload_size, SCHEMA_VERSION],
+            )?;
+            Ok(())
+        })();
+
+        match write_result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT; PRAGMA optimize;")?;
+                Ok(())
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
     }
 
     pub fn load_latest_snapshot(&self, root: &str) -> rusqlite::Result<Option<NodeStore>> {

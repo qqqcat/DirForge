@@ -13,9 +13,9 @@ const INTERNAL_STAGING_DIR_NAME: &str = ".dirotter-staging";
 
 #[derive(Debug, Clone)]
 pub struct EntryEvent {
-    pub path: String,
-    pub parent_path: String,
-    pub name: String,
+    pub path: Arc<str>,
+    pub parent_path: Arc<str>,
+    pub name: Arc<str>,
     pub is_dir: bool,
     pub size: u64,
     pub metadata_backlog: usize,
@@ -86,7 +86,7 @@ pub fn walk_events(
     let worker_count = tuning.metadata_parallelism.max(1);
     let max_backlog =
         (tuning.deep_tasks_throttle * tuning.duplicate_scheduling_hint).max(worker_count);
-    let root_string = root.display().to_string();
+    let root_string: Arc<str> = Arc::from(root.display().to_string());
     let queue = DirQueue::new(root);
     let pending_dirs = Arc::new(AtomicUsize::new(1));
 
@@ -129,7 +129,7 @@ pub fn walk_events(
 
 fn process_directory(
     dir: &Path,
-    root_string: &str,
+    root_string: &Arc<str>,
     queue: &DirQueue,
     pending_dirs: &AtomicUsize,
     cancel: &AtomicBool,
@@ -165,6 +165,7 @@ fn process_directory(
     };
 
     let mut dir_entries = 0usize;
+    let parent_path: Arc<str> = Arc::from(dir.display().to_string());
     for entry_result in read_dir {
         if cancel.load(Ordering::SeqCst) {
             break;
@@ -187,8 +188,8 @@ fn process_directory(
         if entry.file_name().to_string_lossy() == INTERNAL_STAGING_DIR_NAME {
             continue;
         }
-        let path_string = path.display().to_string();
-        if path_string == root_string {
+        let path_string: Arc<str> = Arc::from(path.display().to_string());
+        if path_string.as_ref() == root_string.as_ref() {
             continue;
         }
 
@@ -199,7 +200,7 @@ fn process_directory(
                 Err(e) => {
                     let reason = format!("metadata: {e}");
                     let _ = event_tx.send(WalkerEvent::Error(ScanErrorRecord {
-                        path: path_string.clone(),
+                        path: path_string.to_string(),
                         reason: reason.clone(),
                         kind: classify_error(&reason),
                     }));
@@ -231,9 +232,9 @@ fn process_directory(
         }
 
         let entry_event = EntryEvent {
-            path: path.display().to_string(),
-            parent_path: dir.display().to_string(),
-            name: entry.file_name().to_string_lossy().to_string(),
+            path: path_string,
+            parent_path: Arc::clone(&parent_path),
+            name: Arc::from(entry.file_name().to_string_lossy().into_owned()),
             is_dir,
             size: if is_dir { 0 } else { metadata.len() },
             metadata_backlog: pending_dirs.load(Ordering::SeqCst),

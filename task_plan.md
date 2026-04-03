@@ -40,9 +40,19 @@
 - [~] 分阶段拆解 `dirotter-ui`。
   - [x] 抽离 `cleanup analysis` 到独立模块
   - [x] 抽离 controller
-  - [ ] 抽离页面模块
-- [ ] 分阶段实现扫描快照增量化。
-- [ ] 分阶段瘦身扫描消息链路与快照持久化。
+  - [x] 抽离页面模块
+- [~] 分阶段实现扫描快照增量化。
+  - [x] dirty 祖先传播
+  - [x] dirty-only rollup
+  - [x] 固定容量 top-k
+  - [x] `add_node` 祖先聚合值即时维护
+  - [x] `aggregator` 快照阶段移除补账式 `rollup`
+  - [~] 快照视图与消息链路继续瘦身
+    - [x] `walker -> aggregator -> publisher` 路径共享化
+    - [ ] `SnapshotView / ScanProgress` 继续延迟物化
+- [~] 分阶段瘦身扫描消息链路与快照持久化。
+  - [x] 热路径批量事件 `path` 改为共享 `Arc<str>`
+  - [ ] 继续压缩完成态与实时快照的展示 payload
 
 ## Verification Plan
 1. 工程验证：
@@ -67,6 +77,7 @@
 - 当前阶段的目标不是继续堆功能，而是为下一轮高质量重构建立边界、顺序和验证门槛。
 - 当前仓库已经完成一次质量门槛收口，后续 UI 拆分和扫描增量化可以在更干净的基线上推进。
 - Phase 1 已正式启动，`cleanup analysis` 已完成第一次模块拆分。
+- 页面层首轮拆分已基本完成，当前重心已进入扫描核心链路的“entry-time 增量维护”。
 
 ## Follow-up: Result View Simplification
 - Treemap 不再按实时扫描刷新。
@@ -236,12 +247,72 @@
    - 抽离 `cleanup.rs`
    - 抽离 `controller.rs`
    - 抽离 `dashboard.rs + dashboard_impl.rs`
+   - 抽离 `result_pages.rs`
+   - 抽离 `settings_pages.rs`
+   - 抽离 `advanced_pages.rs`
 2. 当前收益
-   - `dirotter-ui/src/lib.rs` 不再同时承载 cleanup 规则、后台 controller、以及 dashboard 页面细节
-   - 后续页面层拆分路径已明确为 `current_scan -> treemap -> diagnostics`
+   - `dirotter-ui/src/lib.rs` 不再同时承载 cleanup 规则、后台 controller 和主要页面渲染细节
+   - 页面层已基本完成首轮拆分，主文件更接近“应用协调器”而不是“UI 大杂烩”
+   - 下一步应转向共享 helper 下沉、状态结构收口和扫描链路成本优化
 3. 当前验证
    - `cargo fmt --all`：通过
    - `cargo test -p dirotter-ui`：通过
    - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
    - `cargo test --workspace`：通过
    - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### 下一层增量进展（2026-04-03）
+1. 已完成
+   - `NodeStore::mark_dirty()` 向祖先传播
+   - `NodeStore::rollup()` 改为 dirty-only 重算
+   - `top_n_largest_files / largest_dirs` 改为固定容量候选堆
+   - `CacheStore::save_snapshot()` 改为事务式替换并取消每次强制 WAL 截断
+2. 当前收益
+   - snapshot 节奏上的重复全量计算和重复大堆分配已明显收口
+   - snapshot 保存路径不再每次执行同步重 checkpoint
+3. 当前验证
+   - `cargo test -p dirotter-core`：通过
+   - `cargo test -p dirotter-scan`：通过
+   - `cargo test -p dirotter-cache`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### 更深一层增量进展（2026-04-03）
+1. 已完成
+   - `NodeStore::add_node()` 改为 entry-time 维护祖先 `size_subtree / file_count / dir_count`
+   - `Aggregator::make_snapshot_data()` 不再先做补账式 `rollup`
+   - 快照 Top-N 的 delta 直接从命中节点导出，不再走 `path -> NodeId` 回查
+2. 当前收益
+   - 扫描线程把聚合账本前移到节点写入时维护，快照阶段进一步从“重算”转成“取数”
+   - `aggregator` 的快照组装成本继续下降，尤其适合高频 snapshot 节奏
+3. 当前验证
+   - `cargo fmt --all`：通过
+   - `cargo test -p dirotter-core`：通过
+   - `cargo test -p dirotter-scan`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### Phase 3 启动进展（2026-04-03）
+1. 已完成
+   - `EntryEvent.path / parent_path / name` 改为共享 `Arc<str>`
+   - `BatchEntry.path` 改为共享 `Arc<str>`
+   - `Publisher.frontier` 改为共享路径队列，进度事件只在真正发给 UI 时再物化 `String`
+   - `Aggregator.pending_by_parent` 与 `root_path` 改为共享路径键
+   - `ScanProgress.current_path` 改为共享 `Arc<str>`
+   - `SnapshotView.top_files / top_dirs` 改为共享路径排行
+   - `ScanEvent::Finished` 的 Top-N 排行改为共享路径，UI 收到后再统一物化
+   - `dirotter-ui` 内部 `scan_current_path / live_top_* / completed_top_*` 改为共享路径持有
+   - `ResolvedNode.name / path` 改为共享 `Arc<str>`
+   - `SnapshotView.nodes` 不再为每个节点强制复制 name/path `String`
+2. 当前收益
+   - walker 到 publisher 的热路径已不再为同一条路径层层复制 owned `String`
+   - 共享路径现在已推进到 UI 接管后的排行/进度状态，真正的字符串物化进一步收口到渲染 helper
+   - 实时 snapshot 的节点 payload 也已开始复用共享字符串，而不是为每个节点重复分配完整路径
+3. 当前验证
+   - `cargo fmt --all`：通过
+   - `cargo test -p dirotter-scan`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo test -p dirotter-core`：通过
+   - `cargo clippy -p dirotter-scan --all-targets -- -D warnings`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+   - `cargo clippy -p dirotter-core --all-targets -- -D warnings`：通过

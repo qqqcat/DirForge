@@ -1,5 +1,5 @@
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
@@ -33,8 +33,8 @@ pub struct Node {
 pub struct ResolvedNode {
     pub id: NodeId,
     pub parent: Option<NodeId>,
-    pub name: String,
-    pub path: String,
+    pub name: Arc<str>,
+    pub path: Arc<str>,
     pub kind: NodeKind,
     pub size_self: u64,
     pub size_subtree: u64,
@@ -68,6 +68,10 @@ impl NodeStore {
         self.string_pool.get(id.0).map(|s| s.as_ref())
     }
 
+    pub fn resolve_string_arc(&self, id: StringId) -> Option<Arc<str>> {
+        self.string_pool.get(id.0).cloned()
+    }
+
     pub fn node_name(&self, node: &Node) -> &str {
         self.resolve_string(node.name_id).unwrap_or("")
     }
@@ -80,8 +84,10 @@ impl NodeStore {
         ResolvedNode {
             id: node.id,
             parent: node.parent,
-            name: self.node_name(node).to_string(),
-            path: self.node_path(node).to_string(),
+            name: self
+                .resolve_string_arc(node.name_id)
+                .unwrap_or_else(|| Arc::from("")),
+            path: node.path.clone(),
             kind: node.kind,
             size_self: node.size_self,
             size_subtree: node.size_subtree,
@@ -92,8 +98,14 @@ impl NodeStore {
     }
 
     pub fn mark_dirty(&mut self, id: NodeId) {
-        if let Some(node) = self.nodes.get_mut(id.0) {
+        let mut current = Some(id);
+        while let Some(node_id) = current {
+            let Some(node) = self.nodes.get_mut(node_id.0) else {
+                break;
+            };
+            let parent = node.parent;
             node.dirty = true;
+            current = parent;
         }
     }
 
@@ -133,14 +145,15 @@ impl NodeStore {
         self.path_index.insert(path, id);
         if let Some(pid) = parent {
             self.children.entry(pid).or_default().push(id);
+            self.propagate_addition(pid, kind, size_self);
             self.mark_dirty(pid);
         }
         id
     }
 
     pub fn upsert_resolved_node(&mut self, node: ResolvedNode) {
-        let name_id = self.intern(&node.name);
-        let path: Arc<str> = Arc::from(node.path);
+        let name_id = self.intern(node.name.as_ref());
+        let path = node.path.clone();
         let compact = Node {
             id: node.id,
             parent: node.parent,
@@ -168,52 +181,99 @@ impl NodeStore {
     }
 
     pub fn rollup(&mut self) {
-        for idx in (0..self.nodes.len()).rev() {
+        let dirty_nodes: Vec<_> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, node)| node.dirty.then_some(idx))
+            .collect();
+
+        for idx in dirty_nodes.into_iter().rev() {
             let id = NodeId(idx);
-            if let Some(kids) = self.children.get(&id) {
-                let mut subtree = self.nodes[idx].size_self;
-                let mut files = u64::from(matches!(self.nodes[idx].kind, NodeKind::File));
-                let mut dirs = u64::from(matches!(self.nodes[idx].kind, NodeKind::Dir));
-                for kid in kids {
-                    let n = &self.nodes[kid.0];
-                    subtree += n.size_subtree;
-                    files += n.file_count;
-                    dirs += n.dir_count;
+            let (subtree, files, dirs) = {
+                let node = &self.nodes[idx];
+                let mut subtree = node.size_self;
+                let mut files = u64::from(matches!(node.kind, NodeKind::File));
+                let mut dirs = u64::from(matches!(node.kind, NodeKind::Dir));
+
+                if let Some(kids) = self.children.get(&id) {
+                    for kid in kids {
+                        let child = &self.nodes[kid.0];
+                        subtree += child.size_subtree;
+                        files += child.file_count;
+                        dirs += child.dir_count;
+                    }
                 }
-                self.nodes[idx].size_subtree = subtree;
-                self.nodes[idx].file_count = files;
-                self.nodes[idx].dir_count = dirs;
-            }
+
+                (subtree, files, dirs)
+            };
+
+            let node = &mut self.nodes[idx];
+            node.size_subtree = subtree;
+            node.file_count = files;
+            node.dir_count = dirs;
+            node.dirty = false;
         }
-        self.clear_dirty();
     }
 
     pub fn top_n_largest_files(&self, n: usize) -> Vec<&Node> {
-        let mut heap: BinaryHeap<(u64, usize)> = self
-            .nodes
-            .par_iter()
-            .filter(|node| matches!(node.kind, NodeKind::File))
-            .map(|node| (node.size_self, node.id.0))
-            .collect();
+        self.top_n_nodes_by(n, |node| {
+            matches!(node.kind, NodeKind::File).then_some(node.size_self)
+        })
+    }
 
-        (0..n)
-            .filter_map(|_| heap.pop())
+    pub fn largest_dirs(&self, n: usize) -> Vec<&Node> {
+        self.top_n_nodes_by(n, |node| {
+            matches!(node.kind, NodeKind::Dir).then_some(node.size_subtree)
+        })
+    }
+
+    fn top_n_nodes_by<F>(&self, n: usize, mut score: F) -> Vec<&Node>
+    where
+        F: FnMut(&Node) -> Option<u64>,
+    {
+        if n == 0 {
+            return Vec::new();
+        }
+
+        let mut heap: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::with_capacity(n);
+        for node in &self.nodes {
+            let Some(value) = score(node) else {
+                continue;
+            };
+            let entry = (value, node.id.0);
+            if heap.len() < n {
+                heap.push(Reverse(entry));
+                continue;
+            }
+            if heap.peek().is_some_and(|smallest| entry > smallest.0) {
+                heap.pop();
+                heap.push(Reverse(entry));
+            }
+        }
+
+        let mut entries: Vec<_> = heap.into_iter().map(|entry| entry.0).collect();
+        entries.sort_unstable_by(|left, right| right.cmp(left));
+        entries
+            .into_iter()
             .map(|(_, idx)| &self.nodes[idx])
             .collect()
     }
 
-    pub fn largest_dirs(&self, n: usize) -> Vec<&Node> {
-        let mut heap: BinaryHeap<(u64, usize)> = self
-            .nodes
-            .par_iter()
-            .filter(|node| matches!(node.kind, NodeKind::Dir))
-            .map(|node| (node.size_subtree, node.id.0))
-            .collect();
+    fn propagate_addition(&mut self, parent: NodeId, kind: NodeKind, size_self: u64) {
+        let file_delta = u64::from(matches!(kind, NodeKind::File));
+        let dir_delta = u64::from(matches!(kind, NodeKind::Dir));
+        let mut current = Some(parent);
 
-        (0..n)
-            .filter_map(|_| heap.pop())
-            .map(|(_, idx)| &self.nodes[idx])
-            .collect()
+        while let Some(node_id) = current {
+            let Some(node) = self.nodes.get_mut(node_id.0) else {
+                break;
+            };
+            node.size_subtree += size_self;
+            node.file_count += file_delta;
+            node.dir_count += dir_delta;
+            current = node.parent;
+        }
     }
 }
 
@@ -298,6 +358,85 @@ mod tests {
         let top = s.top_n_largest_files(2);
         assert_eq!(top.len(), 2);
         assert!(top[0].size_self >= top[1].size_self);
+    }
+
+    #[test]
+    fn mark_dirty_propagates_to_ancestors() {
+        let mut s = NodeStore::default();
+        let root = s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
+        let child = s.add_node(
+            Some(root),
+            "child".into(),
+            "/root/child".into(),
+            NodeKind::Dir,
+            0,
+        );
+        s.rollup();
+
+        s.mark_dirty(child);
+
+        assert!(s.nodes[child.0].dirty);
+        assert!(s.nodes[root.0].dirty);
+    }
+
+    #[test]
+    fn rollup_updates_new_leaf_without_recomputing_everything() {
+        let mut s = NodeStore::default();
+        let root = s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
+        let child = s.add_node(
+            Some(root),
+            "child".into(),
+            "/root/child".into(),
+            NodeKind::Dir,
+            0,
+        );
+        s.add_node(
+            Some(child),
+            "old.bin".into(),
+            "/root/child/old.bin".into(),
+            NodeKind::File,
+            4,
+        );
+        s.rollup();
+
+        s.add_node(
+            Some(child),
+            "new.bin".into(),
+            "/root/child/new.bin".into(),
+            NodeKind::File,
+            6,
+        );
+        s.rollup();
+
+        assert_eq!(s.nodes[child.0].size_subtree, 10);
+        assert_eq!(s.nodes[root.0].size_subtree, 10);
+        assert!(s.nodes.iter().all(|node| !node.dirty));
+    }
+
+    #[test]
+    fn add_node_updates_ancestor_aggregates_immediately() {
+        let mut s = NodeStore::default();
+        let root = s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
+        let child = s.add_node(
+            Some(root),
+            "child".into(),
+            "/root/child".into(),
+            NodeKind::Dir,
+            0,
+        );
+
+        s.add_node(
+            Some(child),
+            "new.bin".into(),
+            "/root/child/new.bin".into(),
+            NodeKind::File,
+            6,
+        );
+
+        assert_eq!(s.nodes[child.0].size_subtree, 6);
+        assert_eq!(s.nodes[root.0].size_subtree, 6);
+        assert_eq!(s.nodes[child.0].file_count, 1);
+        assert_eq!(s.nodes[root.0].file_count, 1);
     }
 
     #[test]
