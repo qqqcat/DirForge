@@ -1,5 +1,5 @@
 use crate::walker::EntryEvent;
-use crate::{BatchEntry, SelectionState, SnapshotView};
+use crate::{BatchEntry, FullSnapshotView, LiveSnapshotView, SelectionState, SnapshotView};
 use dirotter_core::{NodeId, NodeKind, NodeStore, ScanErrorRecord, ScanSummary, SnapshotDelta};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -115,31 +115,36 @@ impl Aggregator {
 
         let changed_nodes = std::mem::take(&mut self.changed_since_snapshot);
         let changed_node_count = changed_nodes.len();
-        let view_nodes = if include_full_tree {
-            self.store
-                .nodes
-                .iter()
-                .map(|node| self.store.resolved_node(node))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
         let delta = SnapshotDelta {
             changed_nodes,
             summary: self.summary.clone(),
             top_files_delta,
             top_dirs_delta,
         };
-        let view = SnapshotView {
-            changed_node_count,
-            nodes: view_nodes,
-            top_files,
-            top_dirs,
-            selection: SelectionState {
-                focused: None,
-                expanded: Vec::new(),
-            },
+        let selection = SelectionState {
+            focused: None,
+            expanded: Vec::new(),
+        };
+        let view = if include_full_tree {
+            SnapshotView::Full(FullSnapshotView {
+                changed_node_count,
+                nodes: self
+                    .store
+                    .nodes
+                    .iter()
+                    .map(|node| self.store.resolved_node(node))
+                    .collect(),
+                top_files,
+                top_dirs,
+                selection,
+            })
+        } else {
+            SnapshotView::Live(LiveSnapshotView {
+                changed_node_count,
+                top_files,
+                top_dirs,
+                selection,
+            })
         };
         (delta, view)
     }
@@ -221,11 +226,50 @@ mod tests {
 
         let (_, view) = aggr.make_snapshot_data(false);
 
-        assert_eq!(view.changed_node_count, 2);
-        assert!(view.nodes.is_empty());
-        assert_eq!(view.top_files.first().map(|entry| entry.1), Some(42));
-        assert_eq!(view.top_dirs.first().map(|entry| entry.1), Some(42));
+        assert_eq!(view.changed_node_count(), 2);
+        assert_eq!(view.materialized_node_count(), 0);
+        match view {
+            SnapshotView::Live(view) => {
+                assert_eq!(view.top_files.first().map(|entry| entry.1), Some(42));
+                assert_eq!(view.top_dirs.first().map(|entry| entry.1), Some(42));
+            }
+            SnapshotView::Full(_) => panic!("expected live snapshot view"),
+        }
         assert!(aggr.store.nodes.iter().all(|node| !node.dirty));
+    }
+
+    #[test]
+    fn full_snapshot_view_materializes_nodes_explicitly() {
+        let root = "/tmp/root".to_string();
+        let mut aggr = Aggregator::new("root".to_string(), root.clone());
+
+        aggr.on_entry(EntryEvent {
+            path: format!("{root}/a").into(),
+            parent_path: root.clone().into(),
+            name: "a".into(),
+            is_dir: true,
+            size: 0,
+            metadata_backlog: 0,
+        });
+        aggr.on_entry(EntryEvent {
+            path: format!("{root}/a/file.bin").into(),
+            parent_path: format!("{root}/a").into(),
+            name: "file.bin".into(),
+            is_dir: false,
+            size: 7,
+            metadata_backlog: 0,
+        });
+
+        let (_, view) = aggr.make_snapshot_data(true);
+
+        match view {
+            SnapshotView::Full(view) => {
+                assert_eq!(view.changed_node_count, 2);
+                assert_eq!(view.nodes.len(), aggr.store.nodes.len());
+                assert_eq!(view.top_files.first().map(|entry| entry.1), Some(7));
+            }
+            SnapshotView::Live(_) => panic!("expected full snapshot view"),
+        }
     }
 
     #[test]
@@ -271,7 +315,7 @@ mod tests {
             payload_bytes <= 16 * 1024,
             "incremental snapshot payload regression: {payload_bytes} bytes > 16384 bytes"
         );
-        assert_eq!(view.changed_node_count, 32 * 33);
-        assert!(view.nodes.is_empty());
+        assert_eq!(view.changed_node_count(), 32 * 33);
+        assert_eq!(view.materialized_node_count(), 0);
     }
 }

@@ -350,3 +350,166 @@
    - `cargo build --workspace`：通过
    - `cargo test --workspace`：通过
    - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### SnapshotView 分层进展（2026-04-04）
+1. 已完成
+   - `SnapshotView` 已从单一结构改为显式分层：
+     - `LiveSnapshotView`
+     - `FullSnapshotView`
+     - `SnapshotView::{Live, Full}`
+   - live 扫描路径现在只接轻量视图，不再默认暴露 `nodes`
+   - full-tree 节点物化改为显式 `Full` 路径
+2. 当前收益
+   - 轻量实时路径与重型调试/全量路径的类型边界变清楚了
+   - 后续继续压 live payload 时，不容易再把 `nodes` 误带回常规路径
+3. 当前验证
+   - `cargo test -p dirotter-scan`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### UI NodeId 化进展（2026-04-04）
+1. 已完成
+   - `SelectedTarget` 已新增 `node_id`
+   - `TreemapEntry` 已新增 `node_id`
+   - 新增 `select_node()`，当前结果树内的选择优先走 `NodeId`
+   - treemap 页与 cleanup 候选列表中，凡是明确来自当前 `NodeStore` 的点击都优先按节点选择
+2. 当前收益
+   - UI 内部对当前结果树的选择不再主要依赖路径字符串回查
+   - 当前会话结果树里的选中态与 treemap 交互更接近“ID 驱动 + 路径兜底”
+3. 当前验证
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo test -p dirotter-scan`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### UI View-Model 下沉进展（2026-04-04）
+1. 已完成
+   - 新增 `crates/dirotter-ui/src/view_models.rs`
+   - `summary_cards`
+   - `scan_health_summary / scan_health_short`
+   - `current_ranked_dirs / current_ranked_files`
+   - `contextual_ranked_files_panel`
+   - 以及相关排行物化 helper 已从 `lib.rs` 下沉
+2. 当前收益
+   - `DirOtterNativeApp` 主文件进一步回到状态协调职责
+   - 结果页、首页、状态栏依赖的展示物化逻辑开始集中到独立模块，而不是继续散在主状态实现里
+3. 当前验证
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### 批量字符串物化收口进展（2026-04-04）
+1. 已完成
+   - `view_models.rs` 里的实时/完成态排行已改为共享 `RankedPath`
+   - `contextual_ranked_files_panel()` 已改为返回共享路径排行
+   - `live_files` 已改为共享路径持有
+   - `TreemapEntry.name / path` 已改为共享 `Arc<str>`
+2. 当前收益
+   - 排行面板和结果页不再默认为每次刷新批量构造 `Vec<(String, u64)>`
+   - 实时扫描文件列表在 UI 接管阶段也不再立刻把共享路径落成 `String`
+   - 字符串物化点继续后移到点击、文本截断和真正渲染边缘
+3. 当前验证
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### Inspector 与删除链路共享路径化进展（2026-04-04）
+1. 已完成
+   - `SelectedTarget.name / path` 已改为共享 `Arc<str>`
+   - 当前结果树命中的 Inspector 目标不再默认构造 owned `String`
+   - 删除执行计划仍在边界处显式转回 `String`
+2. 当前收益
+   - Inspector、删除确认窗、cleanup 候选和 treemap 目标现在共享同一批路径/名称分配
+   - 字符串物化继续收口到真正需要对外部 API 或执行计划交互的边界
+3. 当前验证
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### UI 路径状态共享化进展（2026-04-04）
+1. 已完成
+   - `CleanupPanelState.selected_paths` 已从 `HashSet<String>` 改为 `HashSet<Arc<str>>`
+   - `treemap_focus_path` 已从 `Option<String>` 改为 `Option<Arc<str>>`
+   - cleanup 勾选、treemap 聚焦和父级跳转链路已改为直接复用共享路径
+2. 当前收益
+   - UI 内部高频 `contains/remove/切换聚焦` 不再反复持有独立路径副本
+   - Inspector、cleanup、treemap 三条链路现在共享同一套路径状态模型
+   - 真正需要 `String` 的地方继续只保留在执行计划和外部动作边界
+3. 当前验证
+   - `cargo check -p dirotter-ui`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### Inspector / Confirm View-Model 下沉进展（2026-04-04）
+1. 已完成
+   - `view_models.rs` 已新增 Inspector 目标摘要、后台删除任务摘要、永久删除确认和 cleanup 确认的展示模型
+   - `ui_inspector()`、`ui_delete_confirm_dialog()`、`ui_cleanup_delete_confirm_dialog()` 已改成消费 view-model，而不是在主状态函数里直接拼展示文本
+2. 当前收益
+   - `DirOtterNativeApp` 主文件继续从“状态协调 + 展示整形”回到更明确的协调职责
+   - Inspector 和确认窗的文本拼装现在集中在 `view_models.rs`，后续继续优化展示边界时更容易统一处理
+3. 当前验证
+   - `cargo check -p dirotter-ui`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### Inspector 动作态与反馈文案下沉进展（2026-04-04）
+1. 已完成
+   - `view_models.rs` 已新增 Inspector 动作可用性模型
+   - 打开位置 / 快速清理 / 回收站 / 永久删除 / 系统内存释放 的启用条件已改为由 view-model 统一计算
+   - Explorer 反馈、删除反馈和最近执行摘要也已改由 view-model 统一整形
+2. 当前收益
+   - `ui_inspector()` 不再同时承担按钮启用判断、提示文案选择和反馈文案拼装
+   - Inspector 已进一步从“布局 + 状态判断 + 文案拼接”收口为“布局 + 动作分发”
+3. 当前验证
+   - `cargo check -p dirotter-ui`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+### Inspector Workspace Context 下沉进展（2026-04-04）
+1. 已完成
+   - `view_models.rs` 已新增 Workspace Context 展示模型
+   - 根目录和来源文案已改为由 view-model 统一整形
+2. 当前收益
+   - `ui_inspector()` 里的 Workspace Context 已不再直接读取和拼装状态字段
+   - Inspector 主函数现在更接近纯布局 + 动作分发，展示整形已基本收口完成
+3. 当前验证
+   - `cargo check -p dirotter-ui`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+
+### Cleanup Details Window 下沉进展（2026-04-04）
+1. 已完成
+   - `view_models.rs` 已新增 cleanup 详情窗的 tabs / 统计区 / 按钮态 / item 行展示模型
+   - `ui_cleanup_details_window()` 已改为消费 view-model，不再在布局函数里直接拼分类标签、统计值和 item 元数据
+2. 当前收益
+   - cleanup 详情窗从“重布局函数 + 大量展示整形”收口为“布局 + 交互分发”
+   - 后续如果继续调清理建议文案、标签或按钮策略，不需要再穿插修改 UI 布局主体
+3. 当前验证
+   - `cargo check -p dirotter-ui`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+
+### Cleanup Details 交互控制流收口进展（2026-04-04）
+1. 已完成
+   - `ui_cleanup_details_window()` 已从多布尔旗标流改为“动作收集 + 统一处理”
+   - 新增 cleanup 详情窗动作枚举与集中处理 helper
+   - 打开位置、主操作触发、永久删除触发、勾选写回和选中对象聚焦都已脱离窗口尾部的分散 `if` 链
+2. 当前收益
+   - cleanup 详情窗主函数不再依赖多组 `trigger_* / request_* / select_*` 状态拼接控制流
+   - 交互分发边界更清楚，后续补测试或继续拆函数时更容易定位单个动作路径
+3. 当前验证
+   - `cargo check -p dirotter-ui`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过

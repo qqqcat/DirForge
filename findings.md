@@ -261,3 +261,64 @@
   - `text_bytes` 估算值
 - [lib.rs](E:/DirForge/crates/dirotter-scan/src/lib.rs) 不会为了做 telemetry 再额外 JSON 序列化 snapshot，而是只统计共享路径和节点文本长度。
 - 这让 diagnostics 能直接回答一个更实际的问题：最近的优化是否真的把实时 snapshot 稳定压成了“稀疏 payload”。
+
+## SnapshotView Type Update
+- [lib.rs](E:/DirForge/crates/dirotter-scan/src/lib.rs) 中的 `SnapshotView` 现在不再是“轻量/重型混用”的单一结构。
+- 当前已经显式分成：
+  - `LiveSnapshotView`
+  - `FullSnapshotView`
+  - `SnapshotView::{Live, Full}`
+- 这让 `nodes: Vec<ResolvedNode>` 不再天然存在于常规实时路径的类型表面，后续如果有人误把重 payload 带回 live path，会先撞上类型边界。
+
+## UI Selection Update
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 的当前结果树交互已经开始从“路径字符串优先”转向“`NodeId` 优先”。
+- 当前做法是：
+  - `SelectedTarget` / `TreemapEntry` 携带 `node_id`
+  - `select_node()` 用于 store-backed 交互
+  - 路径字符串仍保留给错误页、实时文件列表和外部路径 fallback
+- 这一步还没有把整个 UI 完全 ID 化，但已经把最容易重复回查和字符串驱动的那层结果树交互先收口了。
+
+## UI View-Model Update
+- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 已开始承接 UI 的纯展示物化逻辑。
+- 当前已经从 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 下沉的包括：
+  - 摘要卡片
+  - 扫描健康文案
+  - 实时/完成态排行物化
+  - 所选范围上下文文件榜单
+- 这说明 `dirotter-ui` 的下一轮减债已经不只是拆页面或拆 controller，而是开始把“状态协调”和“view-model 生成”拆开。
+
+## String Materialization Update
+- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 的实时/完成态排行与上下文文件榜单已改为共享 `RankedPath`。
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 的 `live_files` 已不再在 UI 接管阶段立刻 `to_string()`。
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 里的 `TreemapEntry` 也已改成共享 `Arc<str>`。
+- 这一步的价值在于，UI 层最典型的“每次刷新先批量拼字符串”路径已经开始被逐段拔掉，而不是只在 scan crate 内部少拷贝。
+
+## Inspector Target Update
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中的 `SelectedTarget.name / path`、`CleanupPanelState.selected_paths` 和 `treemap_focus_path` 已进一步收口到共享 `Arc<str>`。
+- Inspector、cleanup 勾选、treemap 聚焦和删除确认链路现在会复用同一批共享路径，而不是各自维持 `String` 状态副本。
+- 真正需要 owned `String` 的地方仍然只保留在执行计划和外部平台动作边界，这一层边界是清楚的。
+
+## Inspector View-Model Update
+- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 已新增 Inspector、后台删除任务、永久删除确认和 cleanup 确认对应的展示模型。
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 里的 `ui_inspector()` 和两个确认窗函数现在主要做布局与交互，不再直接承载大段展示字符串拼装。
+- 这一步说明 UI 的减债已经继续从“榜单/摘要区”推进到“Inspector 与执行确认区”，主状态文件的职责边界在继续变清楚。
+
+## Inspector Action-State Update
+- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 现在还会统一计算 Inspector 的动作可用性、提示文案和反馈 banner/执行摘要。
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中 `ui_inspector()` 的条件分支已明显收缩，按钮启用条件和反馈文本不再散落在渲染逻辑内部。
+- 这一步的意义在于，Inspector 已从“既做控制流判断又做展示拼接”的混合实现，继续收口为“读取 view-model 后分发动作”的更稳定边界。
+
+## Inspector Workspace Update
+- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 已新增 Workspace Context 展示模型。
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中 Inspector 底部的根目录和来源两行也已改为消费 view-model。
+- 这意味着 Inspector 的展示整形已基本从主布局函数中退出，只剩布局和交互分发逻辑还留在 `ui_inspector()`。
+
+## Cleanup Details View-Model Update
+- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 已新增 cleanup 详情窗对应的 tabs、统计区、按钮态和 item 行展示模型。
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中的 `ui_cleanup_details_window()` 已不再直接拼分类标签、统计值、评分文案和路径展示文本。
+- 这一步说明重 UI 函数的收口已经从 Inspector 扩展到了 cleanup 详情窗，`dirotter-ui` 的主文件继续从“展示整形堆积点”退下来。
+
+## Cleanup Details Action Update
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中的 `ui_cleanup_details_window()` 已从多布尔旗标控制流改为动作枚举驱动。
+- 当前窗口尾部不再散落 `trigger_clean / trigger_recycle / trigger_permanent / open_selected` 这类分支，而是统一走 action handler。
+- 这一步的价值在于，cleanup 详情窗已经不只是“展示整形外移”，连交互控制流也开始进入更可测试、更可拆分的形态。

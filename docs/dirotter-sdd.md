@@ -98,6 +98,16 @@ Stage 6 Finished Publish
 - **Payload 收口**：实时 snapshot 默认不再携带变更节点列表，只保留轻量计数；完成态事件也不再重复发送可由 `NodeStore` 重建的 Top-N。
 - **性能基线**：snapshot payload 大小和 `make_snapshot_data(false)` 组装耗时已进入阈值测试，防止后续重新回退到高分配路径。
 - **运行时观测**：telemetry 继续补充 `snapshot changed/materialized nodes` 与 `snapshot text bytes` 估算，诊断导出可直接判断 live snapshot 是否仍保持稀疏 payload。
+- **类型边界**：`SnapshotView` 已显式拆成 `Live` 与 `Full` 两条路径，避免实时扫描路径继续“结构上允许携带整批节点”。
+- **UI 选择态**：当前结果树相关交互已开始优先持有 `NodeId`，路径字符串只作为外部路径和失配场景的 fallback。
+- **UI 展示整形**：摘要卡片、扫描健康信息和排行/上下文榜单物化已开始下沉到独立 `view_models` 模块，减少主状态文件同时承担展示拼装职责。
+- **UI 少拷贝化**：实时/完成态排行、上下文榜单、`live_files` 和 `TreemapEntry` 已开始共享路径持有，只在交互边缘和最终文本渲染时物化。
+- **UI 路径状态**：cleanup 勾选集合和 treemap 当前聚焦路径也已切到共享 `Arc<str>`，避免 UI 内部继续维护高频路径型 `String` 状态。
+- **Inspector / Confirm 展示边界**：Inspector 摘要、后台删除任务摘要和两个确认窗的展示整形也已改为由 `view_models` 统一生成，主状态函数更多只保留布局与交互。
+- **Inspector 动作态边界**：Inspector 的按钮可用性、提示文案和反馈 banner/执行摘要现在也由 `view_models` 统一生成，布局代码里不再穿插大段状态判断。
+- **Inspector Workspace Context**：根目录和来源两行也已从 `ui_inspector()` 中下沉到 `view_models`，Inspector 展示整形边界已基本闭合。
+- **Cleanup Details 展示边界**：cleanup 详情窗的 tabs、统计区、按钮态和 item 行展示整形也已开始由 `view_models` 统一生成，主函数主要保留勾选写回和动作分发。
+- **Cleanup Details 动作边界**：cleanup 详情窗交互现已从多布尔旗标流改成动作枚举分发，窗口函数与动作执行逻辑边界更清楚。
 - 快照策略：同一路径只保留最新一份 `NodeStore` 快照，避免重复扫描同一路径时 SQLite 体积线性增长；默认不在每次扫描结束后自动写入。
 - WAL 管理：快照写入保留 WAL 模式，但不再在每次保存热路径上强制 checkpoint；后续维护动作或空闲期再做收口。
 - Staging 清理：应用启动时会扫描并继续清理遗留的 `.dirotter-staging` 项，避免上次异常退出后残留缓存占用。

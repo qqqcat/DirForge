@@ -428,3 +428,116 @@
   - 不额外序列化 live snapshot
   - 只统计节点/排行路径文本长度作为低成本估算
 - 这一步的目标不是替代基准测试，而是给 diagnostics 一个能直接揭示 payload 回退的运行时锚点。
+
+### 2026-04-04 SnapshotView Type Split
+
+- `SnapshotView` 已进一步从“单结构兼顾 live/debug”收口成显式分层：
+  - `LiveSnapshotView`
+  - `FullSnapshotView`
+  - `SnapshotView::{Live, Full}`
+- 当前价值不是表面上的类型美化，而是把运行时边界做实：
+  - live 路径只能自然接轻量视图
+  - full-tree/debug 路径必须显式走 `Full`
+- 这让后续继续压 live payload 时，风险从“靠人记住不要塞 nodes”变成“类型先拦住错误方向”。
+
+### 2026-04-04 UI Selection State Update
+
+- 当前结果树相关 UI 状态已开始从“路径字符串驱动”收口为“`NodeId` 优先”：
+  - `SelectedTarget` 携带 `node_id`
+  - `TreemapEntry` 携带 `node_id`
+  - 新增 `select_node()`，treemap 与 cleanup 候选点击优先走节点 ID
+- 这一步暂时没有追求“一次改穿所有 UI 状态”，而是先抓最值钱的当前结果树交互层。
+- 这样做的好处是：
+  - 降低重复 `path -> NodeId` 回查
+  - 给后续继续推进 ID 化留出稳定中间态
+  - 保留错误页/外部路径这类非 store-backed 路径的兼容 fallback
+
+### 2026-04-04 UI View-Model Extraction
+
+- `dirotter-ui` 已进一步从“状态文件里顺手拼展示数据”转向显式 view-model 模块：
+  - 新增 `src/view_models.rs`
+  - 下沉了摘要卡片、扫描健康文案、排行物化和上下文文件榜单
+- 这一步的关键价值是职责收口：
+  - `DirOtterNativeApp` 更像应用协调器
+  - 页面模块继续只负责布局与交互
+  - 展示数据整形开始集中到单独模块，便于后续继续压物化点
+
+### 2026-04-04 UI String Hotspot Reduction
+
+- UI 侧最明显的批量字符串热点已继续收口：
+  - 实时/完成态排行改用共享 `RankedPath`
+  - 上下文文件榜单改用共享 `RankedPath`
+  - `live_files` 改为共享路径列表
+  - `TreemapEntry.name / path` 改为共享 `Arc<str>`
+- 这一步的重要性在于，它把“少拷贝/延迟物化”的策略继续推进到了 UI 展示层，而不是只停在 scan/core 内部。
+
+### 2026-04-04 UI Shared Path State Reduction
+
+- UI 内部最后两块高频路径状态也已继续收口：
+  - `CleanupPanelState.selected_paths` 改为 `HashSet<Arc<str>>`
+  - `treemap_focus_path` 改为 `Option<Arc<str>>`
+- 这一步的价值不是“字段类型更统一”，而是把 cleanup 勾选和 treemap 聚焦这两条仍会频繁 `contains/remove/set-focus` 的路径状态也拉回共享模型。
+- 当前状态下，UI 内部共享路径的覆盖面已经从：
+  - scan 事件
+  - 实时/完成态排行
+  - `SelectedTarget / TreemapEntry`
+  继续扩展到：
+  - cleanup 选择集
+  - treemap 当前焦点
+
+### 2026-04-04 Inspector / Confirm View-Model Extraction
+
+- `view_models.rs` 现在已不只处理首页和结果页的榜单/摘要，还继续接管了：
+  - Inspector 目标摘要
+  - 后台删除任务摘要
+  - 永久删除确认摘要
+  - cleanup 确认摘要
+- 这一步的关键价值是继续把 `DirOtterNativeApp` 从“交互入口 + 展示字符串拼装”收口成“交互入口 + 状态协调”。
+- 当前状态下，view-model 模块已经开始覆盖：
+  - 概览卡片
+  - 扫描健康文案
+  - 排行与上下文榜单
+  - Inspector / confirm 摘要
+
+### 2026-04-04 Inspector Action-State Extraction
+
+- Inspector 的动作可用性判断也已继续下沉：
+  - 打开位置
+  - 快速清理
+  - 回收站删除
+  - 永久删除
+  - 系统内存释放
+- Explorer 反馈、删除反馈和最近执行摘要的展示文本现在也由 `view_models.rs` 统一整形。
+- 这一步的价值在于，Inspector 已经不只是“展示文本下沉”，而是连动作态判断和反馈态判断都开始脱离布局代码，后续调整交互状态时的改动面会更小。
+
+### 2026-04-04 Inspector Workspace Context Extraction
+
+- Inspector 底部的 Workspace Context 也已改为由 `view_models.rs` 统一整形。
+- 这意味着根目录截断、来源文案选择这类轻量展示逻辑也不再散落在 `ui_inspector()` 内部。
+- 到这一步，Inspector 区域的大部分展示整形已经完成下沉，主函数主要只剩：
+  - 面板布局
+  - 按钮点击后的动作分发
+  - 少量窗口级控制流
+
+### 2026-04-04 Cleanup Details Window Extraction
+
+- cleanup 详情窗也已开始走相同路线：
+  - 分类 tabs 改由 `view_models.rs` 整形
+  - 统计区和按钮标签/启用态改由 `view_models.rs` 整形
+  - item 行的路径、大小、风险/分类标签、unused days 和评分文案改由 `view_models.rs` 整形
+- 这一步的价值是把另一个明显偏重的 UI 函数也从“边布局边拼展示文本”拉回“布局 + 状态写回”的模式。
+- 当前状态下，cleanup 详情窗里还留在主函数的核心逻辑主要是：
+  - 勾选状态写回
+  - 切换当前选中项
+  - 触发清理/打开位置等动作
+
+### 2026-04-04 Cleanup Details Action Extraction
+
+- cleanup 详情窗的交互控制流也已继续收口，不再依赖多组布尔旗标在窗口尾部串联。
+- 当前已经改为：
+  - 渲染阶段收集 `CleanupDetailsAction`
+  - 渲染后统一分发到 action handler
+- 这一步的意义是把 cleanup 详情窗继续从“布局、展示、控制流全混在一起”的函数，推进成更明确的：
+  - view-model 负责展示整形
+  - window 函数负责渲染与收集动作
+  - handler 负责执行动作

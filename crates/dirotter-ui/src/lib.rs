@@ -5,6 +5,7 @@ mod dashboard;
 mod i18n;
 mod result_pages;
 mod settings_pages;
+mod view_models;
 
 use dirotter_actions::{
     build_deletion_plan_with_origin, ActionFailureKind, ExecutionMode, ExecutionReport,
@@ -202,8 +203,9 @@ struct ScanFinalizePayload {
 
 #[derive(Clone)]
 struct SelectedTarget {
-    name: String,
-    path: String,
+    node_id: Option<NodeId>,
+    name: Arc<str>,
+    path: Arc<str>,
     size_bytes: u64,
     kind: NodeKind,
     file_count: u64,
@@ -212,8 +214,9 @@ struct SelectedTarget {
 
 #[derive(Clone)]
 struct TreemapEntry {
-    name: String,
-    path: String,
+    node_id: NodeId,
+    name: Arc<str>,
+    path: Arc<str>,
     size_bytes: u64,
     kind: NodeKind,
     file_count: u64,
@@ -238,7 +241,7 @@ struct CleanupDeleteRequest {
 struct CleanupPanelState {
     analysis: Option<CleanupAnalysis>,
     detail_category: Option<CleanupCategory>,
-    selected_paths: HashSet<String>,
+    selected_paths: HashSet<Arc<str>>,
     pending_delete: Option<CleanupDeleteRequest>,
 }
 
@@ -246,6 +249,18 @@ struct CleanupPanelState {
 struct PendingDeleteConfirmation {
     request: DeleteRequestScope,
     risk: RiskLevel,
+}
+
+enum CleanupDetailsAction {
+    SelectCategory(CleanupCategory),
+    ToggleTarget { path: Arc<str>, checked: bool },
+    FocusTarget(SelectedTarget),
+    SelectAllSafe,
+    ClearSelected,
+    OpenSelectedLocation,
+    TriggerPrimary,
+    TriggerPermanent,
+    Close,
 }
 
 impl Default for ScanRelayState {
@@ -285,8 +300,8 @@ pub struct DirOtterNativeApp {
 
     pending_batch_events: VecDeque<Vec<BatchEntry>>,
     pending_snapshots: VecDeque<SnapshotDelta>,
-    treemap_focus_path: Option<String>,
-    live_files: Vec<(String, u64)>,
+    treemap_focus_path: Option<Arc<str>>,
+    live_files: Vec<dirotter_scan::RankedPath>,
     live_top_files: Vec<dirotter_scan::RankedPath>,
     live_top_dirs: Vec<dirotter_scan::RankedPath>,
     completed_top_files: Vec<dirotter_scan::RankedPath>,
@@ -322,29 +337,6 @@ pub struct DirOtterNativeApp {
 }
 
 impl DirOtterNativeApp {
-    fn materialize_ranked_items(
-        paths: &[dirotter_scan::RankedPath],
-        limit: usize,
-        include_dirs: bool,
-    ) -> Vec<(String, u64)> {
-        paths
-            .iter()
-            .filter(|(path, _)| {
-                fs::metadata(path.as_ref())
-                    .map(|meta| {
-                        if include_dirs {
-                            meta.is_dir()
-                        } else {
-                            meta.is_file()
-                        }
-                    })
-                    .unwrap_or(false)
-            })
-            .take(limit)
-            .map(|(path, size)| (path.to_string(), *size))
-            .collect()
-    }
-
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         configure_fonts(&cc.egui_ctx);
         let cache = CacheStore::new("dirotter.db").expect("open sqlite cache");
@@ -583,60 +575,15 @@ impl DirOtterNativeApp {
         ctx.set_style(style);
     }
 
-    fn summary_cards(&self) -> Vec<(String, String, String)> {
-        let mut cards = vec![
-            (
-                self.t("文件", "Files").to_string(),
-                format_count(self.summary.scanned_files),
-                self.t("已发现文件数", "Discovered files").to_string(),
-            ),
-            (
-                self.t("目录", "Directories").to_string(),
-                format_count(self.summary.scanned_dirs),
-                self.t("已遍历目录数", "Traversed directories").to_string(),
-            ),
-            (
-                self.t("扫描体积", "Scanned Size").to_string(),
-                format_bytes(self.summary.bytes_observed),
-                self.t(
-                    "仅统计已扫描到的文件体积",
-                    "Only the file bytes actually scanned",
-                )
-                .to_string(),
-            ),
-        ];
-
-        if let Some(volume) = self.current_volume_info() {
-            let used = volume.total_bytes.saturating_sub(volume.available_bytes);
-            cards.push((
-                self.t("磁盘已用", "Volume Used").to_string(),
-                format_bytes(used),
-                format!(
-                    "{} {}  |  {} {}",
-                    format_bytes(volume.total_bytes),
-                    self.t("总容量", "total"),
-                    format_bytes(volume.available_bytes),
-                    self.t("可用", "free")
-                ),
-            ));
-        }
-
-        cards.push((
-            self.t("错误", "Errors").to_string(),
-            format_count(self.summary.error_count),
-            self.t("需要关注的问题项", "Items needing attention")
-                .to_string(),
-        ));
-
-        cards
-    }
-
     fn target_from_node_id(&self, node_id: NodeId) -> Option<SelectedTarget> {
         let store = self.store.as_ref()?;
         let node = store.nodes.get(node_id.0)?;
         Some(SelectedTarget {
-            name: store.node_name(node).to_string(),
-            path: store.node_path(node).to_string(),
+            node_id: Some(node_id),
+            name: store
+                .resolve_string_arc(node.name_id)
+                .unwrap_or_else(|| Arc::from("")),
+            path: node.path.clone(),
             size_bytes: node.size_subtree.max(node.size_self),
             kind: node.kind,
             file_count: node.file_count,
@@ -665,11 +612,12 @@ impl DirOtterNativeApp {
         let name = PathBuf::from(&path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| path.clone());
+            .map(Arc::<str>::from)
+            .unwrap_or_else(|| Arc::<str>::from(path.as_str()));
         Some(SelectedTarget {
+            node_id: None,
             name,
-            path,
+            path: Arc::<str>::from(path),
             size_bytes,
             kind,
             file_count: if kind == NodeKind::File { 1 } else { 0 },
@@ -714,9 +662,25 @@ impl DirOtterNativeApp {
 
     fn delete_request_for_target(target: SelectedTarget) -> DeleteRequestScope {
         DeleteRequestScope {
-            label: target.path.clone(),
+            label: target.path.to_string(),
             targets: vec![target],
         }
+    }
+
+    fn selection_matches_path(&self, path: &str) -> bool {
+        self.selection.selected_path.as_deref() == Some(path)
+    }
+
+    fn selection_matches_target(&self, target: &SelectedTarget) -> bool {
+        target
+            .node_id
+            .is_some_and(|node_id| self.selection.selected_node == Some(node_id))
+            || self.selection_matches_path(target.path.as_ref())
+    }
+
+    fn selection_matches_treemap_entry(&self, entry: &TreemapEntry) -> bool {
+        self.selection.selected_node == Some(entry.node_id)
+            || self.selection_matches_path(entry.path.as_ref())
     }
 
     fn cleanup_category_label(&self, category: CleanupCategory) -> &'static str {
@@ -852,7 +816,7 @@ impl DirOtterNativeApp {
                     && self
                         .cleanup
                         .selected_paths
-                        .contains(item.target.path.as_str())
+                        .contains(item.target.path.as_ref())
             })
             .fold((0usize, 0u64), |(count, bytes), item| {
                 (count + 1, bytes.saturating_add(item.target.size_bytes))
@@ -862,7 +826,7 @@ impl DirOtterNativeApp {
     fn select_all_safe_cleanup_items(&mut self, category: CleanupCategory) {
         for item in self.cleanup_items_for_category(category) {
             if item.risk != RiskLevel::High {
-                self.cleanup.selected_paths.insert(item.target.path);
+                self.cleanup.selected_paths.insert(item.target.path.clone());
             }
         }
     }
@@ -871,7 +835,7 @@ impl DirOtterNativeApp {
         for item in self.cleanup_items_for_category(category) {
             self.cleanup
                 .selected_paths
-                .remove(item.target.path.as_str());
+                .remove(item.target.path.as_ref());
         }
     }
 
@@ -903,7 +867,7 @@ impl DirOtterNativeApp {
                     && self
                         .cleanup
                         .selected_paths
-                        .contains(item.target.path.as_str())
+                        .contains(item.target.path.as_ref())
             })
             .map(|item| item.target)
             .collect();
@@ -958,8 +922,11 @@ impl DirOtterNativeApp {
             .iter()
             .filter_map(|child_id| store.nodes.get(child_id.0))
             .map(|node| TreemapEntry {
-                name: store.node_name(node).to_string(),
-                path: store.node_path(node).to_string(),
+                node_id: node.id,
+                name: store
+                    .resolve_string_arc(node.name_id)
+                    .unwrap_or_else(|| Arc::from("")),
+                path: node.path.clone(),
                 size_bytes: node.size_subtree.max(node.size_self),
                 kind: node.kind,
                 file_count: node.file_count,
@@ -976,9 +943,17 @@ impl DirOtterNativeApp {
         entries
     }
 
-    fn focus_treemap_path(&mut self, path: String) {
+    fn focus_treemap_path(&mut self, path: Arc<str>) {
         self.treemap_focus_path = Some(path.clone());
-        self.select_path(&path, SelectionSource::Treemap);
+        self.select_path(path.as_ref(), SelectionSource::Treemap);
+    }
+
+    fn focus_treemap_node(&mut self, node_id: NodeId) {
+        let Some(target) = self.target_from_node_id(node_id) else {
+            return;
+        };
+        self.treemap_focus_path = Some(target.path.clone());
+        self.select_node(node_id, SelectionSource::Treemap);
     }
 
     fn focus_treemap_parent(&mut self) {
@@ -988,7 +963,7 @@ impl DirOtterNativeApp {
         let Some(store) = self.store.as_ref() else {
             return;
         };
-        let Some(node_id) = store.path_index.get(current.path.as_str()).copied() else {
+        let Some(node_id) = store.path_index.get(current.path.as_ref()).copied() else {
             self.treemap_focus_path = None;
             return;
         };
@@ -1140,13 +1115,13 @@ impl DirOtterNativeApp {
     }
 
     fn path_matches_target(path: &str, target: &SelectedTarget) -> bool {
-        if path == target.path {
+        if path == target.path.as_ref() {
             return true;
         }
         if target.kind != NodeKind::Dir {
             return false;
         }
-        let Some(rest) = path.strip_prefix(&target.path) else {
+        let Some(rest) = path.strip_prefix(target.path.as_ref()) else {
             return false;
         };
         rest.starts_with('\\') || rest.starts_with('/')
@@ -1156,14 +1131,6 @@ impl DirOtterNativeApp {
         targets
             .iter()
             .any(|target| Self::path_matches_target(path, target))
-    }
-
-    fn retain_existing_ranked_items(
-        items: &[dirotter_scan::RankedPath],
-        limit: usize,
-        include_dirs: bool,
-    ) -> Vec<(String, u64)> {
-        Self::materialize_ranked_items(items, limit, include_dirs)
     }
 
     fn rebuild_store_without_targets(
@@ -1251,7 +1218,8 @@ impl DirOtterNativeApp {
             self.treemap_focus_path = None;
         }
 
-        self.live_files.retain(|(path, _)| !matches_target(path));
+        self.live_files
+            .retain(|(path, _)| !matches_target(path.as_ref()));
         self.live_top_files
             .retain(|(path, _)| !matches_target(path.as_ref()));
         self.live_top_dirs
@@ -1374,9 +1342,9 @@ impl DirOtterNativeApp {
                 .iter()
                 .map(|target| {
                     (
-                        target.path.clone(),
+                        target.path.to_string(),
                         target.size_bytes,
-                        self.risk_for_path(&target.path),
+                        self.risk_for_path(target.path.as_ref()),
                     )
                 })
                 .collect(),
@@ -1436,7 +1404,7 @@ impl DirOtterNativeApp {
                     report
                         .items
                         .iter()
-                        .any(|item| item.success && item.path == target.path)
+                        .any(|item| item.success && item.path == target.path.as_ref())
                 })
                 .cloned()
                 .collect();
@@ -1467,6 +1435,19 @@ impl DirOtterNativeApp {
             .store
             .as_ref()
             .and_then(|store| store.path_index.get(path).copied());
+        self.execution_report = None;
+        self.pending_delete_confirmation = None;
+        self.explorer_feedback = None;
+    }
+
+    fn select_node(&mut self, node_id: NodeId, source: SelectionSource) {
+        self.selection.selected_node = Some(node_id);
+        self.selection.selected_path = self
+            .store
+            .as_ref()
+            .and_then(|store| store.nodes.get(node_id.0))
+            .map(|node| node.path.to_string());
+        self.selection.source = Some(source);
         self.execution_report = None;
         self.pending_delete_confirmation = None;
         self.explorer_feedback = None;
@@ -1538,159 +1519,6 @@ impl DirOtterNativeApp {
         self.treemap_focus_path = None;
         self.scan_finalize_session = None;
         self.refresh_diagnostics();
-    }
-
-    fn scan_health_summary(&self) -> String {
-        let age = self
-            .scan_last_event_at
-            .map(|instant| instant.elapsed().as_secs_f32())
-            .unwrap_or_default();
-        format!(
-            "{} {:.1}s  |  {} {}  |  {} {}  |  {} {}",
-            self.t("最近事件", "Last event"),
-            age,
-            self.t("丢弃进度", "Dropped progress"),
-            format_count(self.scan_dropped_progress),
-            self.t("丢弃批次", "Dropped batches"),
-            format_count(self.scan_dropped_batches),
-            self.t("丢弃快照", "Dropped snapshots"),
-            format_count(self.scan_dropped_snapshots),
-        )
-    }
-
-    fn scan_health_short(&self) -> String {
-        let age = self
-            .scan_last_event_at
-            .map(|instant| instant.elapsed().as_secs_f32())
-            .unwrap_or_default();
-        let path = self
-            .scan_current_path
-            .as_deref()
-            .map(|path| truncate_middle(path, 46))
-            .unwrap_or_else(|| self.t("准备中", "Preparing").to_string());
-        format!(
-            "{} {:.1}s  |  {}",
-            self.t("最近事件", "Last event"),
-            age,
-            path
-        )
-    }
-
-    fn current_ranked_dirs(&self, limit: usize) -> Vec<(String, u64)> {
-        if self.scan_active() && !self.live_top_dirs.is_empty() {
-            return Self::retain_existing_ranked_items(&self.live_top_dirs, limit, true);
-        }
-        if !self.scan_active() && !self.completed_top_dirs.is_empty() {
-            return Self::retain_existing_ranked_items(&self.completed_top_dirs, limit, true);
-        }
-
-        self.store
-            .as_ref()
-            .map(|store| {
-                store
-                    .largest_dirs(limit)
-                    .into_iter()
-                    .filter(|node| {
-                        fs::metadata(store.node_path(node))
-                            .map(|meta| meta.is_dir())
-                            .unwrap_or(false)
-                    })
-                    .map(|node| {
-                        (
-                            store.node_path(node).to_string(),
-                            node.size_subtree.max(node.size_self),
-                        )
-                    })
-                    .take(limit)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn current_ranked_files(&self, limit: usize) -> Vec<(String, u64)> {
-        if self.scan_active() && !self.live_top_files.is_empty() {
-            return Self::retain_existing_ranked_items(&self.live_top_files, limit, false);
-        }
-        if !self.scan_active() && !self.completed_top_files.is_empty() {
-            return Self::retain_existing_ranked_items(&self.completed_top_files, limit, false);
-        }
-
-        self.store
-            .as_ref()
-            .map(|store| {
-                store
-                    .top_n_largest_files(limit)
-                    .into_iter()
-                    .filter(|node| {
-                        fs::metadata(store.node_path(node))
-                            .map(|meta| meta.is_file())
-                            .unwrap_or(false)
-                    })
-                    .map(|node| (store.node_path(node).to_string(), node.size_self))
-                    .take(limit)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn ranked_files_in_scope(&self, scope_path: &str, limit: usize) -> Vec<(String, u64)> {
-        let Some(store) = self.store.as_ref() else {
-            return Vec::new();
-        };
-        let mut matches: Vec<(String, u64)> = store
-            .nodes
-            .iter()
-            .filter(|node| matches!(node.kind, NodeKind::File))
-            .filter(|node| store.node_path(node) != scope_path)
-            .filter(|node| path_within_scope(store.node_path(node), scope_path))
-            .map(|node| (store.node_path(node).to_string(), node.size_self))
-            .collect();
-        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        matches.truncate(limit);
-        matches
-    }
-
-    fn contextual_ranked_files_panel(&self, limit: usize) -> (String, String, Vec<(String, u64)>) {
-        if let Some(target) = self.selected_target() {
-            let scope_path = match target.kind {
-                NodeKind::Dir => Some(target.path.clone()),
-                NodeKind::File => PathBuf::from(&target.path)
-                    .parent()
-                    .map(|parent| parent.display().to_string()),
-            };
-
-            if let Some(scope_path) = scope_path {
-                let scoped_files = self.ranked_files_in_scope(&scope_path, limit);
-                if !scoped_files.is_empty() {
-                    let scope_name = PathBuf::from(&scope_path)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map(|name| name.to_string())
-                        .unwrap_or_else(|| scope_path.clone());
-                    return (
-                        self.t("所选位置中的最大文件", "Largest Files In Selection")
-                            .to_string(),
-                        format!(
-                            "{}: {}",
-                            self.t("当前范围", "Current scope"),
-                            truncate_middle(&scope_name, 40)
-                        ),
-                        scoped_files,
-                    );
-                }
-            }
-        }
-
-        (
-            self.t("当前最大的文件", "Largest Files Found So Far")
-                .to_string(),
-            self.t(
-                "先发现的结果不代表最终排序。",
-                "Early findings are not yet the final ordering.",
-            )
-            .to_string(),
-            self.current_ranked_files(limit),
-        )
     }
 
     fn refresh_diagnostics(&mut self) {
@@ -2217,12 +2045,7 @@ impl DirOtterNativeApp {
             }
 
             if let Some((delta, view)) = snapshot {
-                let dirotter_scan::SnapshotView {
-                    changed_node_count: _,
-                    top_files,
-                    top_dirs,
-                    ..
-                } = view;
+                let (top_files, top_dirs) = view.into_rankings();
                 self.live_top_files = top_files;
                 self.live_top_dirs = top_dirs;
                 self.pending_snapshots.push_back(delta);
@@ -2245,7 +2068,7 @@ impl DirOtterNativeApp {
             while let Some(batch) = self.pending_batch_events.pop_front() {
                 for item in batch {
                     if !item.is_dir {
-                        self.live_files.push((item.path.to_string(), item.size));
+                        self.live_files.push((item.path, item.size));
                     }
                 }
             }
@@ -2477,6 +2300,15 @@ impl DirOtterNativeApp {
 
     fn ui_inspector(&mut self, ui: &mut egui::Ui) {
         let selected_target = self.selected_target();
+        let selected_target_view = selected_target
+            .as_ref()
+            .map(|target| self.inspector_target_view_model(target));
+        let delete_task_view = self.delete_task_view_model();
+        let inspector_actions_view = self.inspector_actions_view_model(selected_target.as_ref());
+        let explorer_feedback_view = self.inspector_explorer_feedback_view_model();
+        let delete_feedback_view = self.inspector_delete_feedback_view_model();
+        let execution_report_view = self.inspector_execution_report_view_model();
+        let workspace_context_view = self.inspector_workspace_context_view_model();
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(self.t("检查器", "Inspector"))
@@ -2490,33 +2322,24 @@ impl DirOtterNativeApp {
         ui.add_space(10.0);
 
         surface_panel(ui, |ui| {
-            if let Some(target) = selected_target.as_ref() {
+            if let Some(target) = selected_target_view.as_ref() {
                 stat_row(
                     ui,
                     self.t("名称", "Name"),
-                    &target.name,
-                    match target.kind {
-                        NodeKind::Dir => self.t("目录", "Directory"),
-                        NodeKind::File => self.t("文件", "File"),
-                    },
+                    target.name_value.as_ref(),
+                    target.name_hint,
                 );
                 stat_row(
                     ui,
                     self.t("路径", "Path"),
-                    &truncate_middle(&target.path, 34),
-                    self.t("完整路径可在悬浮提示中查看", "Full path available on hover"),
+                    &target.path_value,
+                    target.path_hint,
                 );
                 stat_row(
                     ui,
                     self.t("大小", "Size"),
-                    &format_bytes(target.size_bytes),
-                    &format!(
-                        "{} {} / {} {}",
-                        format_count(target.file_count),
-                        self.t("文件", "files"),
-                        format_count(target.dir_count),
-                        self.t("目录", "dirs")
-                    ),
+                    &target.size_value,
+                    &target.size_hint,
                 );
             } else {
                 ui.label(self.t(
@@ -2526,59 +2349,35 @@ impl DirOtterNativeApp {
             }
         });
 
-        if let Some(session) = self.delete_session.as_ref() {
-            let snapshot = session.snapshot();
+        if let Some(snapshot) = delete_task_view.as_ref() {
             ui.add_space(10.0);
             surface_panel(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(match snapshot.mode {
-                            ExecutionMode::RecycleBin => {
-                                self.t("后台任务：移到回收站", "Background Task: Recycle Bin")
-                            }
-                            ExecutionMode::FastPurge => {
-                                self.t("后台任务：快速清理", "Background Task: Fast Cleanup")
-                            }
-                            ExecutionMode::Permanent => {
-                                self.t("后台任务：永久删除", "Background Task: Permanent Delete")
-                            }
-                        })
-                        .text_style(egui::TextStyle::Name("title".into())),
+                        egui::RichText::new(snapshot.title)
+                            .text_style(egui::TextStyle::Name("title".into())),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add(egui::Spinner::new().size(18.0));
                     });
                 });
                 ui.label(
-                    egui::RichText::new(self.t(
-                        "删除正在后台执行。你可以继续浏览结果，但新的删除操作会暂时锁定。",
-                        "Deletion is running in the background. You can keep browsing results, but new delete actions stay locked for now.",
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
+                    egui::RichText::new(snapshot.description)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(8.0);
                 stat_row(
                     ui,
                     self.t("目标", "Target"),
-                    &truncate_middle(&snapshot.label, 34),
-                    &format!(
-                        "{} {}",
-                        format_count(snapshot.target_count as u64),
-                        self.t("个项目正在执行", "items in flight")
-                    ),
+                    &snapshot.target_value,
+                    &snapshot.target_hint,
                 );
                 stat_row(
                     ui,
                     self.t("已耗时", "Elapsed"),
-                    &format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
-                    match snapshot.mode {
-                        ExecutionMode::RecycleBin => self.t("回收站删除", "Recycle-bin delete"),
-                        ExecutionMode::FastPurge => {
-                            self.t("秒移走后后台清除", "Instant move, background purge")
-                        }
-                        ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
-                    },
+                    &snapshot.elapsed_value,
+                    snapshot.elapsed_hint,
                 );
             });
         }
@@ -2590,35 +2389,25 @@ impl DirOtterNativeApp {
                     .text_style(egui::TextStyle::Name("title".into())),
             );
             ui.label(
-                egui::RichText::new(self.t(
-                    "直接在右侧完成清理，不再跳到单独的操作页。",
-                    "Delete directly from the inspector instead of jumping to a separate page.",
-                ))
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
+                egui::RichText::new(&inspector_actions_view.section_description)
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
             );
             ui.add_space(8.0);
-            let has_selection = selected_target.is_some();
-            let delete_active = self.delete_active();
-            let memory_action_enabled = !self.system_memory_release_active();
-            let can_fast_purge_selection = selected_target
-                .as_ref()
-                .map(|target| self.can_fast_purge_path(&target.path))
-                .unwrap_or(false);
             ui.vertical(|ui| {
                 if ui
-                    .add_enabled_ui(has_selection, |ui| {
+                    .add_enabled_ui(inspector_actions_view.can_open_location, |ui| {
                         sized_button(
                             ui,
                             ui.available_width(),
-                            self.t("打开所在位置", "Open File Location"),
+                            &inspector_actions_view.open_location_label,
                         )
                     })
                     .inner
                     .clicked()
                 {
                     if let Some(target) = selected_target.as_ref() {
-                        match dirotter_platform::select_in_explorer(&target.path) {
+                        match dirotter_platform::select_in_explorer(target.path.as_ref()) {
                             Ok(_) => {
                                 self.explorer_feedback = Some((
                                     self.t(
@@ -2643,16 +2432,13 @@ impl DirOtterNativeApp {
                     }
                 }
                 if ui
-                    .add_enabled_ui(
-                        has_selection && can_fast_purge_selection && !delete_active,
-                        |ui| {
-                            sized_primary_button(
-                                ui,
-                                ui.available_width(),
-                                self.t("快速清理缓存", "Fast Cleanup"),
-                            )
-                        },
-                    )
+                    .add_enabled_ui(inspector_actions_view.can_fast_cleanup, |ui| {
+                        sized_primary_button(
+                            ui,
+                            ui.available_width(),
+                            &inspector_actions_view.fast_cleanup_label,
+                        )
+                    })
                     .inner
                     .clicked()
                 {
@@ -2661,11 +2447,11 @@ impl DirOtterNativeApp {
                     }
                 }
                 if ui
-                    .add_enabled_ui(has_selection && !delete_active, |ui| {
+                    .add_enabled_ui(inspector_actions_view.can_recycle, |ui| {
                         sized_button(
                             ui,
                             ui.available_width(),
-                            self.t("移到回收站", "Move to Recycle Bin"),
+                            &inspector_actions_view.recycle_label,
                         )
                     })
                     .inner
@@ -2674,9 +2460,9 @@ impl DirOtterNativeApp {
                     self.execute_selected_delete(ExecutionMode::RecycleBin);
                 }
                 let permanent =
-                    egui::Button::new(self.t("永久删除", "Delete Permanently")).fill(danger_red());
+                    egui::Button::new(&inspector_actions_view.permanent_label).fill(danger_red());
                 if ui
-                    .add_enabled_ui(has_selection && !delete_active, |ui| {
+                    .add_enabled_ui(inspector_actions_view.can_permanent_delete, |ui| {
                         ui.add_sized([ui.available_width(), CONTROL_HEIGHT], permanent)
                     })
                     .inner
@@ -2685,7 +2471,7 @@ impl DirOtterNativeApp {
                     if let Some(target) = selected_target.clone() {
                         self.pending_delete_confirmation = Some(PendingDeleteConfirmation {
                             request: Self::delete_request_for_target(target.clone()),
-                            risk: self.risk_for_path(&target.path),
+                            risk: self.risk_for_path(target.path.as_ref()),
                         });
                     }
                 }
@@ -2693,102 +2479,55 @@ impl DirOtterNativeApp {
                 ui.separator();
                 ui.add_space(6.0);
                 if ui
-                    .add_enabled_ui(memory_action_enabled, |ui| {
+                    .add_enabled_ui(inspector_actions_view.can_release_memory, |ui| {
                         sized_primary_button(
                             ui,
                             ui.available_width(),
-                            self.t("一键释放系统内存", "Release System Memory"),
+                            &inspector_actions_view.release_memory_label,
                         )
                     })
                     .inner
-                    .on_hover_text(self.t(
-                        "基于 Windows 官方能力，尝试收缩当前会话中的高占用进程，并在权限允许时裁剪系统文件缓存。",
-                        "Uses Windows-supported memory trimming to shrink large interactive processes and, when allowed, trim the system file cache.",
-                    ))
+                    .on_hover_text(&inspector_actions_view.release_memory_tooltip)
                     .clicked()
                 {
                     self.start_system_memory_release();
                 }
             });
-            if delete_active {
+            if let Some(message) = inspector_actions_view.info_message.as_ref() {
                 ui.label(
-                    egui::RichText::new(self.t(
-                        "后台删除任务正在执行。你可以继续浏览列表，但新的删除动作会在完成前保持禁用。",
-                        "A background delete task is running. You can keep browsing, but new delete actions stay disabled until it finishes.",
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
+                    egui::RichText::new(message)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
                 );
             }
-            if self.system_memory_release_active() {
-                ui.label(
-                    egui::RichText::new(self.t(
-                        "系统内存释放正在后台执行。界面不会锁死，完成后会自动显示前后效果。",
-                        "System memory release is running in the background. The UI stays responsive and will show the before/after result automatically.",
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-                );
-            } else if !has_selection {
-                ui.label(
-                    egui::RichText::new(self.t(
-                        "先从列表、结果视图或其他页面里选中一个文件或文件夹。",
-                        "Select a file or folder from a list, result view, or another page first.",
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-                );
-            }
-            if let Some((message, success)) = self.explorer_feedback.as_ref() {
+            if let Some(feedback) = explorer_feedback_view.as_ref() {
                 ui.add_space(8.0);
-                if *success {
-                    tone_banner(ui, self.t("已打开所在位置", "Opened Location"), message);
-                } else {
-                    tone_banner(ui, self.t("打开位置失败", "Open Location Failed"), message);
-                }
+                tone_banner(ui, &feedback.title, &feedback.message);
             }
-            if let Some((title, hint, success)) = self.delete_feedback_message() {
+            if let Some((feedback, success)) = delete_feedback_view.as_ref() {
                 ui.add_space(10.0);
-                tone_banner(ui, &title, &hint);
+                tone_banner(ui, &feedback.title, &feedback.message);
                 if !success {
                     ui.add_space(6.0);
                 }
             }
-            if let Some(report) = self.execution_report.as_ref() {
+            if let Some(report) = execution_report_view.as_ref() {
                 ui.add_space(10.0);
                 stat_row(
                     ui,
-                    self.t("最近执行", "Last Action"),
-                    match report.mode {
-                        ExecutionMode::RecycleBin => self.t("移到回收站", "Moved to recycle bin"),
-                        ExecutionMode::FastPurge => self.t("快速清理缓存", "Fast cleanup"),
-                        ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
-                    },
-                    &format!(
-                        "{} {} / {} {}",
-                        format_count(report.succeeded as u64),
-                        self.t("成功", "succeeded"),
-                        format_count(report.failed as u64),
-                        self.t("失败", "failed")
-                    ),
+                    &report.title,
+                    &report.summary_value,
+                    &report.summary_hint,
                 );
-                if let Some(item) = report.items.first() {
+                if let Some(message) = report.detail_message.as_ref() {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{}: {}",
-                            if item.success {
-                                self.t("结果", "Result")
+                        egui::RichText::new(message)
+                            .text_style(egui::TextStyle::Small)
+                            .color(if report.detail_success {
+                                ui.visuals().text_color()
                             } else {
-                                self.t("失败原因", "Failure")
-                            },
-                            item.message
-                        ))
-                        .text_style(egui::TextStyle::Small)
-                        .color(if item.success {
-                            ui.visuals().text_color()
-                        } else {
-                            danger_red()
-                        }),
+                                danger_red()
+                            }),
                     );
                 }
             }
@@ -2803,23 +2542,24 @@ impl DirOtterNativeApp {
             stat_row(
                 ui,
                 self.t("根目录", "Root"),
-                &truncate_middle(&self.root_input, 32),
-                self.t("当前扫描目标", "Current scan target"),
+                &workspace_context_view.root_value,
+                workspace_context_view.root_hint,
             );
             stat_row(
                 ui,
                 self.t("来源", "Source"),
-                self.selection
-                    .source
-                    .map(|s| self.source_label(s))
-                    .unwrap_or_else(|| self.t("无", "None")),
-                self.t("当前聚焦来源", "Selection source"),
+                &workspace_context_view.source_value,
+                workspace_context_view.source_hint,
             );
         });
     }
 
     fn ui_delete_confirm_dialog(&mut self, ctx: &egui::Context) {
         let Some(pending) = self.pending_delete_confirmation.clone() else {
+            return;
+        };
+        let Some(view_model) = self.delete_confirmation_view_model(&pending) else {
+            self.pending_delete_confirmation = None;
             return;
         };
 
@@ -2831,42 +2571,25 @@ impl DirOtterNativeApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.set_min_width(420.0);
-                let target = pending
-                    .request
-                    .targets
-                    .first()
-                    .expect("single target delete confirm");
-                ui.label(
-                    egui::RichText::new(self.t(
-                        "该操作会直接删除文件或目录，不进入回收站。",
-                        "This action deletes the file or folder directly without using the recycle bin.",
-                    ))
-                    .strong(),
-                );
+                ui.label(egui::RichText::new(view_model.intro).strong());
                 ui.add_space(8.0);
                 stat_row(
                     ui,
                     self.t("目标", "Target"),
-                    &truncate_middle(&target.path, 42),
-                    match target.kind {
-                        NodeKind::Dir => self.t("目录", "Directory"),
-                        NodeKind::File => self.t("文件", "File"),
-                    },
+                    &view_model.target_value,
+                    view_model.target_hint,
                 );
                 stat_row(
                     ui,
                     self.t("大小", "Size"),
-                    &format_bytes(target.size_bytes),
-                    &format!("{:?}", pending.risk),
+                    &view_model.size_value,
+                    &view_model.size_hint,
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    egui::RichText::new(self.t(
-                        "建议：如果只是普通清理，优先使用“移到回收站”。永久删除适合明确确认后再执行。",
-                        "Recommendation: prefer recycle-bin deletion for routine cleanup. Use permanent delete only when you are certain.",
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
+                    egui::RichText::new(view_model.recommendation)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(12.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2895,14 +2618,9 @@ impl DirOtterNativeApp {
             return;
         };
         let items = self.cleanup_items_for_category(category);
+        let view_model = self.cleanup_details_window_view_model(category, &items);
         let mut keep_open = true;
-        let mut request_close = false;
-        let mut trigger_clean = false;
-        let mut trigger_recycle = false;
-        let mut trigger_permanent = false;
-        let mut select_all_safe = false;
-        let mut clear_selected = false;
-        let mut open_selected = false;
+        let mut actions = Vec::new();
         let screen_size = ctx.input(|i| i.screen_rect().size());
         egui::Window::new(self.t("清理建议详情", "Cleanup Details"))
             .open(&mut keep_open)
@@ -2917,192 +2635,144 @@ impl DirOtterNativeApp {
                 ui.set_min_size(egui::vec2(720.0, 480.0));
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(self.t("按分类检查后再决定清理范围。", "Review by category before deciding what to clean."))
+                        egui::RichText::new(&view_model.review_message)
                             .text_style(egui::TextStyle::Small)
                             .color(ui.visuals().weak_text_color()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(self.t("关闭", "Close")).clicked() {
-                            request_close = true;
+                        if ui.button(&view_model.close_label).clicked() {
+                            actions.push(CleanupDetailsAction::Close);
                         }
                     });
                 });
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
-                    let categories = self
-                        .cleanup
-                        .analysis
-                        .as_ref()
-                        .map(|analysis| analysis.categories.clone())
-                        .unwrap_or_default();
-                    for entry in categories {
-                        let selected = self.cleanup.detail_category == Some(entry.category);
-                        let label = format!(
-                            "{}  {}",
-                            self.cleanup_category_label(entry.category),
-                            format_bytes(entry.total_bytes)
-                        );
-                        if sized_selectable(ui, 150.0, selected, label).clicked() {
-                            self.cleanup.detail_category = Some(entry.category);
+                    for tab in &view_model.category_tabs {
+                        if sized_selectable(ui, 150.0, tab.selected, &tab.label).clicked() {
+                            actions.push(CleanupDetailsAction::SelectCategory(tab.category));
                         }
                     }
                 });
                 ui.add_space(10.0);
-                tone_banner(
-                    ui,
-                    self.cleanup_category_label(category),
-                    self.t(
-                        "绿色会默认勾选，黄色默认不勾选；红色项请点击条目后用“打开所选位置”自行确认处理。",
-                        "Safe items are selected by default and warning items stay unchecked. For red items, click the row and use Open Selected Location for manual review.",
-                    ),
-                );
+                tone_banner(ui, &view_model.banner_title, &view_model.banner_message);
                 ui.add_space(10.0);
-                let (selected_count, selected_bytes) = self.selected_cleanup_totals(category);
                 ui.horizontal_wrapped(|ui| {
                     compact_stat_chip(
                         ui,
                         self.t("已选项目", "Selected"),
-                        &format_count(selected_count as u64),
+                        &view_model.selected_count_value,
                     );
                     compact_stat_chip(
                         ui,
                         self.t("预计释放", "Estimated Reclaim"),
-                        &format_bytes(selected_bytes),
+                        &view_model.selected_bytes_value,
                     );
                     if ui
-                        .add_enabled_ui(!self.delete_active(), |ui| {
-                            sized_button(ui, 124.0, self.t("全选安全项", "Select Safe"))
+                        .add_enabled_ui(view_model.select_safe_enabled, |ui| {
+                            sized_button(ui, 124.0, &view_model.select_safe_label)
                         })
                         .inner
                         .clicked()
                     {
-                        select_all_safe = true;
+                        actions.push(CleanupDetailsAction::SelectAllSafe);
                     }
                     if ui
-                        .add_enabled_ui(!self.delete_active(), |ui| {
-                            sized_button(ui, 118.0, self.t("清空所选", "Clear Selected"))
+                        .add_enabled_ui(view_model.clear_selected_enabled, |ui| {
+                            sized_button(ui, 118.0, &view_model.clear_selected_label)
                         })
                         .inner
                         .clicked()
                     {
-                        clear_selected = true;
+                        actions.push(CleanupDetailsAction::ClearSelected);
                     }
                     if ui
-                        .add_enabled_ui(self.selected_target().is_some(), |ui| {
-                            sized_button(ui, 124.0, self.t("打开所选位置", "Open Selected"))
+                        .add_enabled_ui(view_model.open_selected_enabled, |ui| {
+                            sized_button(ui, 124.0, &view_model.open_selected_label)
                         })
                         .inner
                         .clicked()
                     {
-                        open_selected = true;
+                        actions.push(CleanupDetailsAction::OpenSelectedLocation);
                     }
                     if ui
-                        .add_enabled_ui(selected_count > 0 && !self.delete_active(), |ui| {
-                            sized_button(
-                                ui,
-                                176.0,
-                                if category == CleanupCategory::Cache {
-                                    self.t("快速清理选中缓存", "Fast Cleanup Selected")
-                                } else {
-                                    self.t("移到回收站", "Move to Recycle Bin")
-                                },
-                            )
+                        .add_enabled_ui(view_model.header_primary_enabled, |ui| {
+                            sized_button(ui, 176.0, &view_model.header_primary_label)
                         })
                         .inner
                         .clicked()
                     {
-                        if category == CleanupCategory::Cache {
-                            trigger_clean = true;
-                        } else {
-                            trigger_recycle = true;
-                        }
+                        actions.push(CleanupDetailsAction::TriggerPrimary);
                     }
                     if ui
-                        .add_enabled_ui(selected_count > 0 && !self.delete_active(), |ui| {
-                            let button = egui::Button::new(
-                                self.t("永久删除", "Delete Permanently"),
-                            )
-                            .fill(danger_red());
+                        .add_enabled_ui(view_model.permanent_enabled, |ui| {
+                            let button =
+                                egui::Button::new(&view_model.permanent_label).fill(danger_red());
                             ui.add_sized([156.0, CONTROL_HEIGHT], button)
                         })
                         .inner
                         .clicked()
                     {
-                        trigger_permanent = true;
+                        actions.push(CleanupDetailsAction::TriggerPermanent);
                     }
                 });
                 ui.add_space(10.0);
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for item in &items {
+                    for item in &view_model.items {
                         surface_panel(ui, |ui| {
                             let size_width = 104.0;
                             let path_width = (ui.available_width() - size_width - 42.0).max(220.0);
                             ui.horizontal(|ui| {
-                                let mut checked =
-                                    self.cleanup.selected_paths.contains(item.target.path.as_str());
-                                let enabled = item.risk != RiskLevel::High;
+                                let mut checked = item.checked;
                                 if ui
-                                    .add_enabled_ui(enabled, |ui| ui.checkbox(&mut checked, ""))
+                                    .add_enabled_ui(item.enabled, |ui| {
+                                        ui.checkbox(&mut checked, "")
+                                    })
                                     .inner
                                     .changed()
                                 {
-                                    if checked {
-                                        self.cleanup
-                                            .selected_paths
-                                            .insert(item.target.path.clone());
-                                    } else {
-                                        self.cleanup.selected_paths.remove(&item.target.path);
-                                    }
+                                    actions.push(CleanupDetailsAction::ToggleTarget {
+                                        path: item.target.path.clone(),
+                                        checked,
+                                    });
                                 }
                                 if ui
                                     .add_sized(
                                         [path_width, 22.0],
-                                        egui::SelectableLabel::new(
-                                            self.selection.selected_path.as_deref()
-                                                == Some(item.target.path.as_str()),
-                                            truncate_middle(&item.target.path, 72),
-                                        ),
+                                        egui::SelectableLabel::new(item.selected, &item.path_value),
                                     )
                                     .clicked()
                                 {
-                                    self.select_path(&item.target.path, SelectionSource::Table);
+                                    actions.push(CleanupDetailsAction::FocusTarget(
+                                        item.target.clone(),
+                                    ));
                                 }
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                    ui.add_sized(
-                                        [size_width, 20.0],
-                                        egui::Label::new(
-                                            egui::RichText::new(format_bytes(item.target.size_bytes))
-                                                .strong(),
-                                        ),
+                                        ui.add_sized(
+                                            [size_width, 20.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(&item.size_value).strong(),
+                                            ),
                                         );
                                     },
                                 );
                             });
                             ui.horizontal_wrapped(|ui| {
                                 ui.colored_label(self.cleanup_risk_color(item.risk), "●");
-                                ui.label(self.cleanup_risk_label(item.risk));
+                                ui.label(item.risk_label);
                                 ui.label("·");
-                                ui.label(self.cleanup_category_label(item.category));
-                                if let Some(unused_days) = item.unused_days {
+                                ui.label(item.category_label);
+                                if let Some(unused_days) = item.unused_days_label.as_ref() {
                                     ui.label("·");
-                                    ui.label(format!(
-                                        "{} {}",
-                                        unused_days,
-                                        self.t("天未使用", "days unused")
-                                    ));
+                                    ui.label(unused_days);
                                 }
                                 ui.label("·");
-                                ui.label(format!(
-                                    "{} {:.1}",
-                                    self.t("评分", "Score"),
-                                    item.cleanup_score
-                                ));
+                                ui.label(&item.score_label);
                             });
                             ui.label(
-                                egui::RichText::new(self.cleanup_reason_text(item))
+                                egui::RichText::new(item.reason_text)
                                     .text_style(egui::TextStyle::Small)
                                     .color(ui.visuals().weak_text_color()),
                             );
@@ -3113,74 +2783,100 @@ impl DirOtterNativeApp {
                 ui.add_space(10.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                            .add_enabled_ui(selected_count > 0 && !self.delete_active(), |ui| {
-                                sized_primary_button(
-                                    ui,
-                                    220.0,
-                                    if category == CleanupCategory::Cache {
-                                        self.t("快速清理选中缓存", "Fast Cleanup Selected")
-                                    } else {
-                                        self.t("清理选中项", "Clean Selected")
-                                    },
-                                )
-                            })
-                            .inner
+                        .add_enabled_ui(view_model.footer_primary_enabled, |ui| {
+                            sized_primary_button(ui, 220.0, &view_model.footer_primary_label)
+                        })
+                        .inner
                         .clicked()
                     {
-                        trigger_clean = true;
+                        actions.push(CleanupDetailsAction::TriggerPrimary);
                     }
-                    if ui.button(self.t("关闭", "Close")).clicked() {
-                        request_close = true;
+                    if ui.button(&view_model.close_label).clicked() {
+                        actions.push(CleanupDetailsAction::Close);
                     }
                 });
             });
 
-        if request_close {
-            keep_open = false;
-        }
-        if select_all_safe {
-            self.select_all_safe_cleanup_items(category);
-        }
-        if clear_selected {
-            self.clear_selected_cleanup_items(category);
-        }
-        if open_selected {
-            if let Some(target) = self.selected_target() {
-                match dirotter_platform::select_in_explorer(&target.path) {
-                    Ok(_) => {
-                        self.explorer_feedback = Some((
-                            self.t(
-                                "已在系统文件管理器中打开目标位置。",
-                                "Opened the target location in the system file manager.",
-                            )
-                            .to_string(),
-                            true,
-                        ));
-                    }
-                    Err(err) => {
-                        self.explorer_feedback = Some((
-                            format!(
-                                "{}: {}",
-                                self.t("打开位置失败", "Failed to open location"),
-                                err.message
-                            ),
-                            false,
-                        ));
-                    }
-                }
+        for action in actions {
+            if matches!(action, CleanupDetailsAction::Close) {
+                keep_open = false;
             }
+            self.handle_cleanup_details_action(category, action);
         }
         if !keep_open {
             self.cleanup.detail_category = None;
         }
-        if trigger_clean {
-            self.queue_cleanup_category_delete(category);
+    }
+
+    fn handle_cleanup_details_action(
+        &mut self,
+        category: CleanupCategory,
+        action: CleanupDetailsAction,
+    ) {
+        match action {
+            CleanupDetailsAction::SelectCategory(category) => {
+                self.cleanup.detail_category = Some(category);
+            }
+            CleanupDetailsAction::ToggleTarget { path, checked } => {
+                if checked {
+                    self.cleanup.selected_paths.insert(path);
+                } else {
+                    self.cleanup.selected_paths.remove(path.as_ref());
+                }
+            }
+            CleanupDetailsAction::FocusTarget(target) => {
+                if let Some(node_id) = target.node_id {
+                    self.select_node(node_id, SelectionSource::Table);
+                } else {
+                    self.select_path(target.path.as_ref(), SelectionSource::Table);
+                }
+            }
+            CleanupDetailsAction::SelectAllSafe => self.select_all_safe_cleanup_items(category),
+            CleanupDetailsAction::ClearSelected => self.clear_selected_cleanup_items(category),
+            CleanupDetailsAction::OpenSelectedLocation => {
+                self.open_selected_cleanup_target_location();
+            }
+            CleanupDetailsAction::TriggerPrimary => self.trigger_cleanup_details_primary(category),
+            CleanupDetailsAction::TriggerPermanent => {
+                self.queue_cleanup_category_delete_with_mode(category, ExecutionMode::Permanent);
+            }
+            CleanupDetailsAction::Close => {}
         }
-        if trigger_recycle {
+    }
+
+    fn trigger_cleanup_details_primary(&mut self, category: CleanupCategory) {
+        if category == CleanupCategory::Cache {
+            self.queue_cleanup_category_delete(category);
+        } else {
             self.queue_cleanup_category_delete_with_mode(category, ExecutionMode::RecycleBin);
         }
-        if trigger_permanent {
-            self.queue_cleanup_category_delete_with_mode(category, ExecutionMode::Permanent);
+    }
+
+    fn open_selected_cleanup_target_location(&mut self) {
+        let Some(target) = self.selected_target() else {
+            return;
+        };
+        match dirotter_platform::select_in_explorer(target.path.as_ref()) {
+            Ok(_) => {
+                self.explorer_feedback = Some((
+                    self.t(
+                        "已在系统文件管理器中打开目标位置。",
+                        "Opened the target location in the system file manager.",
+                    )
+                    .to_string(),
+                    true,
+                ));
+            }
+            Err(err) => {
+                self.explorer_feedback = Some((
+                    format!(
+                        "{}: {}",
+                        self.t("打开位置失败", "Failed to open location"),
+                        err.message
+                    ),
+                    false,
+                ));
+            }
         }
     }
 
@@ -3188,6 +2884,7 @@ impl DirOtterNativeApp {
         let Some(request) = self.cleanup.pending_delete.clone() else {
             return;
         };
+        let view_model = self.cleanup_delete_confirmation_view_model(&request);
 
         let mut keep_open = true;
         let mut confirmed = false;
@@ -3197,81 +2894,42 @@ impl DirOtterNativeApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.set_min_width(420.0);
-                let is_fast_cleanup = request.mode == ExecutionMode::FastPurge;
-                ui.label(
-                    egui::RichText::new(self.t(
-                        if is_fast_cleanup {
-                            "将先把建议项快速移出当前目录，再在后台继续释放空间。"
-                        } else {
-                            "将优先把建议项移到回收站，避免直接永久删除。"
-                        },
-                        if is_fast_cleanup {
-                            "Suggested items will be moved out of the current view first, then reclaimed in the background."
-                        } else {
-                            "Suggested items will be moved to the recycle bin first instead of being deleted permanently."
-                        },
-                    ))
-                    .strong(),
-                );
+                ui.label(egui::RichText::new(view_model.intro).strong());
                 ui.add_space(10.0);
                 stat_row(
                     ui,
                     self.t("任务", "Task"),
-                    &request.label,
-                    self.t("规则驱动清理", "Rule-driven cleanup"),
+                    &view_model.task_value,
+                    view_model.task_hint,
                 );
                 stat_row(
                     ui,
                     self.t("项目数", "Items"),
-                    &format_count(request.targets.len() as u64),
-                    if is_fast_cleanup {
-                        self.t("会先进入后台清理区", "Will be staged for background cleanup")
-                    } else {
-                        self.t("将进入系统回收站", "Will move to the system recycle bin")
-                    },
+                    &view_model.item_count_value,
+                    view_model.item_count_hint,
                 );
                 stat_row(
                     ui,
                     self.t("预计释放", "Estimated Reclaim"),
-                    &format_bytes(request.estimated_bytes),
-                    if is_fast_cleanup {
-                        self.t("磁盘空间会在后台逐步释放", "Disk space will continue to be reclaimed in the background")
-                    } else {
-                        self.t("实际释放量取决于系统删除结果", "Actual reclaim depends on execution results")
-                    },
+                    &view_model.estimated_reclaim_value,
+                    view_model.estimated_reclaim_hint,
                 );
                 ui.add_space(8.0);
-                for target in request.targets.iter().take(6) {
-                    ui.label(format!(
-                        "• {}  {}",
-                        truncate_middle(&target.path, 52),
-                        format_bytes(target.size_bytes)
-                    ));
+                for item in &view_model.preview_items {
+                    ui.label(item);
                 }
-                if request.targets.len() > 6 {
+                if let Some(label) = view_model.more_items_label.as_ref() {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{} {}",
-                            format_count((request.targets.len() - 6) as u64),
-                            self.t("项未展开显示", "more items not shown")
-                        ))
-                        .text_style(egui::TextStyle::Small)
-                        .color(ui.visuals().weak_text_color()),
+                        egui::RichText::new(label)
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
                     );
                 }
                 ui.add_space(12.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add_enabled_ui(!self.delete_active(), |ui| {
-                            sized_primary_button(
-                                ui,
-                                150.0,
-                                if is_fast_cleanup {
-                                    self.t("立即清理", "Clean Now")
-                                } else {
-                                    self.t("移到回收站", "Move to Recycle Bin")
-                                },
-                            )
+                            sized_primary_button(ui, 150.0, view_model.confirm_label)
                         })
                         .inner
                         .clicked()
@@ -4111,7 +3769,7 @@ fn render_ranked_size_list(
     ui: &mut egui::Ui,
     title: &str,
     subtitle: &str,
-    items: &[(String, u64)],
+    items: &[dirotter_scan::RankedPath],
     total: u64,
     selection: &mut SelectionState,
     execution_report: &mut Option<ExecutionReport>,
@@ -4142,20 +3800,20 @@ fn render_ranked_size_list(
             let denom = total.max(items.iter().map(|(_, size)| *size).max().unwrap_or(1));
             for (idx, (path, size)) in items.iter().enumerate() {
                 let ratio = (*size as f32 / denom as f32).clamp(0.0, 1.0);
-                let label = format!("{}. {}", idx + 1, truncate_middle(path, 52));
+                let label = format!("{}. {}", idx + 1, truncate_middle(path.as_ref(), 52));
                 let row_width = (ui.available_width() - 150.0).max(120.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add_sized(
                             [row_width, 22.0],
                             egui::SelectableLabel::new(
-                                selection.selected_path.as_deref() == Some(path.as_str()),
+                                selection.selected_path.as_deref() == Some(path.as_ref()),
                                 label,
                             ),
                         )
                         .clicked()
                     {
-                        selection.selected_path = Some(path.clone());
+                        selection.selected_path = Some(path.to_string());
                         selection.source = Some(SelectionSource::Table);
                         selection.selected_node = None;
                         *execution_report = None;
@@ -4488,7 +4146,7 @@ fn detect_lang() -> Lang {
 #[cfg(test)]
 mod ui_tests {
     use super::*;
-    use dirotter_core::{NodeId, NodeKind, NodeStore, ResolvedNode};
+    use dirotter_core::{NodeId, NodeKind, NodeStore};
 
     fn make_test_app() -> DirOtterNativeApp {
         DirOtterNativeApp {
@@ -4597,27 +4255,15 @@ mod ui_tests {
                         top_files_delta: Vec::new(),
                         top_dirs_delta: Vec::new(),
                     },
-                    dirotter_scan::SnapshotView {
+                    dirotter_scan::SnapshotView::Live(dirotter_scan::LiveSnapshotView {
                         changed_node_count: 1,
-                        nodes: vec![ResolvedNode {
-                            id: NodeId(0),
-                            parent: None,
-                            name: "huge.bin".into(),
-                            path: "d:\\huge.bin".into(),
-                            kind: NodeKind::File,
-                            size_self: 64,
-                            size_subtree: 64,
-                            file_count: 1,
-                            dir_count: 0,
-                            dirty: true,
-                        }],
                         top_files: vec![("d:\\huge.bin".into(), 64)],
                         top_dirs: vec![("d:\\Users".into(), 128)],
                         selection: dirotter_scan::SelectionState {
                             focused: None,
                             expanded: Vec::new(),
                         },
-                    },
+                    }),
                 )),
                 finished: None,
                 last_event_at: Instant::now(),
@@ -4852,6 +4498,7 @@ mod ui_tests {
         store.rollup();
 
         let target = SelectedTarget {
+            node_id: None,
             name: "drop".into(),
             path: "e:\\drop".into(),
             size_bytes: 20,
@@ -4969,8 +4616,8 @@ mod ui_tests {
         assert_eq!(files.len(), 2);
         assert!(files
             .iter()
-            .all(|(path, _)| path.starts_with("d:\\appdata\\local\\sdk\\")));
-        assert_eq!(files[0].0, "d:\\appdata\\local\\sdk\\system.img");
+            .all(|(path, _)| path.as_ref().starts_with("d:\\appdata\\local\\sdk\\")));
+        assert_eq!(files[0].0.as_ref(), "d:\\appdata\\local\\sdk\\system.img");
     }
 
     #[test]
@@ -5055,8 +4702,8 @@ mod ui_tests {
         let target = app.selected_target().expect("selected target");
         assert!(matches!(app.selection.source, Some(SelectionSource::Error)));
         assert_eq!(app.selection.selected_node, None);
-        assert_eq!(target.path, "c:\\$Recycle.Bin\\S-1-5-18");
-        assert_eq!(target.name, "S-1-5-18");
+        assert_eq!(target.path.as_ref(), "c:\\$Recycle.Bin\\S-1-5-18");
+        assert_eq!(target.name.as_ref(), "S-1-5-18");
     }
 
     #[test]
@@ -5141,11 +4788,15 @@ mod ui_tests {
 
         let entries = app.treemap_entries("d:\\", 32);
         assert_eq!(entries.len(), 2);
-        assert!(entries.iter().any(|entry| entry.path == "d:\\Users"));
-        assert!(entries.iter().any(|entry| entry.path == "d:\\pagefile.sys"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path.as_ref() == "d:\\Users"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path.as_ref() == "d:\\pagefile.sys"));
         assert!(!entries
             .iter()
-            .any(|entry| entry.path == "d:\\Users\\alice.dat"));
+            .any(|entry| entry.path.as_ref() == "d:\\Users\\alice.dat"));
     }
 
     #[test]
@@ -5219,7 +4870,7 @@ mod ui_tests {
         };
 
         let focus = app.treemap_focus_target().expect("focus target");
-        assert_eq!(focus.path, "d:\\");
+        assert_eq!(focus.path.as_ref(), "d:\\");
     }
 
     #[test]

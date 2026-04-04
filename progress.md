@@ -118,6 +118,10 @@
 - 将批量清理与单项删除统一收口到同一条删除执行链路，并在删除后同步刷新概览统计、建议和结果视图。
 - 补充 `dirotter-ui` 单测，覆盖建议聚合与风险规则。
 
+## 2026-04-04（运行验证）
+- 执行 `cargo build`：成功，workspace 编译通过。
+- 尝试运行 `cargo run -p dirotter-app -- --help`：应用启动成功并初始化 telemetry，进程保持运行（这表明 GUI/主程序已启动，而不是立即退出）。
+
 ## 2026-03-19（首页 / 设置页截断修正）
 - 为页面级滚动容器补充底部安全区，避免最后一张卡片紧贴底边产生截断观感。
 - Settings 页移除额外固定宽度容器，直接使用页面级宽度约束，修复右侧卡片贴边问题。
@@ -408,3 +412,124 @@
   - `cargo build --workspace`：通过
   - `cargo test --workspace`：通过
   - `cargo clippy --workspace --all-targets -- -D warnings`：通过
+
+## 2026-04-04（SnapshotView 分层：live/full 显式化）
+- `crates/dirotter-scan/src/lib.rs` 中的 `SnapshotView` 已从单一 struct 收口成显式分层：
+  - `LiveSnapshotView`
+  - `FullSnapshotView`
+  - `SnapshotView::{Live, Full}`
+- `crates/dirotter-scan/src/aggregator.rs` 现在会根据 `include_full_tree` 明确生成 `Live` 或 `Full`，而不是让 live 路径天然携带一个“可选 nodes 列表”。
+- `crates/dirotter-ui/src/lib.rs` 的实时事件消费也已改成只提取排行，不再结构上默认依赖 `nodes`。
+- 这一步的意义是把“轻量实时视图”和“重型全量视图”真正拆成类型边界，而不只是靠约定说 live 路径不要塞节点列表。
+
+## 2026-04-04（UI 状态收口：当前结果树选择改为 NodeId 优先）
+- `crates/dirotter-ui/src/lib.rs` 中：
+  - `SelectedTarget` 已新增 `node_id`
+  - `TreemapEntry` 已新增 `node_id`
+  - 新增 `select_node()`，当前结果树内的交互会优先直接落到 `NodeId`
+- `crates/dirotter-ui/src/cleanup.rs` 生成的 cleanup 候选也已携带节点 ID。
+- `crates/dirotter-ui/src/result_pages.rs` 中，treemap 项点击和进入下一层都改成优先用 `NodeId`，不再只靠路径字符串反查。
+- 当前意义是：
+  - UI 仍保留路径 fallback，兼容错误页和外部路径
+  - 但当前结果树这一层已经开始真正转向“ID 驱动、路径兜底”
+
+## 2026-04-04（UI helper 下沉：view-model 物化脱离主状态文件）
+- `crates/dirotter-ui/src/view_models.rs` 已新增并接管一组纯展示 helper：
+  - `summary_cards`
+  - `scan_health_summary / scan_health_short`
+  - `current_ranked_dirs / current_ranked_files`
+  - `contextual_ranked_files_panel`
+- 当前变化不是“再拆一个文件”这么简单，而是把首页、结果页、状态栏使用的 view-model 物化逻辑从 `lib.rs` 的状态协调实现里拿了出去。
+- 这样做的意义是：
+  - `DirOtterNativeApp` 继续向“应用协调器”收口
+  - 页面层读取的展示数据来源更集中
+  - 后续如果要继续优化字符串物化点，会更容易在一个模块里集中处理
+
+## 2026-04-04（字符串热点收口：排行与结果页共享路径化）
+- `crates/dirotter-ui/src/view_models.rs` 中：
+  - `current_ranked_dirs / current_ranked_files`
+  - `ranked_files_in_scope`
+  - `contextual_ranked_files_panel`
+  已从 `Vec<(String, u64)>` 改为共享 `RankedPath`
+- `crates/dirotter-ui/src/lib.rs` 中：
+  - `live_files` 已改为共享路径列表
+- `crates/dirotter-ui/src/lib.rs` 与 `result_pages.rs` 中：
+  - `TreemapEntry.name / path` 已改为共享 `Arc<str>`
+- 当前意义是：
+  - 结果页和首页的大部分高频榜单不再先批量落成 `String`
+  - 共享路径可以直接穿到渲染 helper，只有点击选中或局部文本格式化时才物化
+
+## 2026-04-04（Inspector 与删除链路：SelectedTarget 共享化）
+- `crates/dirotter-ui/src/lib.rs` 中的 `SelectedTarget.name / path` 已改为共享 `Arc<str>`。
+- `crates/dirotter-ui/src/cleanup.rs` 生成的 cleanup 候选现在会直接复用 `NodeStore` 里的共享名称和路径。
+- 删除执行计划仍在 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 的执行边界显式转回 `String`，没有把 `Arc<str>` 强行推入 actions crate。
+- 当前意义是：
+  - Inspector、删除确认窗、cleanup 候选、treemap 目标不再各自重复复制路径和名称
+  - 共享数据停留在 UI 内部，执行链路边界仍保持清楚
+
+## 2026-04-04（UI 路径状态：cleanup 选择与 treemap 聚焦共享化）
+- `crates/dirotter-ui/src/lib.rs` 中：
+  - `CleanupPanelState.selected_paths` 已改为 `HashSet<Arc<str>>`
+  - `treemap_focus_path` 已改为 `Option<Arc<str>>`
+- cleanup 详情窗中的勾选状态、批量全选/清空和 treemap 的进入/返回上级逻辑，当前都直接复用共享路径，而不是在 UI 内部继续保留独立 `String` 状态。
+- 当前意义是：
+  - UI 里最后两块明显的“路径状态型 String”已经继续收口
+  - Inspector、cleanup、treemap 三条交互链路现在更接近统一的共享路径模型
+
+## 2026-04-04（Inspector / Confirm 展示整形继续下沉）
+- `crates/dirotter-ui/src/view_models.rs` 现在已继续接管：
+  - Inspector 目标摘要
+  - 后台删除任务摘要
+  - 永久删除确认窗摘要
+  - cleanup 确认窗摘要
+- `crates/dirotter-ui/src/lib.rs` 中对应的 `ui_inspector()`、`ui_delete_confirm_dialog()` 和 `ui_cleanup_delete_confirm_dialog()` 已改成主要负责布局和交互，展示字符串整形改由 view-model helper 提前完成。
+- 当前意义是：
+  - `DirOtterNativeApp` 继续摆脱“边渲染边拼文本”的模式
+  - Inspector/确认窗这一层的展示边界也开始和首页/结果页一样进入集中式 view-model 管理
+
+## 2026-04-04（Inspector 动作态与反馈文案也已下沉）
+- `crates/dirotter-ui/src/view_models.rs` 中新增了：
+  - Inspector 动作可用性模型
+  - Explorer 反馈 banner 模型
+  - 删除反馈 banner 模型
+  - 最近执行摘要模型
+- `crates/dirotter-ui/src/lib.rs` 中的 `ui_inspector()` 现在主要负责按钮点击后的动作分发和布局，不再自己计算：
+  - 按钮是否可用
+  - 当前应显示哪条提示文案
+  - Explorer / 删除 / 最近执行的展示文本
+- 当前意义是：
+  - Inspector 已继续从“状态分支密集区”退成“消费 view-model 的渲染层”
+  - 后续如果要继续改 Inspector 的提示策略或交互状态，不需要再在 UI 布局代码里穿插大量条件判断
+
+## 2026-04-04（Inspector Workspace Context 也已下沉）
+- `crates/dirotter-ui/src/view_models.rs` 中已新增 Workspace Context 展示模型。
+- `crates/dirotter-ui/src/lib.rs` 中 Inspector 底部的“根目录 / 来源”两行，当前也改成从 view-model 读取，而不是在 `ui_inspector()` 内直接截断路径和拼来源文本。
+- 当前意义是：
+  - Inspector 区域的主要展示整形已经基本都离开了主布局函数
+  - `ui_inspector()` 现在更接近稳定的渲染壳，而不是继续增长的文案拼装函数
+
+## 2026-04-04（Cleanup Details Window 继续下沉）
+- `crates/dirotter-ui/src/view_models.rs` 现在已新增 cleanup 详情窗对应的展示模型，覆盖：
+  - 分类 tabs
+  - 统计区与按钮标签/启用态
+  - item 行路径、大小、风险/分类标签、unused days 与评分文案
+- `crates/dirotter-ui/src/lib.rs` 中的 `ui_cleanup_details_window()` 已改成主要负责：
+  - tab 切换
+  - 勾选状态写回
+  - 选择/打开/触发清理动作
+  而不是自己拼大段展示文本。
+- 当前意义是：
+  - cleanup 详情窗也开始走和 Inspector 一样的“view-model 先整形，UI 再消费”的路线
+  - `dirotter-ui` 里另一个较重的 UI 函数已经明显变薄
+
+## 2026-04-04（Cleanup Details 控制流继续收口）
+- `crates/dirotter-ui/src/lib.rs` 中的 `ui_cleanup_details_window()` 已从多布尔旗标控制流改成“收集 `CleanupDetailsAction` -> 统一分发”。
+- 当前已被统一收口的动作包括：
+  - 切换分类
+  - 勾选/取消勾选目标
+  - 聚焦目标
+  - 全选安全项 / 清空所选 / 打开所选位置
+  - 主操作触发 / 永久删除触发
+- 当前意义是：
+  - cleanup 详情窗主函数继续从“渲染 + 一堆尾部状态判断”退回“渲染 + 动作收集”
+  - 后续如果要继续补测试或调整动作策略，可以直接围绕 action handler 做局部演进

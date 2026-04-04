@@ -126,7 +126,6 @@ pub(crate) fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
 
     for node in cache_dirs {
         let node_path = store.node_path(node);
-        let node_name = store.node_name(node);
         if cache_scope_paths
             .iter()
             .any(|scope| path_within_scope(node_path, scope))
@@ -136,14 +135,17 @@ pub(crate) fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
 
         cache_scope_paths.push(node_path.to_string());
         let target = SelectedTarget {
-            name: node_name.to_string(),
-            path: node_path.to_string(),
+            node_id: Some(node.id),
+            name: store
+                .resolve_string_arc(node.name_id)
+                .unwrap_or_else(|| std::sync::Arc::from("")),
+            path: node.path.clone(),
             size_bytes: node.size_subtree.max(node.size_self),
             kind: node.kind,
             file_count: node.file_count,
             dir_count: node.dir_count,
         };
-        let unused_days = cleanup_unused_days(&target.path);
+        let unused_days = cleanup_unused_days(target.path.as_ref());
         push_ranked_cleanup_candidate(
             &mut category_candidates,
             CleanupCandidate {
@@ -167,7 +169,6 @@ pub(crate) fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
         .filter(|node| node.kind == NodeKind::File)
     {
         let node_path = store.node_path(node);
-        let node_name = store.node_name(node);
         if cache_scope_paths
             .iter()
             .any(|scope| path_within_scope(node_path, scope))
@@ -198,8 +199,11 @@ pub(crate) fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
             &mut category_candidates,
             CleanupCandidate {
                 target: SelectedTarget {
-                    name: node_name.to_string(),
-                    path: node_path.to_string(),
+                    node_id: Some(node.id),
+                    name: store
+                        .resolve_string_arc(node.name_id)
+                        .unwrap_or_else(|| std::sync::Arc::from("")),
+                    path: node.path.clone(),
                     size_bytes: node.size_self,
                     kind: node.kind,
                     file_count: node.file_count,

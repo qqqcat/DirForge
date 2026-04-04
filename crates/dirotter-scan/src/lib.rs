@@ -45,12 +45,92 @@ pub struct SelectionState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapshotView {
+pub struct LiveSnapshotView {
+    pub changed_node_count: usize,
+    pub top_files: Vec<RankedPath>,
+    pub top_dirs: Vec<RankedPath>,
+    pub selection: SelectionState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullSnapshotView {
     pub changed_node_count: usize,
     pub nodes: Vec<ResolvedNode>,
     pub top_files: Vec<RankedPath>,
     pub top_dirs: Vec<RankedPath>,
     pub selection: SelectionState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SnapshotView {
+    Live(LiveSnapshotView),
+    Full(FullSnapshotView),
+}
+
+impl SnapshotView {
+    pub fn changed_node_count(&self) -> usize {
+        match self {
+            Self::Live(view) => view.changed_node_count,
+            Self::Full(view) => view.changed_node_count,
+        }
+    }
+
+    pub fn materialized_node_count(&self) -> usize {
+        match self {
+            Self::Live(_) => 0,
+            Self::Full(view) => view.nodes.len(),
+        }
+    }
+
+    pub fn ranked_item_count(&self) -> usize {
+        match self {
+            Self::Live(view) => view.top_files.len() + view.top_dirs.len(),
+            Self::Full(view) => view.top_files.len() + view.top_dirs.len(),
+        }
+    }
+
+    pub fn estimated_text_bytes(&self) -> u64 {
+        match self {
+            Self::Live(view) => {
+                let top_file_text = view
+                    .top_files
+                    .iter()
+                    .map(|(path, _)| path.len() as u64)
+                    .sum::<u64>();
+                let top_dir_text = view
+                    .top_dirs
+                    .iter()
+                    .map(|(path, _)| path.len() as u64)
+                    .sum::<u64>();
+                top_file_text + top_dir_text
+            }
+            Self::Full(view) => {
+                let node_text = view
+                    .nodes
+                    .iter()
+                    .map(|node| (node.name.len() + node.path.len()) as u64)
+                    .sum::<u64>();
+                let top_file_text = view
+                    .top_files
+                    .iter()
+                    .map(|(path, _)| path.len() as u64)
+                    .sum::<u64>();
+                let top_dir_text = view
+                    .top_dirs
+                    .iter()
+                    .map(|(path, _)| path.len() as u64)
+                    .sum::<u64>();
+                node_text + top_file_text + top_dir_text
+            }
+        }
+    }
+
+    pub fn into_rankings(self) -> (Vec<RankedPath>, Vec<RankedPath>) {
+        match self {
+            Self::Live(view) => (view.top_files, view.top_dirs),
+            Self::Full(view) => (view.top_files, view.top_dirs),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -218,25 +298,6 @@ fn classify_error(reason: &str) -> ErrorKind {
     }
 }
 
-fn estimate_snapshot_view_text_bytes(view: &SnapshotView) -> u64 {
-    let node_text = view
-        .nodes
-        .iter()
-        .map(|node| (node.name.len() + node.path.len()) as u64)
-        .sum::<u64>();
-    let top_file_text = view
-        .top_files
-        .iter()
-        .map(|(path, _)| path.len() as u64)
-        .sum::<u64>();
-    let top_dir_text = view
-        .top_dirs
-        .iter()
-        .map(|(path, _)| path.len() as u64)
-        .sum::<u64>();
-    node_text + top_file_text + top_dir_text
-}
-
 pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
     let tuning = config.tuned();
     let (tx, rx) = mpsc::sync_channel(tuning.ui_backpressure_batch_budget);
@@ -294,10 +355,10 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                         let snapshot_start = Instant::now();
                         let (delta, view) = aggregator.make_snapshot_data(false);
                         telemetry::record_snapshot_view(
-                            view.changed_node_count as u64,
-                            view.nodes.len() as u64,
-                            (view.top_files.len() + view.top_dirs.len()) as u64,
-                            estimate_snapshot_view_text_bytes(&view),
+                            view.changed_node_count() as u64,
+                            view.materialized_node_count() as u64,
+                            view.ranked_item_count() as u64,
+                            view.estimated_text_bytes(),
                         );
                         publisher.send_snapshot_if_due(delta, view);
                         telemetry::record_snapshot();
@@ -318,10 +379,10 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             .unwrap_or_default();
         telemetry::record_scan_finished(final_store.nodes.len() as u64, finished_payload_size);
         telemetry::record_snapshot_view(
-            final_view.changed_node_count as u64,
-            final_view.nodes.len() as u64,
-            (final_view.top_files.len() + final_view.top_dirs.len()) as u64,
-            estimate_snapshot_view_text_bytes(&final_view),
+            final_view.changed_node_count() as u64,
+            final_view.materialized_node_count() as u64,
+            final_view.ranked_item_count() as u64,
+            final_view.estimated_text_bytes(),
         );
 
         if cancel_clone.load(Ordering::SeqCst) {

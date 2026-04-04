@@ -127,14 +127,13 @@ pub(super) fn ui_current_scan(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                                 .add_sized(
                                     [row_width, 24.0],
                                     egui::SelectableLabel::new(
-                                        app.selection.selected_path.as_deref()
-                                            == Some(path.as_str()),
-                                        truncate_middle(&path, 92),
+                                        app.selection_matches_path(path.as_ref()),
+                                        truncate_middle(path.as_ref(), 92),
                                     ),
                                 )
                                 .clicked()
                             {
-                                app.select_path(&path, SelectionSource::Table);
+                                app.select_path(path.as_ref(), SelectionSource::Table);
                             }
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -307,8 +306,7 @@ pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                             };
                             let share =
                                 (entry.size_bytes as f32 / scope_total as f32).clamp(0.0, 1.0);
-                            let selected =
-                                app.selection.selected_path.as_deref() == Some(entry.path.as_str());
+                            let selected = app.selection_matches_treemap_entry(entry);
                             let label = format!(
                                 "{} {}",
                                 if matches!(entry.kind, NodeKind::Dir) {
@@ -316,7 +314,7 @@ pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                                 } else {
                                     app.t("文件", "FILE")
                                 },
-                                truncate_middle(&entry.name, 56)
+                                truncate_middle(entry.name.as_ref(), 56)
                             );
                             let subtitle = match entry.kind {
                                 NodeKind::Dir => format!(
@@ -341,12 +339,12 @@ pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                                         )
                                         .clicked()
                                     {
-                                        app.select_path(&entry.path, SelectionSource::Treemap);
+                                        app.select_node(entry.node_id, SelectionSource::Treemap);
                                     }
                                     if matches!(entry.kind, NodeKind::Dir)
                                         && ui.button(app.t("进入下一层", "Open Level")).clicked()
                                     {
-                                        app.focus_treemap_path(entry.path.clone());
+                                        app.focus_treemap_node(entry.node_id);
                                     }
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
