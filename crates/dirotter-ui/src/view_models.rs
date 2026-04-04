@@ -102,11 +102,14 @@ pub(super) struct ExecutionFailureDetailsItemViewModel {
     pub technical_detail_value: Option<String>,
 }
 
-pub(super) struct InspectorWorkspaceContextViewModel {
-    pub root_value: String,
-    pub root_hint: &'static str,
-    pub source_value: String,
-    pub source_hint: &'static str,
+pub(super) struct InspectorMemoryStatusViewModel {
+    pub system_free_value: Option<String>,
+    pub process_working_set_value: Option<String>,
+    pub load_value: Option<String>,
+    pub load_warning: bool,
+    pub release_delta_value: Option<String>,
+    pub release_delta_hint: Option<String>,
+    pub active_message: Option<String>,
 }
 
 pub(super) struct CleanupDetailsCategoryTabViewModel {
@@ -747,14 +750,6 @@ impl DirOtterNativeApp {
                 )
                 .to_string(),
             )
-        } else if self.system_memory_release_active() {
-            Some(
-                self.t(
-                    "系统内存释放正在后台执行。界面不会锁死，完成后会自动显示前后效果。",
-                    "System memory release is running in the background. The UI stays responsive and will show the before/after result automatically.",
-                )
-                .to_string(),
-            )
         } else if !has_selection {
             Some(
                 self.t(
@@ -917,20 +912,67 @@ impl DirOtterNativeApp {
         })
     }
 
-    pub(super) fn inspector_workspace_context_view_model(
-        &self,
-    ) -> InspectorWorkspaceContextViewModel {
-        InspectorWorkspaceContextViewModel {
-            root_value: truncate_middle(&self.root_input, 32),
-            root_hint: self.t("当前扫描目标", "Current scan target"),
-            source_value: self
-                .selection
-                .source
-                .map(|source| self.source_label(source))
-                .unwrap_or_else(|| self.t("无", "None"))
-                .to_string(),
-            source_hint: self.t("当前聚焦来源", "Selection source"),
+    pub(super) fn inspector_memory_status_view_model(&self) -> InspectorMemoryStatusViewModel {
+        let release_delta_hint = self.last_system_memory_release.map(|report| {
+            let mut hint = format!(
+                "{} {}% -> {}%  |  {} {}  |  {} {}",
+                self.t("内存负载", "load"),
+                report.before_memory_load_percent,
+                report.after_memory_load_percent,
+                self.t("已收缩进程", "Trimmed processes"),
+                report.trimmed_process_count,
+                self.t("扫描候选", "Scanned candidates"),
+                report.scanned_process_count
+            );
+            if report.trimmed_system_file_cache {
+                hint.push_str(&format!(
+                    "  |  {}",
+                    self.t("已裁剪系统文件缓存", "System file cache trimmed")
+                ));
+            }
+            hint
+        });
+
+        InspectorMemoryStatusViewModel {
+            system_free_value: self
+                .system_memory
+                .map(|memory| format_bytes(memory.available_phys_bytes)),
+            process_working_set_value: self
+                .process_memory
+                .map(|memory| format_bytes(memory.working_set_bytes)),
+            load_value: self
+                .system_memory
+                .map(|memory| format!("{}%", memory.memory_load_percent)),
+            load_warning: self.system_memory_pressure_active(),
+            release_delta_value: self
+                .last_system_memory_release
+                .map(|report| format_bytes(report.available_phys_delta())),
+            release_delta_hint,
+            active_message: self.system_memory_release_active().then(|| {
+                self.t(
+                    "系统内存释放正在后台执行。界面不会锁死，完成后会自动显示前后效果。",
+                    "System memory release is running in the background. The UI stays responsive and will show the before/after result automatically.",
+                )
+                .to_string()
+            }),
         }
+    }
+
+    pub(super) fn inspector_maintenance_feedback_view_model(
+        &self,
+    ) -> Option<(InspectorFeedbackBannerViewModel, bool)> {
+        let (message, success) = self.maintenance_feedback.as_ref()?;
+        Some((
+            InspectorFeedbackBannerViewModel {
+                title: if *success {
+                    self.t("维护完成", "Maintenance Done").to_string()
+                } else {
+                    self.t("维护失败", "Maintenance Failed").to_string()
+                },
+                message: message.clone(),
+            },
+            *success,
+        ))
     }
 
     pub(super) fn cleanup_details_window_view_model(

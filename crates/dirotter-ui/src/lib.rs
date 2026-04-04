@@ -1265,6 +1265,7 @@ impl DirOtterNativeApp {
 
         self.trim_transient_runtime_memory();
         self.maintenance_feedback = None;
+        self.last_system_memory_release = None;
         self.memory_release_session = Some(start_memory_release_session(self.egui_ctx.clone()));
     }
 
@@ -1487,15 +1488,6 @@ impl DirOtterNativeApp {
         self.execution_report = Some(payload.report);
         self.delete_finalize_session = None;
         self.refresh_diagnostics();
-    }
-
-    fn source_label(&self, source: SelectionSource) -> &'static str {
-        match source {
-            SelectionSource::Table => self.t("列表", "Table"),
-            SelectionSource::Treemap => self.t("结果视图", "Result View"),
-            SelectionSource::History => self.t("历史", "History"),
-            SelectionSource::Error => self.t("错误", "Error"),
-        }
     }
 
     fn select_path(&mut self, path: &str, source: SelectionSource) {
@@ -2438,7 +2430,8 @@ impl DirOtterNativeApp {
         let explorer_feedback_view = self.inspector_explorer_feedback_view_model();
         let delete_feedback_view = self.inspector_delete_feedback_view_model();
         let execution_report_view = self.inspector_execution_report_view_model();
-        let workspace_context_view = self.inspector_workspace_context_view_model();
+        let memory_status_view = self.inspector_memory_status_view_model();
+        let maintenance_feedback_view = self.inspector_maintenance_feedback_view_model();
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(self.t("检查器", "Inspector"))
@@ -2687,21 +2680,77 @@ impl DirOtterNativeApp {
         ui.add_space(10.0);
         surface_panel(ui, |ui| {
             ui.label(
-                egui::RichText::new(self.t("工作上下文", "Workspace Context"))
+                egui::RichText::new(self.t("一键释放系统内存", "Release System Memory"))
                     .text_style(egui::TextStyle::Name("title".into())),
             );
-            stat_row(
-                ui,
-                self.t("根目录", "Root"),
-                &workspace_context_view.root_value,
-                workspace_context_view.root_hint,
+            ui.label(
+                egui::RichText::new(&inspector_actions_view.release_memory_tooltip)
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
             );
-            stat_row(
-                ui,
-                self.t("来源", "Source"),
-                &workspace_context_view.source_value,
-                workspace_context_view.source_hint,
-            );
+            ui.add_space(10.0);
+            if let Some(system_free) = memory_status_view.system_free_value.as_ref() {
+                ui.label(egui::RichText::new(system_free).size(28.0).strong());
+                if let Some(load_value) = memory_status_view.load_value.as_ref() {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {}",
+                            self.t("内存负载", "load"),
+                            load_value
+                        ))
+                        .text_style(egui::TextStyle::Small)
+                        .color(if memory_status_view.load_warning {
+                            ui.visuals().warn_fg_color
+                        } else {
+                            ui.visuals().weak_text_color()
+                        }),
+                    );
+                    ui.add_space(10.0);
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                if let Some(process_memory) = memory_status_view.process_working_set_value.as_ref()
+                {
+                    compact_stat_chip(ui, "DirOtter", process_memory);
+                }
+                if let Some(system_free) = memory_status_view.system_free_value.as_ref() {
+                    compact_stat_chip(ui, self.t("系统可用内存", "system free"), system_free);
+                }
+                if let Some(load_value) = memory_status_view.load_value.as_ref() {
+                    compact_stat_chip(ui, self.t("内存负载", "load"), load_value);
+                }
+            });
+            if let Some(active_message) = memory_status_view.active_message.as_ref() {
+                ui.add_space(10.0);
+                tone_banner(
+                    ui,
+                    self.t("一键释放系统内存", "Release System Memory"),
+                    active_message,
+                );
+            }
+            if let Some(delta) = memory_status_view.release_delta_value.as_ref() {
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(10.0);
+                stat_row(
+                    ui,
+                    self.t(
+                        "系统可用内存增加约",
+                        "System free memory increased by about",
+                    ),
+                    delta,
+                    memory_status_view
+                        .release_delta_hint
+                        .as_deref()
+                        .unwrap_or(""),
+                );
+            }
+            if let Some((feedback, success)) = maintenance_feedback_view.as_ref() {
+                if !success {
+                    ui.add_space(10.0);
+                    tone_banner(ui, &feedback.title, &feedback.message);
+                }
+            }
         });
     }
 
@@ -3337,34 +3386,6 @@ impl DirOtterNativeApp {
                     .text_style(egui::TextStyle::Small),
                 );
             }
-            if let Some(process_memory) = self.process_memory {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!(
-                        "DirOtter {}",
-                        format_bytes(process_memory.working_set_bytes)
-                    ))
-                    .text_style(egui::TextStyle::Small),
-                );
-            }
-            if let Some(system_memory) = self.system_memory {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} {}  |  {} {}%",
-                        format_bytes(system_memory.available_phys_bytes),
-                        self.t("系统可用内存", "system free"),
-                        self.t("内存负载", "load"),
-                        system_memory.memory_load_percent
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(if self.system_memory_pressure_active() {
-                        ui.visuals().warn_fg_color
-                    } else {
-                        ui.visuals().weak_text_color()
-                    }),
-                );
-            }
             if self.scan_active() {
                 ui.separator();
                 ui.label(
@@ -3387,18 +3408,6 @@ impl DirOtterNativeApp {
                     ))
                     .text_style(egui::TextStyle::Small)
                     .color(ui.visuals().weak_text_color()),
-                );
-            }
-            if let Some((message, success)) = self.maintenance_feedback.as_ref() {
-                ui.add_space(8.0);
-                tone_banner(
-                    ui,
-                    if *success {
-                        self.t("维护完成", "Maintenance Done")
-                    } else {
-                        self.t("维护失败", "Maintenance Failed")
-                    },
-                    message,
                 );
             }
         });
