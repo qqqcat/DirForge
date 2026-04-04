@@ -114,6 +114,7 @@ impl Aggregator {
         let top_dirs_delta = top_dir_nodes.iter().map(|node| node.id).collect();
 
         let changed_nodes = std::mem::take(&mut self.changed_since_snapshot);
+        let changed_node_count = changed_nodes.len();
         let view_nodes = if include_full_tree {
             self.store
                 .nodes
@@ -121,11 +122,7 @@ impl Aggregator {
                 .map(|node| self.store.resolved_node(node))
                 .collect()
         } else {
-            changed_nodes
-                .iter()
-                .filter_map(|id| self.store.nodes.get(id.0))
-                .map(|node| self.store.resolved_node(node))
-                .collect()
+            Vec::new()
         };
 
         let delta = SnapshotDelta {
@@ -135,6 +132,7 @@ impl Aggregator {
             top_dirs_delta,
         };
         let view = SnapshotView {
+            changed_node_count,
             nodes: view_nodes,
             top_files,
             top_dirs,
@@ -163,6 +161,7 @@ impl Aggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn buffers_children_until_parent_arrives() {
@@ -222,8 +221,57 @@ mod tests {
 
         let (_, view) = aggr.make_snapshot_data(false);
 
+        assert_eq!(view.changed_node_count, 2);
+        assert!(view.nodes.is_empty());
         assert_eq!(view.top_files.first().map(|entry| entry.1), Some(42));
         assert_eq!(view.top_dirs.first().map(|entry| entry.1), Some(42));
         assert!(aggr.store.nodes.iter().all(|node| !node.dirty));
+    }
+
+    #[test]
+    fn incremental_snapshot_generation_stays_under_threshold() {
+        let root = "/tmp/root".to_string();
+        let mut aggr = Aggregator::new("root".to_string(), root.clone());
+
+        for dir_idx in 0..32 {
+            let dir_path = format!("{root}/dir_{dir_idx}");
+            aggr.on_entry(EntryEvent {
+                path: dir_path.clone().into(),
+                parent_path: root.clone().into(),
+                name: format!("dir_{dir_idx}").into(),
+                is_dir: true,
+                size: 0,
+                metadata_backlog: 0,
+            });
+
+            for file_idx in 0..32 {
+                aggr.on_entry(EntryEvent {
+                    path: format!("{dir_path}/file_{file_idx}.bin").into(),
+                    parent_path: dir_path.clone().into(),
+                    name: format!("file_{file_idx}.bin").into(),
+                    is_dir: false,
+                    size: ((dir_idx + file_idx + 1) * 1024) as u64,
+                    metadata_backlog: 0,
+                });
+            }
+        }
+
+        let started = Instant::now();
+        let (_, view) = aggr.make_snapshot_data(false);
+        let elapsed_ms = started.elapsed().as_millis();
+        let payload_bytes = serde_json::to_vec(&view)
+            .expect("serialize snapshot view")
+            .len();
+
+        assert!(
+            elapsed_ms <= 250,
+            "incremental snapshot regression: {elapsed_ms}ms > 250ms"
+        );
+        assert!(
+            payload_bytes <= 16 * 1024,
+            "incremental snapshot payload regression: {payload_bytes} bytes > 16384 bytes"
+        );
+        assert_eq!(view.changed_node_count, 32 * 33);
+        assert!(view.nodes.is_empty());
     }
 }

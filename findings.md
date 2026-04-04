@@ -242,4 +242,22 @@
 - 现在共享路径已经继续推进到事件边界：[lib.rs](E:/DirForge/crates/dirotter-scan/src/lib.rs) 中的 `ScanProgress.current_path`、`SnapshotView.top_files / top_dirs` 和完成态 Top-N 排行都已改为共享路径。
 - 共享路径现在已经继续推进到 [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 的实时状态层：`scan_current_path / live_top_* / completed_top_*` 也已改为共享路径持有。
 - `ResolvedNode` 这一层现在也已继续共享化，位置在 [lib.rs](E:/DirForge/crates/dirotter-core/src/lib.rs)。`SnapshotView.nodes` 不再为每个节点重新分配 `name/path String`。
-- 当前还没完全发挥 Rust 的优势，因为部分页面 helper 仍会在渲染前物化文本；但字符串物化点已经从“扫描热路径中多次发生”收口到“真正需要渲染或文本输出时才发生”。
+- `SnapshotView` 的实时路径也已继续收口：[aggregator.rs](E:/DirForge/crates/dirotter-scan/src/aggregator.rs) 中，非 full-tree snapshot 已不再携带变更节点列表，只保留 `changed_node_count`。
+- 完成态事件也已移除重复的 Top-N 排行，UI 会在拿到最终 `store` 后本地重建，避免跨线程再携带一份可导出数据。
+- 当前还没完全发挥 Rust 的优势，因为部分页面 helper 仍会在渲染前物化文本；但字符串物化点和重复 payload 都已经收口到“真正需要渲染或文本输出时才发生”。
+
+## Perf Guard Update
+- 性能回归保护现在不再只覆盖“整次扫描多久结束”，而是开始覆盖 snapshot 这条真正被优化过的链路。
+- [benchmark_thresholds.rs](E:/DirForge/crates/dirotter-testkit/tests/benchmark_thresholds.rs) 已新增大树 snapshot payload 阈值测试。
+- [aggregator.rs](E:/DirForge/crates/dirotter-scan/src/aggregator.rs) 已新增本地 snapshot 组装耗时与 payload 阈值测试。
+- 这意味着后续如果有人重新把 snapshot 改回“带大量节点/大字符串 payload”，或者让组装逻辑重新退化，测试会先响。
+
+## Runtime Telemetry Update
+- 当前 snapshot 链路的“变胖风险”已经不再只能靠离线测试识别。
+- [lib.rs](E:/DirForge/crates/dirotter-telemetry/src/lib.rs) 现在会继续累计 live/final snapshot 的：
+  - `changed_node_count`
+  - `materialized_nodes`
+  - `ranked_items`
+  - `text_bytes` 估算值
+- [lib.rs](E:/DirForge/crates/dirotter-scan/src/lib.rs) 不会为了做 telemetry 再额外 JSON 序列化 snapshot，而是只统计共享路径和节点文本长度。
+- 这让 diagnostics 能直接回答一个更实际的问题：最近的优化是否真的把实时 snapshot 稳定压成了“稀疏 payload”。

@@ -397,3 +397,34 @@
   1. 评估页面 helper 中是否还存在不必要的批量 `to_string()`
   2. 决定是否为最终结果页引入更轻的 view model，而不是直接从共享状态即时物化
   3. 增加更明确的快照 payload / 分配基线
+
+### 2026-04-04 Phase 3 Update 4
+
+- 已继续去掉两块明确的冗余 payload：
+  - 非 full-tree `SnapshotView` 不再携带变更节点列表，只保留 `changed_node_count`
+  - `ScanEvent::Finished` 不再重复携带可由 `store` 重建的 Top-N 排行
+- 这一步的意义不是“类型更漂亮”，而是直接减少：
+  - 实时 snapshot 的序列化/排队体积
+  - 完成态事件的重复数据传输
+  - UI relay 层的无效中转数据
+
+### 2026-04-04 Perf Baseline Update
+
+- 性能基线已开始覆盖 snapshot 关键路径，而不再只看“整次扫描多久完成”：
+  - 大树扫描下的 snapshot payload 大小阈值
+  - `make_snapshot_data(false)` 的本地组装耗时阈值
+- 这样做的意义是把最近几轮的优化成果固化下来：
+  - 如果 payload 重新膨胀，测试先报
+  - 如果 snapshot 组装重新退化，测试先报
+
+### 2026-04-04 Runtime Observability Update
+
+- snapshot 稀疏化现在不再只靠离线阈值测试守护，也开始进入运行时观测：
+  - telemetry 新增 `avg/max snapshot changed nodes`
+  - telemetry 新增 `avg/max snapshot materialized nodes`
+  - telemetry 新增 `avg snapshot ranked items`
+  - telemetry 新增 `avg/max snapshot text bytes`
+- 当前实现明确避免了一种“为了看 payload 又把 payload 做重”的倒退：
+  - 不额外序列化 live snapshot
+  - 只统计节点/排行路径文本长度作为低成本估算
+- 这一步的目标不是替代基准测试，而是给 diagnostics 一个能直接揭示 payload 回退的运行时锚点。

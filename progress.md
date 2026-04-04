@@ -357,3 +357,54 @@
   - `cargo test -p dirotter-scan`：通过
   - `cargo test -p dirotter-ui`：通过
   - `cargo clippy -p dirotter-core --all-targets -- -D warnings`：通过
+
+## 2026-04-04（Phase 3：去掉无用 snapshot 节点列表与重复 Top-N）
+- 继续压缩实时快照和完成态 payload，不再只做“共享字符串但仍发送整块结构”。
+- `crates/dirotter-scan/src/aggregator.rs` 中：
+  - 非 full-tree 的 `SnapshotView` 已不再物化 `nodes`
+  - 新增 `changed_node_count`，用于保留轻量统计而不是传完整节点列表
+- `crates/dirotter-scan/src/lib.rs` 与 [publisher.rs](E:/DirForge/crates/dirotter-scan/src/publisher.rs) 中：
+  - `ScanEvent::Finished` 已移除重复的 `top_files / top_dirs`
+  - `record_scan_finished()` 现在直接用最终 `NodeStore` 的节点数，而不是依赖 snapshot 节点列表长度
+- `crates/dirotter-ui/src/lib.rs` 中：
+  - 最终完成态改为在拿到 `store` 后本地重建排名
+  - 不再依赖完成事件里重复携带的 Top-N
+- 本轮验证结果：
+  - `cargo fmt --all`：通过
+  - `cargo test -p dirotter-scan`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo clippy -p dirotter-scan --all-targets -- -D warnings`：通过
+  - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+
+## 2026-04-04（性能基线：snapshot payload 与组装耗时）
+- 开始把“压 payload”从实现改动升级为回归门槛。
+- `crates/dirotter-testkit/tests/benchmark_thresholds.rs` 新增了：
+  - `benchmark_snapshot_payload_threshold_massive_tree`
+- `crates/dirotter-testkit/perf/baseline.json` 新增了：
+  - `snapshot_massive_tree_payload_bytes`
+- `crates/dirotter-scan/src/aggregator.rs` 新增了：
+  - `incremental_snapshot_generation_stays_under_threshold`
+- 当前覆盖的是两类回归：
+  - 公共扫描路径上的 snapshot 展示 payload 大小
+  - `make_snapshot_data(false)` 本地组装耗时与序列化体积
+- 本轮验证结果：
+  - `cargo test -p dirotter-scan incremental_snapshot_generation_stays_under_threshold -- --nocapture`：通过
+  - `cargo test -p dirotter-testkit benchmark_snapshot_payload_threshold_massive_tree -- --nocapture`：通过
+
+## 2026-04-04（运行时观测：snapshot 稀疏 payload telemetry）
+- 在不引入每次 snapshot 额外 JSON 序列化的前提下，继续补齐 live snapshot 的 runtime 可观测性。
+- `crates/dirotter-telemetry/src/lib.rs` 中新增了：
+  - `avg/max snapshot changed nodes`
+  - `avg/max snapshot materialized nodes`
+  - `avg snapshot ranked items`
+  - `avg/max snapshot text bytes`
+- `crates/dirotter-scan/src/lib.rs` 中新增轻量文本载荷估算，并在 periodic/final snapshot 两条路径上报 telemetry。
+- 当前意义是：
+  - diagnostics 里不再只能看到“snapshot 提交耗时”，还可以看到 snapshot 是否重新变胖
+  - 后续继续压缩 payload 时，已经有真实运行态的观测锚点，而不只靠阈值测试
+- 本轮验证结果：
+  - `cargo test -p dirotter-telemetry`：通过
+  - `cargo test -p dirotter-scan`：通过
+  - `cargo build --workspace`：通过
+  - `cargo test --workspace`：通过
+  - `cargo clippy --workspace --all-targets -- -D warnings`：通过

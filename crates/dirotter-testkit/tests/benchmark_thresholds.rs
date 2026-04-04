@@ -9,6 +9,7 @@ struct PerfBaseline {
     scan_small_tree_ms: u128,
     scan_massive_tree_ms: u128,
     dup_small_dataset_ms: u128,
+    snapshot_massive_tree_payload_bytes: usize,
 }
 
 fn load_baseline() -> PerfBaseline {
@@ -118,5 +119,47 @@ fn benchmark_dup_threshold_small_dataset() {
         "dup perf regression: {}ms > {}ms",
         elapsed,
         baseline.dup_small_dataset_ms
+    );
+}
+
+#[test]
+fn benchmark_snapshot_payload_threshold_massive_tree() {
+    let baseline = load_baseline();
+    let fixture = dirotter_testkit::FixtureTree::massive_tree(3, 8).expect("fixture");
+    let handle = start_scan(
+        fixture.root.clone(),
+        ScanConfig {
+            profile: ScanProfile::Ssd,
+            batch_size: 128,
+            snapshot_ms: 50,
+            metadata_parallelism: 4,
+            deep_tasks_throttle: 128,
+        },
+    );
+
+    let mut max_payload_bytes = 0usize;
+    let mut saw_snapshot = false;
+    loop {
+        let event = handle
+            .events
+            .recv_timeout(Duration::from_millis(25))
+            .expect("event");
+        match event {
+            ScanEvent::Snapshot { view, .. } => {
+                saw_snapshot = true;
+                let payload = serde_json::to_vec(&view).expect("serialize snapshot view");
+                max_payload_bytes = max_payload_bytes.max(payload.len());
+            }
+            ScanEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert!(saw_snapshot, "expected at least one snapshot event");
+    assert!(
+        max_payload_bytes <= baseline.snapshot_massive_tree_payload_bytes,
+        "snapshot payload regression: {} bytes > {} bytes",
+        max_payload_bytes,
+        baseline.snapshot_massive_tree_payload_bytes
     );
 }

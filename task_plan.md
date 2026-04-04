@@ -49,10 +49,11 @@
   - [x] `aggregator` 快照阶段移除补账式 `rollup`
   - [~] 快照视图与消息链路继续瘦身
     - [x] `walker -> aggregator -> publisher` 路径共享化
-    - [ ] `SnapshotView / ScanProgress` 继续延迟物化
+    - [x] `SnapshotView / ScanProgress` 继续延迟物化
 - [~] 分阶段瘦身扫描消息链路与快照持久化。
   - [x] 热路径批量事件 `path` 改为共享 `Arc<str>`
-  - [ ] 继续压缩完成态与实时快照的展示 payload
+  - [x] 继续压缩完成态与实时快照的展示 payload
+  - [x] 为稀疏 snapshot payload 增加运行时 telemetry
 
 ## Verification Plan
 1. 工程验证：
@@ -304,10 +305,14 @@
    - `dirotter-ui` 内部 `scan_current_path / live_top_* / completed_top_*` 改为共享路径持有
    - `ResolvedNode.name / path` 改为共享 `Arc<str>`
    - `SnapshotView.nodes` 不再为每个节点强制复制 name/path `String`
+   - 实时/最终 `SnapshotView` 默认不再携带变更节点列表，只保留 `changed_node_count`
+   - `ScanEvent::Finished` 不再重复携带可由 `store` 重建的 Top-N 排行
 2. 当前收益
    - walker 到 publisher 的热路径已不再为同一条路径层层复制 owned `String`
    - 共享路径现在已推进到 UI 接管后的排行/进度状态，真正的字符串物化进一步收口到渲染 helper
    - 实时 snapshot 的节点 payload 也已开始复用共享字符串，而不是为每个节点重复分配完整路径
+   - 实时快照与完成态事件里已经移除了两块明确冗余的展示 payload：无用节点列表、可重建 Top-N
+   - snapshot payload 大小和 snapshot 组装耗时现在已经开始有回归阈值保护
 3. 当前验证
    - `cargo fmt --all`：通过
    - `cargo test -p dirotter-scan`：通过
@@ -316,3 +321,32 @@
    - `cargo clippy -p dirotter-scan --all-targets -- -D warnings`：通过
    - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
    - `cargo clippy -p dirotter-core --all-targets -- -D warnings`：通过
+
+### 性能基线进展（2026-04-04）
+1. 已完成
+   - 为大树扫描新增 `snapshot payload` 大小阈值测试
+   - 为 `Aggregator::make_snapshot_data(false)` 新增组装耗时与 payload 阈值测试
+   - 扩展 `crates/dirotter-testkit/perf/baseline.json`
+2. 当前收益
+   - 后续如果有人重新把 snapshot 改回“大量节点 + 大量字符串”的路径，测试会直接报警
+   - 不再只靠人工感知“变慢/变重”，而是开始有可执行的性能红线
+3. 当前验证
+   - `cargo test -p dirotter-scan incremental_snapshot_generation_stays_under_threshold -- --nocapture`：通过
+   - `cargo test -p dirotter-testkit benchmark_snapshot_payload_threshold_massive_tree -- --nocapture`：通过
+
+### 运行时观测进展（2026-04-04）
+1. 已完成
+   - 为 snapshot 新增低成本 runtime telemetry：
+     - `avg/max snapshot changed nodes`
+     - `avg/max snapshot materialized nodes`
+     - `avg snapshot ranked items`
+     - `avg/max snapshot text bytes`
+   - diagnostics 导出现在会自动带上这些指标
+2. 当前收益
+   - 不需要在热路径上为每个 snapshot 额外做一次 JSON 序列化，也能看出 payload 是否重新膨胀
+   - 如果后续有人把 live snapshot 又改回“携带大量节点 / 大量文本”，诊断数据会直接暴露回退
+3. 当前验证
+   - `cargo test -p dirotter-telemetry`：通过
+   - `cargo build --workspace`：通过
+   - `cargo test --workspace`：通过
+   - `cargo clippy --workspace --all-targets -- -D warnings`：通过

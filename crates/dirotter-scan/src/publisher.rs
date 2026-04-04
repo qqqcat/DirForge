@@ -1,4 +1,4 @@
-use crate::{BatchEntry, RankedPath, ScanEvent, ScanProgress, ScanStage, SnapshotView};
+use crate::{BatchEntry, ScanEvent, ScanProgress, ScanStage, SnapshotView};
 use dirotter_core::{NodeStore, ScanSummary, SnapshotDelta};
 use dirotter_telemetry as telemetry;
 use std::collections::VecDeque;
@@ -144,15 +144,11 @@ impl Publisher {
         summary: ScanSummary,
         store: NodeStore,
         errors: Vec<dirotter_core::ScanErrorRecord>,
-        top_files: Vec<RankedPath>,
-        top_dirs: Vec<RankedPath>,
     ) {
         let _ = self.tx.send(ScanEvent::Finished {
             summary,
             store,
             errors,
-            top_files,
-            top_dirs,
         });
     }
 }

@@ -46,6 +46,7 @@ pub struct SelectionState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotView {
+    pub changed_node_count: usize,
     pub nodes: Vec<ResolvedNode>,
     pub top_files: Vec<RankedPath>,
     pub top_dirs: Vec<RankedPath>,
@@ -71,8 +72,6 @@ pub enum ScanEvent {
         summary: ScanSummary,
         store: NodeStore,
         errors: Vec<ScanErrorRecord>,
-        top_files: Vec<RankedPath>,
-        top_dirs: Vec<RankedPath>,
     },
 }
 
@@ -219,6 +218,25 @@ fn classify_error(reason: &str) -> ErrorKind {
     }
 }
 
+fn estimate_snapshot_view_text_bytes(view: &SnapshotView) -> u64 {
+    let node_text = view
+        .nodes
+        .iter()
+        .map(|node| (node.name.len() + node.path.len()) as u64)
+        .sum::<u64>();
+    let top_file_text = view
+        .top_files
+        .iter()
+        .map(|(path, _)| path.len() as u64)
+        .sum::<u64>();
+    let top_dir_text = view
+        .top_dirs
+        .iter()
+        .map(|(path, _)| path.len() as u64)
+        .sum::<u64>();
+    node_text + top_file_text + top_dir_text
+}
+
 pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
     let tuning = config.tuned();
     let (tx, rx) = mpsc::sync_channel(tuning.ui_backpressure_batch_budget);
@@ -275,6 +293,12 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
                     if publisher.should_emit_snapshot() {
                         let snapshot_start = Instant::now();
                         let (delta, view) = aggregator.make_snapshot_data(false);
+                        telemetry::record_snapshot_view(
+                            view.changed_node_count as u64,
+                            view.nodes.len() as u64,
+                            (view.top_files.len() + view.top_dirs.len()) as u64,
+                            estimate_snapshot_view_text_bytes(&view),
+                        );
                         publisher.send_snapshot_if_due(delta, view);
                         telemetry::record_snapshot();
                         telemetry::record_snapshot_commit(
@@ -292,7 +316,13 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
         let finished_payload_size = serde_json::to_vec(&final_view)
             .map(|payload| payload.len() as u64)
             .unwrap_or_default();
-        telemetry::record_scan_finished(final_view.nodes.len() as u64, finished_payload_size);
+        telemetry::record_scan_finished(final_store.nodes.len() as u64, finished_payload_size);
+        telemetry::record_snapshot_view(
+            final_view.changed_node_count as u64,
+            final_view.nodes.len() as u64,
+            (final_view.top_files.len() + final_view.top_dirs.len()) as u64,
+            estimate_snapshot_view_text_bytes(&final_view),
+        );
 
         if cancel_clone.load(Ordering::SeqCst) {
             let cancel_elapsed = cancelled_at
@@ -301,17 +331,9 @@ pub fn start_scan(root: PathBuf, config: ScanConfig) -> ScanHandle {
             telemetry::record_cancelled_scan_latency(cancel_elapsed);
         }
 
-        let final_top_files = final_view.top_files.clone();
-        let final_top_dirs = final_view.top_dirs.clone();
         publisher.send_snapshot(final_delta, final_view);
         telemetry::record_snapshot();
-        publisher.send_finished(
-            summary,
-            final_store,
-            errors,
-            final_top_files,
-            final_top_dirs,
-        );
+        publisher.send_finished(summary, final_store, errors);
     });
 
     ScanHandle { events: rx, cancel }

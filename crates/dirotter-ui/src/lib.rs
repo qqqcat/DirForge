@@ -191,16 +191,12 @@ struct FinishedPayload {
     summary: ScanSummary,
     store: NodeStore,
     errors: Vec<ScanErrorRecord>,
-    top_files: Vec<dirotter_scan::RankedPath>,
-    top_dirs: Vec<dirotter_scan::RankedPath>,
 }
 
 struct ScanFinalizePayload {
     summary: ScanSummary,
     store: NodeStore,
     errors: Vec<ScanErrorRecord>,
-    top_files: Vec<dirotter_scan::RankedPath>,
-    top_dirs: Vec<dirotter_scan::RankedPath>,
     cleanup_analysis: CleanupAnalysis,
 }
 
@@ -1532,8 +1528,7 @@ impl DirOtterNativeApp {
         self.store = Some(payload.store);
         self.summary = payload.summary;
         self.errors = payload.errors;
-        self.completed_top_files = payload.top_files;
-        self.completed_top_dirs = payload.top_dirs;
+        self.sync_rankings_from_store();
         self.apply_cleanup_analysis(Some(payload.cleanup_analysis));
         self.status = AppStatus::Completed;
         self.scan_current_path = None;
@@ -2154,15 +2149,11 @@ impl DirOtterNativeApp {
                         summary,
                         store,
                         errors,
-                        top_files,
-                        top_dirs,
                     } => {
                         state.finished = Some(FinishedPayload {
                             summary,
                             store,
                             errors,
-                            top_files,
-                            top_dirs,
                         });
                     }
                 }
@@ -2227,6 +2218,7 @@ impl DirOtterNativeApp {
 
             if let Some((delta, view)) = snapshot {
                 let dirotter_scan::SnapshotView {
+                    changed_node_count: _,
                     top_files,
                     top_dirs,
                     ..
@@ -2281,8 +2273,8 @@ impl DirOtterNativeApp {
                     .to_string(),
             ));
             self.scan_last_event_at = Some(Instant::now());
-            self.completed_top_files = finished.top_files.clone();
-            self.completed_top_dirs = finished.top_dirs.clone();
+            self.completed_top_files = self.live_top_files.clone();
+            self.completed_top_dirs = self.live_top_dirs.clone();
             self.execution_report = None;
             self.scan_session = None;
             let relay = Arc::new(Mutex::new(ScanFinalizeRelayState::default()));
@@ -2295,8 +2287,6 @@ impl DirOtterNativeApp {
                     summary: finished.summary,
                     store: finished.store,
                     errors: finished.errors,
-                    top_files: finished.top_files,
-                    top_dirs: finished.top_dirs,
                     cleanup_analysis,
                 });
                 drop(state);
@@ -4608,6 +4598,7 @@ mod ui_tests {
                         top_dirs_delta: Vec::new(),
                     },
                     dirotter_scan::SnapshotView {
+                        changed_node_count: 1,
                         nodes: vec![ResolvedNode {
                             id: NodeId(0),
                             parent: None,

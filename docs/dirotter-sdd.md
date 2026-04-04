@@ -95,6 +95,9 @@ Stage 6 Finished Publish
 - **事件边界优化**：扫描进度当前路径、实时 snapshot Top-N 和完成态 Top-N 也已继续改为共享路径，进一步把字符串物化点推迟到 UI 接管阶段。
 - **UI 状态优化**：UI 会以共享路径持有当前扫描路径和实时/完成态排行，只在具体渲染 helper 需要文本时再做物化。
 - **Snapshot 节点优化**：`ResolvedNode` 的 `name / path` 已改为共享字符串，实时 snapshot 节点列表不再为每个节点重新分配完整文本。
+- **Payload 收口**：实时 snapshot 默认不再携带变更节点列表，只保留轻量计数；完成态事件也不再重复发送可由 `NodeStore` 重建的 Top-N。
+- **性能基线**：snapshot payload 大小和 `make_snapshot_data(false)` 组装耗时已进入阈值测试，防止后续重新回退到高分配路径。
+- **运行时观测**：telemetry 继续补充 `snapshot changed/materialized nodes` 与 `snapshot text bytes` 估算，诊断导出可直接判断 live snapshot 是否仍保持稀疏 payload。
 - 快照策略：同一路径只保留最新一份 `NodeStore` 快照，避免重复扫描同一路径时 SQLite 体积线性增长；默认不在每次扫描结束后自动写入。
 - WAL 管理：快照写入保留 WAL 模式，但不再在每次保存热路径上强制 checkpoint；后续维护动作或空闲期再做收口。
 - Staging 清理：应用启动时会扫描并继续清理遗留的 `.dirotter-staging` 项，避免上次异常退出后残留缓存占用。

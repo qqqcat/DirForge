@@ -18,6 +18,14 @@ static SCAN_BATCH_ITEMS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static SCAN_BATCH_ELAPSED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_COMMITS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_COMMIT_ELAPSED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_VIEWS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_CHANGED_NODES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_MATERIALIZED_NODES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_RANKED_ITEMS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_TEXT_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_MAX_CHANGED_NODES: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_MAX_MATERIALIZED_NODES: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_MAX_TEXT_BYTES: AtomicU64 = AtomicU64::new(0);
 static DUP_HASH_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUP_HASH_CALLS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUP_HASH_ELAPSED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -50,6 +58,13 @@ pub struct TelemetrySnapshot {
     pub avg_scan_batch_elapsed_ms: u64,
     pub snapshot_commits: u64,
     pub avg_snapshot_commit_ms: u64,
+    pub avg_snapshot_changed_nodes: u64,
+    pub max_snapshot_changed_nodes: u64,
+    pub avg_snapshot_materialized_nodes: u64,
+    pub max_snapshot_materialized_nodes: u64,
+    pub avg_snapshot_ranked_items: u64,
+    pub avg_snapshot_text_bytes: u64,
+    pub max_snapshot_text_bytes: u64,
     pub duplicate_hash_bytes: u64,
     pub avg_duplicate_hash_ms: u64,
     pub ui_frames: u64,
@@ -101,6 +116,16 @@ pub fn metric_descriptors() -> Vec<MetricDescriptor> {
         MetricDescriptor {
             name: "df.snapshot.commit.elapsed_ms.avg",
             unit: "ms",
+            period_ms: COLLECTION_PERIOD_MS,
+        },
+        MetricDescriptor {
+            name: "df.snapshot.changed_nodes.avg",
+            unit: "count",
+            period_ms: COLLECTION_PERIOD_MS,
+        },
+        MetricDescriptor {
+            name: "df.snapshot.text_bytes.avg",
+            unit: "bytes",
             period_ms: COLLECTION_PERIOD_MS,
         },
         MetricDescriptor {
@@ -158,6 +183,30 @@ pub fn record_snapshot_commit(elapsed_ms: u64) {
         event = "snapshot.commit",
         metric = "df.snapshot.commit.elapsed_ms",
         elapsed_ms
+    );
+}
+
+pub fn record_snapshot_view(
+    changed_node_count: u64,
+    materialized_nodes: u64,
+    ranked_items: u64,
+    text_bytes: u64,
+) {
+    SNAPSHOT_VIEWS_TOTAL.fetch_add(1, Ordering::Relaxed);
+    SNAPSHOT_CHANGED_NODES_TOTAL.fetch_add(changed_node_count, Ordering::Relaxed);
+    SNAPSHOT_MATERIALIZED_NODES_TOTAL.fetch_add(materialized_nodes, Ordering::Relaxed);
+    SNAPSHOT_RANKED_ITEMS_TOTAL.fetch_add(ranked_items, Ordering::Relaxed);
+    SNAPSHOT_TEXT_BYTES_TOTAL.fetch_add(text_bytes, Ordering::Relaxed);
+    update_max(&SNAPSHOT_MAX_CHANGED_NODES, changed_node_count);
+    update_max(&SNAPSHOT_MAX_MATERIALIZED_NODES, materialized_nodes);
+    update_max(&SNAPSHOT_MAX_TEXT_BYTES, text_bytes);
+    tracing::debug!(
+        event = "snapshot.view",
+        metric = "df.snapshot.changed_nodes",
+        changed_node_count,
+        materialized_nodes,
+        ranked_items,
+        text_bytes
     );
 }
 
@@ -227,6 +276,17 @@ pub fn record_scan_finished(node_count: u64, payload_bytes: u64) {
     FINISHED_PAYLOAD_BYTES_TOTAL.fetch_add(payload_bytes, Ordering::Relaxed);
 }
 
+fn update_max(target: &AtomicU64, candidate: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while candidate > current {
+        match target.compare_exchange_weak(current, candidate, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 pub fn record_action_audit(payload: String) {
     let ring = ACTION_AUDIT_RING.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut r) = ring.lock() {
@@ -255,6 +315,7 @@ pub fn snapshot() -> TelemetrySnapshot {
     let batch_elapsed = SCAN_BATCH_ELAPSED_MS_TOTAL.load(Ordering::Relaxed);
     let snapshot_commits = SNAPSHOT_COMMITS_TOTAL.load(Ordering::Relaxed);
     let snapshot_elapsed = SNAPSHOT_COMMIT_ELAPSED_MS_TOTAL.load(Ordering::Relaxed);
+    let snapshot_views = SNAPSHOT_VIEWS_TOTAL.load(Ordering::Relaxed);
     let walker_recv_samples = WALKER_RECV_BLOCKED_SAMPLES.load(Ordering::Relaxed);
     let aggregator_samples = AGGREGATOR_PROCESSING_SAMPLES.load(Ordering::Relaxed);
     let batch_flushes = BATCH_FLUSH_EVENTS_TOTAL.load(Ordering::Relaxed);
@@ -284,6 +345,29 @@ pub fn snapshot() -> TelemetrySnapshot {
         } else {
             snapshot_elapsed / snapshot_commits
         },
+        avg_snapshot_changed_nodes: if snapshot_views == 0 {
+            0
+        } else {
+            SNAPSHOT_CHANGED_NODES_TOTAL.load(Ordering::Relaxed) / snapshot_views
+        },
+        max_snapshot_changed_nodes: SNAPSHOT_MAX_CHANGED_NODES.load(Ordering::Relaxed),
+        avg_snapshot_materialized_nodes: if snapshot_views == 0 {
+            0
+        } else {
+            SNAPSHOT_MATERIALIZED_NODES_TOTAL.load(Ordering::Relaxed) / snapshot_views
+        },
+        max_snapshot_materialized_nodes: SNAPSHOT_MAX_MATERIALIZED_NODES.load(Ordering::Relaxed),
+        avg_snapshot_ranked_items: if snapshot_views == 0 {
+            0
+        } else {
+            SNAPSHOT_RANKED_ITEMS_TOTAL.load(Ordering::Relaxed) / snapshot_views
+        },
+        avg_snapshot_text_bytes: if snapshot_views == 0 {
+            0
+        } else {
+            SNAPSHOT_TEXT_BYTES_TOTAL.load(Ordering::Relaxed) / snapshot_views
+        },
+        max_snapshot_text_bytes: SNAPSHOT_MAX_TEXT_BYTES.load(Ordering::Relaxed),
         duplicate_hash_bytes: DUP_HASH_BYTES_TOTAL.load(Ordering::Relaxed),
         avg_duplicate_hash_ms: {
             let hash_calls = DUP_HASH_CALLS_TOTAL.load(Ordering::Relaxed);
@@ -374,6 +458,7 @@ mod tests {
         record_action_result(false);
         record_scan_batch(10, 5);
         record_snapshot_commit(4);
+        record_snapshot_view(32, 0, 20, 2048);
         record_duplicate_hash(1024, 2);
         record_action_audit("{}".into());
         record_ui_frame();
@@ -390,6 +475,10 @@ mod tests {
         assert!(s.action_attempted >= 1);
         assert!(s.action_failed >= 1);
         assert!(s.scan_batches >= 1);
+        assert!(s.avg_snapshot_changed_nodes >= 1);
+        assert!(s.max_snapshot_changed_nodes >= 1);
+        assert!(s.avg_snapshot_ranked_items >= 1);
+        assert!(s.avg_snapshot_text_bytes >= 1);
         assert!(s.duplicate_hash_bytes >= 1024);
         assert!(s.ui_frames >= 1);
         assert!(s.ui_dropped_batches >= 1);

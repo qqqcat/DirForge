@@ -30,7 +30,7 @@ fn scan_fixture_tree() {
                     }
                 }
                 ScanEvent::Snapshot { view, .. } => {
-                    snapshot_nodes += view.nodes.len();
+                    snapshot_nodes += view.changed_node_count;
                 }
                 ScanEvent::Finished { summary, store, .. } => {
                     assert!(summary.scanned_files >= 2);
