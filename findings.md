@@ -322,3 +322,13 @@
 - [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中的 `ui_cleanup_details_window()` 已从多布尔旗标控制流改为动作枚举驱动。
 - 当前窗口尾部不再散落 `trigger_clean / trigger_recycle / trigger_permanent / open_selected` 这类分支，而是统一走 action handler。
 - 这一步的价值在于，cleanup 详情窗已经不只是“展示整形外移”，连交互控制流也开始进入更可测试、更可拆分的形态。
+
+## Dialog Action Update
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中的 `ui_delete_confirm_dialog()` 和 `ui_cleanup_delete_confirm_dialog()` 也已改成动作收集 + handler 分发。
+- 这让剩余确认窗不再各自保留一套局部确认态/执行态分支，窗口级控制流开始统一。
+- 到这一步，`dirotter-ui` 中主要弹窗的交互收口方式已经比较一致，后续继续补测试和抽公共模式的阻力更小。
+
+## FastPurge Fallback Update
+- [delete.rs](E:/DirForge/crates/dirotter-platform/src/delete.rs) 现在已补上 `FastPurge` 的 staging 回退路径：卷根 staging 不可写时，先回退到源路径父目录下的 `.dirotter-staging`。
+- 如果 staging rename 仍失败，当前实现会对源路径做立即删除兜底，并把原路径作为后台 purge 的 no-op 目标，保证“源路径立刻消失”的快清语义。
+- 这一步修掉了验证阶段暴露出来的真实问题：当前环境无法写入卷根 `.dirotter-staging`，导致 `dirotter-platform` 和 `dirotter-actions` 的快清测试一起失败。

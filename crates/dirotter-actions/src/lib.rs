@@ -60,6 +60,15 @@ pub struct ExecutionResultItem {
     pub path_kind: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExecutionProgress {
+    pub attempted: usize,
+    pub completed: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub item: ExecutionResultItem,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ActionFailureKind {
     Missing,
@@ -171,11 +180,28 @@ pub fn build_deletion_plan_with_origin(
 }
 
 pub fn execute_plan_simulated(plan: &DeletionPlan, mode: ExecutionMode) -> ExecutionReport {
-    execute_internal(plan, mode, true, ExecutionConfig::default())
+    execute_internal(plan, mode, true, ExecutionConfig::default(), None)
 }
 
 pub fn execute_plan(plan: &DeletionPlan, mode: ExecutionMode) -> ExecutionReport {
     execute_plan_with_config(plan, mode, ExecutionConfig::default())
+}
+
+pub fn execute_plan_with_progress<F>(
+    plan: &DeletionPlan,
+    mode: ExecutionMode,
+    mut on_progress: F,
+) -> ExecutionReport
+where
+    F: FnMut(ExecutionProgress),
+{
+    execute_internal(
+        plan,
+        mode,
+        false,
+        ExecutionConfig::default(),
+        Some(&mut on_progress),
+    )
 }
 
 pub fn execute_plan_with_config(
@@ -183,7 +209,7 @@ pub fn execute_plan_with_config(
     mode: ExecutionMode,
     config: ExecutionConfig,
 ) -> ExecutionReport {
-    execute_internal(plan, mode, false, config)
+    execute_internal(plan, mode, false, config, None)
 }
 
 fn execute_internal(
@@ -191,6 +217,7 @@ fn execute_internal(
     mode: ExecutionMode,
     simulated: bool,
     config: ExecutionConfig,
+    mut on_progress: Option<&mut dyn FnMut(ExecutionProgress)>,
 ) -> ExecutionReport {
     let mut items = Vec::with_capacity(plan.files.len());
     let mut succeeded = 0usize;
@@ -277,7 +304,7 @@ fn execute_internal(
         });
         telemetry::record_action_audit(audit_payload.to_string());
 
-        items.push(ExecutionResultItem {
+        let item = ExecutionResultItem {
             path: file.path.clone(),
             success,
             message,
@@ -286,7 +313,18 @@ fn execute_internal(
             platform_kind,
             io_kind,
             path_kind,
-        });
+        };
+        items.push(item.clone());
+
+        if let Some(callback) = on_progress.as_mut() {
+            (*callback)(ExecutionProgress {
+                attempted: plan.files.len(),
+                completed: items.len(),
+                succeeded,
+                failed,
+                item,
+            });
+        }
     }
 
     if !simulated && mode == ExecutionMode::FastPurge && !staged_paths.is_empty() {
@@ -577,6 +615,33 @@ mod tests {
             !file.exists(),
             "source path should disappear immediately after staging"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn execute_plan_reports_progress_for_each_item() {
+        let root =
+            std::env::temp_dir().join(format!("dirotter-actions-progress-{}", std::process::id()));
+        let a = root.join("a.bin");
+        let b = root.join("b.bin");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create root");
+        fs::write(&a, vec![1u8; 32]).expect("seed file a");
+        fs::write(&b, vec![2u8; 32]).expect("seed file b");
+
+        let plan = build_deletion_plan(vec![
+            (a.display().to_string(), 32, RiskLevel::Low),
+            (b.display().to_string(), 32, RiskLevel::Low),
+        ]);
+        let mut completed = Vec::new();
+
+        let report = execute_plan_with_progress(&plan, ExecutionMode::FastPurge, |progress| {
+            completed.push((progress.completed, progress.succeeded, progress.failed));
+        });
+
+        assert_eq!(report.succeeded, 2);
+        assert_eq!(completed, vec![(1, 1, 0), (2, 2, 0)]);
 
         let _ = fs::remove_dir_all(&root);
     }

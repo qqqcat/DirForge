@@ -1,3 +1,5 @@
+// BEGIN lib.rs
+
 mod advanced_pages;
 mod cleanup;
 mod controller;
@@ -29,9 +31,7 @@ use i18n::{
 };
 #[cfg(test)]
 use i18n::{translate_es, translate_fr};
-#[cfg(test)]
-use std::collections::HashMap;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{
@@ -42,11 +42,8 @@ use std::time::{Duration, Instant};
 
 use cleanup::{CleanupAnalysis, CleanupCandidate, CleanupCategory};
 use controller::{
-    start_delete_finalize_session, start_delete_session, start_memory_release_session,
-    start_result_store_load_session, take_finished_delete, take_finished_delete_finalize,
-    take_finished_memory_release, take_finished_result_store_load, DeleteFinalizeInput,
-    DeleteFinalizeSession, DeleteSession, MemoryReleaseSession, QueuedDeleteRequest,
-    ResultStoreLoadSession,
+    start_delete_session, start_memory_release_session, take_finished_delete,
+    take_finished_memory_release, DeleteSession, MemoryReleaseSession, QueuedDeleteRequest,
 };
 
 const MAX_PENDING_BATCH_EVENTS: usize = 32;
@@ -207,7 +204,7 @@ struct ScanFinalizePayload {
 }
 
 #[derive(Clone)]
-pub(crate) struct SelectedTarget {
+struct SelectedTarget {
     node_id: Option<NodeId>,
     name: Arc<str>,
     path: Arc<str>,
@@ -229,7 +226,7 @@ struct TreemapEntry {
 }
 
 #[derive(Clone)]
-pub(crate) struct DeleteRequestScope {
+struct DeleteRequestScope {
     label: String,
     targets: Vec<SelectedTarget>,
 }
@@ -304,8 +301,6 @@ pub struct DirOtterNativeApp {
     scan_session: Option<ScanSession>,
     scan_finalize_session: Option<ScanFinalizeSession>,
     delete_session: Option<DeleteSession>,
-    delete_finalize_session: Option<DeleteFinalizeSession>,
-    result_store_load_session: Option<ResultStoreLoadSession>,
     memory_release_session: Option<MemoryReleaseSession>,
     scan_mode: ScanMode,
     scan_current_path: Option<Arc<str>>,
@@ -351,7 +346,6 @@ pub struct DirOtterNativeApp {
     diagnostics_json: String,
     selection: SelectionState,
     error_filter: ErrorFilter,
-    missing_result_store_root: Option<String>,
 }
 
 impl DirOtterNativeApp {
@@ -399,8 +393,6 @@ impl DirOtterNativeApp {
             scan_session: None,
             scan_finalize_session: None,
             delete_session: None,
-            delete_finalize_session: None,
-            result_store_load_session: None,
             memory_release_session: None,
             scan_mode,
             scan_current_path: None,
@@ -441,7 +433,6 @@ impl DirOtterNativeApp {
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
             error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
         };
 
         if app.advanced_tools_enabled {
@@ -1051,8 +1042,6 @@ impl DirOtterNativeApp {
 
     fn start_scan_for_root(&mut self, root: String) {
         self.root_input = root;
-        self.result_store_load_session = None;
-        self.missing_result_store_root = None;
         self.page = Page::CurrentScan;
         self.start_scan();
     }
@@ -1165,7 +1154,6 @@ impl DirOtterNativeApp {
         ))
     }
 
-    #[cfg(test)]
     fn path_matches_target(path: &str, target: &SelectedTarget) -> bool {
         if path == target.path.as_ref() {
             return true;
@@ -1179,14 +1167,12 @@ impl DirOtterNativeApp {
         rest.starts_with('\\') || rest.starts_with('/')
     }
 
-    #[cfg(test)]
     fn path_matches_any_target(path: &str, targets: &[SelectedTarget]) -> bool {
         targets
             .iter()
             .any(|target| Self::path_matches_target(path, target))
     }
 
-    #[cfg(test)]
     fn rebuild_store_without_targets(
         store: &NodeStore,
         targets: &[SelectedTarget],
@@ -1256,6 +1242,48 @@ impl DirOtterNativeApp {
         self.live_top_dirs = top_dirs.clone();
         self.completed_top_files = top_files;
         self.completed_top_dirs = top_dirs;
+    }
+
+    fn prune_deleted_targets(&mut self, targets: &[SelectedTarget]) {
+        if targets.is_empty() {
+            return;
+        }
+
+        let matches_target = |path: &str| -> bool { Self::path_matches_any_target(path, targets) };
+        if self
+            .treemap_focus_path
+            .as_deref()
+            .is_some_and(matches_target)
+        {
+            self.treemap_focus_path = None;
+        }
+
+        self.live_files
+            .retain(|(path, _)| !matches_target(path.as_ref()));
+        self.live_top_files
+            .retain(|(path, _)| !matches_target(path.as_ref()));
+        self.live_top_dirs
+            .retain(|(path, _)| !matches_target(path.as_ref()));
+        self.completed_top_files
+            .retain(|(path, _)| !matches_target(path.as_ref()));
+        self.completed_top_dirs
+            .retain(|(path, _)| !matches_target(path.as_ref()));
+        self.errors.retain(|error| !matches_target(&error.path));
+        if let Some(store) = self.store.take() {
+            self.store = Self::rebuild_store_without_targets(&store, targets);
+            self.sync_summary_from_store();
+            self.sync_rankings_from_store();
+        } else {
+            let released_bytes = targets.iter().map(|target| target.size_bytes).sum();
+            let released_files = targets.iter().map(|target| target.file_count).sum();
+            let released_dirs = targets.iter().map(|target| target.dir_count).sum();
+            self.summary.bytes_observed =
+                self.summary.bytes_observed.saturating_sub(released_bytes);
+            self.summary.scanned_files = self.summary.scanned_files.saturating_sub(released_files);
+            self.summary.scanned_dirs = self.summary.scanned_dirs.saturating_sub(released_dirs);
+        }
+        self.refresh_cleanup_analysis();
+        self.selection = SelectionState::default();
     }
 
     fn start_system_memory_release(&mut self) {
@@ -1338,7 +1366,7 @@ impl DirOtterNativeApp {
     }
 
     fn process_queued_delete(&mut self) {
-        if self.delete_active() {
+        if self.delete_session.is_some() {
             return;
         }
         let Some(request) = self.queued_delete.take() else {
@@ -1376,7 +1404,7 @@ impl DirOtterNativeApp {
     }
 
     fn delete_active(&self) -> bool {
-        self.delete_session.is_some() || self.delete_finalize_session.is_some()
+        self.delete_session.is_some()
     }
 
     fn system_memory_release_active(&self) -> bool {
@@ -1391,7 +1419,6 @@ impl DirOtterNativeApp {
         let Some(session) = &self.delete_session else {
             return;
         };
-        let session_snapshot = session.snapshot();
 
         let Some(payload) = take_finished_delete(session) else {
             return;
@@ -1422,70 +1449,14 @@ impl DirOtterNativeApp {
                 .cloned()
                 .collect();
             succeeded_targets.sort_by(|a, b| b.path.len().cmp(&a.path.len()));
-            self.delete_session = None;
-            self.delete_finalize_session = Some(start_delete_finalize_session(
-                self.egui_ctx.clone(),
-                DeleteFinalizeInput {
-                    started_at: session_snapshot.started_at,
-                    label: session_snapshot.label,
-                    target_count: session_snapshot.target_count,
-                    mode: session_snapshot.mode,
-                    succeeded_count: report.succeeded,
-                    failed_count: report.failed,
-                    report,
-                    succeeded_targets,
-                    summary: self.summary.clone(),
-                    store: self.store.take(),
-                    cleanup_analysis: self.cleanup.analysis.clone(),
-                    live_files: self.live_files.clone(),
-                    live_top_files: self.live_top_files.clone(),
-                    live_top_dirs: self.live_top_dirs.clone(),
-                    completed_top_files: self.completed_top_files.clone(),
-                    completed_top_dirs: self.completed_top_dirs.clone(),
-                    errors: self.errors.clone(),
-                },
-            ));
-            self.egui_ctx.request_repaint();
-            return;
+            self.prune_deleted_targets(&succeeded_targets);
+            self.status = AppStatus::DeleteExecuted;
         } else {
             self.status = AppStatus::DeleteFailed;
         }
         self.set_execution_failure_details_open(false);
         self.execution_report = Some(report);
         self.delete_session = None;
-        self.refresh_diagnostics();
-    }
-
-    fn process_delete_finalize_events(&mut self) {
-        let Some(session) = &self.delete_finalize_session else {
-            return;
-        };
-
-        let Some(mut payload) = take_finished_delete_finalize(session) else {
-            return;
-        };
-
-        payload.summary.error_count = payload.errors.len() as u64;
-        self.live_files = payload.live_files;
-        self.live_top_files = payload.live_top_files;
-        self.live_top_dirs = payload.live_top_dirs;
-        self.completed_top_files = payload.completed_top_files;
-        self.completed_top_dirs = payload.completed_top_dirs;
-        self.errors = payload.errors;
-        self.store = payload.store;
-        self.result_store_load_session = None;
-        self.missing_result_store_root = None;
-        self.summary = payload.summary;
-        self.apply_cleanup_analysis(payload.cleanup_analysis);
-        self.selection = SelectionState::default();
-        self.status = if payload.report.succeeded > 0 {
-            AppStatus::DeleteExecuted
-        } else {
-            AppStatus::DeleteFailed
-        };
-        self.set_execution_failure_details_open(false);
-        self.execution_report = Some(payload.report);
-        self.delete_finalize_session = None;
         self.refresh_diagnostics();
     }
 
@@ -1577,8 +1548,6 @@ impl DirOtterNativeApp {
         };
 
         self.store = Some(payload.store);
-        self.result_store_load_session = None;
-        self.missing_result_store_root = None;
         self.summary = payload.summary;
         self.errors = payload.errors;
         self.sync_rankings_from_store();
@@ -1702,14 +1671,11 @@ impl DirOtterNativeApp {
             return false;
         }
         self.store = None;
-        self.result_store_load_session = None;
-        self.missing_result_store_root = None;
         self.selection = SelectionState::default();
         self.treemap_focus_path = None;
         true
     }
 
-    #[cfg(test)]
     fn ensure_store_loaded_from_cache(&mut self) -> bool {
         if self.store.is_some() {
             return true;
@@ -1734,58 +1700,6 @@ impl DirOtterNativeApp {
             && (self.summary.bytes_observed > 0
                 || !self.completed_top_files.is_empty()
                 || !self.completed_top_dirs.is_empty())
-    }
-
-    fn result_store_load_active(&self) -> bool {
-        self.result_store_load_session.is_some()
-    }
-
-    fn begin_result_store_load_if_needed(&mut self) {
-        if self.store.is_some()
-            || self.result_store_load_session.is_some()
-            || self.scan_active()
-            || self.delete_active()
-            || !self.can_reload_result_store_from_cache()
-            || self.missing_result_store_root.as_deref() == Some(self.root_input.as_str())
-        {
-            return;
-        }
-
-        self.result_store_load_session = Some(start_result_store_load_session(
-            self.egui_ctx.clone(),
-            self.cache.path().to_path_buf(),
-            self.root_input.clone(),
-        ));
-        self.egui_ctx.request_repaint();
-    }
-
-    fn process_result_store_load_events(&mut self) {
-        let Some(session) = &self.result_store_load_session else {
-            return;
-        };
-
-        let Some(payload) = take_finished_result_store_load(session) else {
-            return;
-        };
-
-        self.result_store_load_session = None;
-        if let Some(store) = payload.store {
-            self.store = Some(store);
-            if let Some(summary) = payload.summary {
-                self.summary.scanned_files = summary.scanned_files;
-                self.summary.scanned_dirs = summary.scanned_dirs;
-                self.summary.bytes_observed = summary.bytes_observed;
-            }
-            self.live_top_files = payload.top_files.clone();
-            self.completed_top_files = payload.top_files;
-            self.live_top_dirs = payload.top_dirs.clone();
-            self.completed_top_dirs = payload.top_dirs;
-            self.apply_cleanup_analysis(payload.cleanup_analysis);
-            self.refresh_memory_status();
-            self.missing_result_store_root = None;
-        } else {
-            self.missing_result_store_root = Some(payload.root);
-        }
     }
 
     fn maybe_auto_release_memory(&mut self) {
@@ -2061,11 +1975,8 @@ impl DirOtterNativeApp {
         self.completed_top_files.clear();
         self.completed_top_dirs.clear();
         self.store = None;
-        self.result_store_load_session = None;
-        self.missing_result_store_root = None;
         self.cleanup = CleanupPanelState::default();
         self.delete_session = None;
-        self.delete_finalize_session = None;
         self.queued_delete = None;
         self.pending_delete_confirmation = None;
         self.execution_report = None;
@@ -3405,79 +3316,31 @@ impl DirOtterNativeApp {
     }
 
     fn ui_delete_activity_banner(&mut self, ui: &mut egui::Ui) {
-        if let Some(session) = self.delete_session.as_ref() {
-            let snapshot = session.snapshot();
-            let phase = snapshot.started_at.elapsed().as_secs_f32();
-            let pulse = ((phase.sin() + 1.0) * 0.5 * 0.7 + 0.15).clamp(0.08, 0.92);
-
-            tone_banner(
-                ui,
-                match snapshot.mode {
-                    ExecutionMode::RecycleBin => {
-                        self.t("正在后台移到回收站", "Moving to Recycle Bin in Background")
-                    }
-                    ExecutionMode::FastPurge => {
-                        self.t("正在后台释放空间", "Reclaiming Space in Background")
-                    }
-                    ExecutionMode::Permanent => {
-                        self.t("正在后台永久删除", "Deleting Permanently in Background")
-                    }
-                },
-                &format!(
-                    "{}  |  {} / {}  |  {} {} / {} {}  |  {} {:.1}s  |  {}",
-                    truncate_middle(&snapshot.label, 56),
-                    format_count(snapshot.completed_count as u64),
-                    format_count(snapshot.target_count as u64),
-                    format_count(snapshot.succeeded_count as u64),
-                    self.t("成功", "succeeded"),
-                    format_count(snapshot.failed_count as u64),
-                    self.t("失败", "failed"),
-                    self.t("已耗时", "Elapsed"),
-                    phase,
-                    self.t(
-                        "你可以继续浏览扫描结果，删除完成后界面会自动同步。",
-                        "You can keep browsing scan results. The UI will synchronize automatically when deletion finishes.",
-                    )
-                ),
-            );
-            ui.add_space(6.0);
-            ui.add(
-                egui::ProgressBar::new(pulse)
-                    .desired_width(ui.available_width().max(220.0))
-                    .text(self.t(
-                        "系统正在处理删除请求",
-                        "System is processing the delete request",
-                    )),
-            );
-            if let Some(current_path) = snapshot.current_path.as_ref() {
-                ui.add_space(6.0);
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(truncate_middle(current_path, 72))
-                            .text_style(egui::TextStyle::Small)
-                            .color(ui.visuals().weak_text_color()),
-                    )
-                    .wrap(),
-                );
-            }
-            return;
-        }
-
-        let Some(snapshot) = self
-            .delete_finalize_session
-            .as_ref()
-            .and_then(|session| session.snapshot())
-        else {
+        let Some(session) = self.delete_session.as_ref() else {
             return;
         };
+        let snapshot = session.snapshot();
         let phase = snapshot.started_at.elapsed().as_secs_f32();
         let pulse = ((phase.sin() + 1.0) * 0.5 * 0.7 + 0.15).clamp(0.08, 0.92);
+
         tone_banner(
             ui,
-            self.t("正在同步删除结果", "Synchronizing Cleanup Results"),
+            match snapshot.mode {
+                ExecutionMode::RecycleBin => {
+                    self.t("正在后台移到回收站", "Moving to Recycle Bin in Background")
+                }
+                ExecutionMode::FastPurge => {
+                    self.t("正在后台释放空间", "Reclaiming Space in Background")
+                }
+                ExecutionMode::Permanent => {
+                    self.t("正在后台永久删除", "Deleting Permanently in Background")
+                }
+            },
             &format!(
-                "{}  |  {} {} / {} {}  |  {} {:.1}s  |  {}",
+                "{}  |  {} / {}  |  {} {} / {} {}  |  {} {:.1}s  |  {}",
                 truncate_middle(&snapshot.label, 56),
+                format_count(snapshot.completed_count as u64),
+                format_count(snapshot.target_count as u64),
                 format_count(snapshot.succeeded_count as u64),
                 self.t("成功", "succeeded"),
                 format_count(snapshot.failed_count as u64),
@@ -3485,8 +3348,8 @@ impl DirOtterNativeApp {
                 self.t("已耗时", "Elapsed"),
                 phase,
                 self.t(
-                    "删除已经完成，正在后台整理结果视图与清理建议。",
-                    "Deletion finished. The result view and cleanup suggestions are being synchronized in the background.",
+                    "你可以继续浏览扫描结果，删除完成后界面会自动同步。",
+                    "You can keep browsing scan results. The UI will synchronize automatically when deletion finishes.",
                 )
             ),
         );
@@ -3495,10 +3358,21 @@ impl DirOtterNativeApp {
             egui::ProgressBar::new(pulse)
                 .desired_width(ui.available_width().max(220.0))
                 .text(self.t(
-                    "系统正在同步删除后的结果",
-                    "System is synchronizing post-delete results",
+                    "系统正在处理删除请求",
+                    "System is processing the delete request",
                 )),
         );
+        if let Some(current_path) = snapshot.current_path.as_ref() {
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(truncate_middle(current_path, 72))
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                )
+                .wrap(),
+            );
+        }
     }
 }
 
@@ -3510,8 +3384,6 @@ impl eframe::App for DirOtterNativeApp {
         self.process_scan_events();
         self.process_scan_finalize_events();
         self.process_delete_events();
-        self.process_delete_finalize_events();
-        self.process_result_store_load_events();
         self.process_memory_release_events();
         self.process_queued_delete();
         self.maybe_refresh_memory_status();
@@ -4565,8 +4437,6 @@ mod ui_tests {
             scan_session: None,
             scan_finalize_session: None,
             delete_session: None,
-            delete_finalize_session: None,
-            result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
@@ -4607,7 +4477,6 @@ mod ui_tests {
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
             error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
         }
     }
 
@@ -4861,10 +4730,10 @@ mod ui_tests {
     }
 
     #[test]
-    fn all_supported_languages_cover_view_models_failure_detail_keys() {
+    fn french_and_spanish_cover_view_models_failure_detail_keys() {
         let source = include_str!("view_models.rs");
         let keys = extract_english_translation_keys(source);
-        for &lang in supported_languages() {
+        for lang in [Lang::Fr, Lang::Es] {
             let missing: Vec<_> = keys
                 .iter()
                 .filter(|key| !has_translation(lang, key))
@@ -4873,23 +4742,6 @@ mod ui_tests {
             assert!(
                 missing.is_empty(),
                 "missing view-model translations for {lang:?}: {missing:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn all_supported_languages_cover_result_pages_keys() {
-        let source = include_str!("result_pages.rs");
-        let keys = extract_english_translation_keys(source);
-        for &lang in supported_languages() {
-            let missing: Vec<_> = keys
-                .iter()
-                .filter(|key| !has_translation(lang, key))
-                .cloned()
-                .collect();
-            assert!(
-                missing.is_empty(),
-                "missing result-page translations for {lang:?}: {missing:?}"
             );
         }
     }
@@ -5015,8 +4867,6 @@ mod ui_tests {
             scan_session: None,
             scan_finalize_session: None,
             delete_session: None,
-            delete_finalize_session: None,
-            result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
@@ -5061,7 +4911,6 @@ mod ui_tests {
                 source: Some(SelectionSource::Table),
             },
             error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
         };
 
         let (_, _, files) = app.contextual_ranked_files_panel(8);
@@ -5103,8 +4952,6 @@ mod ui_tests {
             scan_session: None,
             scan_finalize_session: None,
             delete_session: None,
-            delete_finalize_session: None,
-            result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
@@ -5149,7 +4996,6 @@ mod ui_tests {
                 source: Some(SelectionSource::Table),
             },
             error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
         };
 
         app.select_path("c:\\$Recycle.Bin\\S-1-5-18", SelectionSource::Error);
@@ -5199,8 +5045,6 @@ mod ui_tests {
             scan_session: None,
             scan_finalize_session: None,
             delete_session: None,
-            delete_finalize_session: None,
-            result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
@@ -5241,7 +5085,6 @@ mod ui_tests {
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
             error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
         };
 
         let entries = app.treemap_entries("d:\\", 32);
@@ -5281,8 +5124,6 @@ mod ui_tests {
             scan_session: None,
             scan_finalize_session: None,
             delete_session: None,
-            delete_finalize_session: None,
-            result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
@@ -5327,7 +5168,6 @@ mod ui_tests {
                 source: Some(SelectionSource::Table),
             },
             error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
         };
 
         let focus = app.treemap_focus_target().expect("focus target");
@@ -5358,8 +5198,6 @@ mod ui_tests {
             scan_session: None,
             scan_finalize_session: None,
             delete_session: None,
-            delete_finalize_session: None,
-            result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
             scan_current_path: None,
@@ -5400,7 +5238,6 @@ mod ui_tests {
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
             error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
         };
         app.sync_summary_from_store();
         app.sync_rankings_from_store();
@@ -5597,69 +5434,6 @@ mod ui_tests {
     }
 
     #[test]
-    fn delete_task_view_model_shows_background_result_sync_phase() {
-        let mut app = make_test_app();
-        app.delete_finalize_session = Some(controller::DeleteFinalizeSession {
-            relay: Arc::new(Mutex::new(controller::DeleteFinalizeRelayState {
-                finished: None,
-                snapshot: Some(controller::DeleteFinalizeState {
-                    started_at: Instant::now(),
-                    label: "Quick Cache Cleanup".into(),
-                    target_count: 22,
-                    mode: ExecutionMode::FastPurge,
-                    succeeded_count: 15,
-                    failed_count: 7,
-                }),
-            })),
-        });
-
-        let view_model = app
-            .delete_task_view_model()
-            .expect("delete task view model");
-
-        assert_eq!(view_model.title, "Background Task: Sync Results");
-        assert_eq!(view_model.progress_value, "Syncing in background");
-        assert!(view_model
-            .description
-            .contains("synchronizing in the background"));
-        assert!(view_model.progress_hint.contains("15 succeeded / 7 failed"));
-    }
-
-    #[test]
-    fn result_store_load_is_deferred_while_delete_sync_is_active() {
-        let mut app = make_test_app();
-        app.summary.bytes_observed = 42;
-        app.delete_finalize_session = Some(controller::DeleteFinalizeSession {
-            relay: Arc::new(Mutex::new(controller::DeleteFinalizeRelayState {
-                finished: None,
-                snapshot: Some(controller::DeleteFinalizeState {
-                    started_at: Instant::now(),
-                    label: "Quick Cache Cleanup".into(),
-                    target_count: 3,
-                    mode: ExecutionMode::FastPurge,
-                    succeeded_count: 1,
-                    failed_count: 2,
-                }),
-            })),
-        });
-
-        app.begin_result_store_load_if_needed();
-
-        assert!(app.result_store_load_session.is_none());
-    }
-
-    #[test]
-    fn result_store_load_uses_background_session_instead_of_sync_cache_load() {
-        let mut app = make_test_app();
-        app.summary.bytes_observed = 42;
-
-        app.begin_result_store_load_if_needed();
-
-        assert!(app.store.is_none());
-        assert!(app.result_store_load_session.is_some());
-    }
-
-    #[test]
     fn execution_failure_details_include_full_path_reason_and_suggestion() {
         let mut app = make_test_app();
         app.execution_report = Some(ExecutionReport {
@@ -5731,3 +5505,3147 @@ mod ui_tests {
         assert!(hint.contains("Delete action failed"));
     }
 }
+
+
+// END lib.rs
+
+// BEGIN view_models.rs
+
+use super::*;
+
+pub(super) struct InspectorTargetViewModel {
+    pub name_value: Arc<str>,
+    pub name_hint: &'static str,
+    pub path_value: String,
+    pub path_hint: &'static str,
+    pub size_value: String,
+    pub size_hint: String,
+}
+
+pub(super) struct DeleteTaskViewModel {
+    pub title: &'static str,
+    pub description: &'static str,
+    pub target_value: String,
+    pub target_hint: String,
+    pub progress_title: String,
+    pub progress_value: String,
+    pub progress_hint: String,
+    pub elapsed_value: String,
+    pub elapsed_hint: &'static str,
+    pub current_target_title: Option<String>,
+    pub current_target_value: Option<String>,
+    pub current_target_hint: Option<&'static str>,
+}
+
+pub(super) struct DeleteConfirmViewModel {
+    pub intro: &'static str,
+    pub target_value: String,
+    pub target_hint: &'static str,
+    pub size_value: String,
+    pub size_hint: String,
+    pub recommendation: &'static str,
+}
+
+pub(super) struct CleanupDeleteConfirmViewModel {
+    pub intro: &'static str,
+    pub task_value: String,
+    pub task_hint: &'static str,
+    pub item_count_value: String,
+    pub item_count_hint: &'static str,
+    pub estimated_reclaim_value: String,
+    pub estimated_reclaim_hint: &'static str,
+    pub preview_title: String,
+    pub preview_hint: String,
+    pub preview_items: Vec<CleanupDeletePreviewItemViewModel>,
+    pub confirm_label: &'static str,
+}
+
+pub(super) struct CleanupDeletePreviewItemViewModel {
+    pub path_value: String,
+    pub size_value: String,
+}
+
+pub(super) struct InspectorActionsViewModel {
+    pub section_description: String,
+    pub open_location_label: String,
+    pub fast_cleanup_label: String,
+    pub recycle_label: String,
+    pub permanent_label: String,
+    pub release_memory_label: String,
+    pub release_memory_tooltip: String,
+    pub can_open_location: bool,
+    pub can_fast_cleanup: bool,
+    pub can_recycle: bool,
+    pub can_permanent_delete: bool,
+    pub can_release_memory: bool,
+    pub info_message: Option<String>,
+}
+
+pub(super) struct InspectorFeedbackBannerViewModel {
+    pub title: String,
+    pub message: String,
+}
+
+pub(super) struct InspectorExecutionReportViewModel {
+    pub title: String,
+    pub summary_value: String,
+    pub summary_hint: String,
+    pub failure_detail_label: Option<String>,
+    pub failure_detail_hint: Option<String>,
+}
+
+pub(super) struct ExecutionFailureDetailsViewModel {
+    pub title: String,
+    pub intro: String,
+    pub summary_title: String,
+    pub summary_value: String,
+    pub summary_hint: String,
+    pub close_label: String,
+    pub close_hint: String,
+    pub items: Vec<ExecutionFailureDetailsItemViewModel>,
+}
+
+pub(super) struct ExecutionFailureDetailsItemViewModel {
+    pub failure_title: String,
+    pub failure_body: String,
+    pub path_value: String,
+    pub suggestion_title: String,
+    pub suggestion_value: String,
+    pub technical_detail_title: String,
+    pub technical_detail_value: Option<String>,
+}
+
+pub(super) struct InspectorWorkspaceContextViewModel {
+    pub root_value: String,
+    pub root_hint: &'static str,
+    pub source_value: String,
+    pub source_hint: &'static str,
+}
+
+pub(super) struct CleanupDetailsCategoryTabViewModel {
+    pub category: CleanupCategory,
+    pub label: String,
+    pub selected: bool,
+}
+
+pub(super) struct CleanupDetailsItemViewModel {
+    pub target: SelectedTarget,
+    pub checked: bool,
+    pub enabled: bool,
+    pub selected: bool,
+    pub path_value: String,
+    pub size_value: String,
+    pub risk: RiskLevel,
+    pub risk_label: &'static str,
+    pub category_label: &'static str,
+    pub unused_days_label: Option<String>,
+    pub score_label: String,
+    pub reason_text: &'static str,
+}
+
+pub(super) struct CleanupDetailsWindowViewModel {
+    pub review_message: String,
+    pub category_tabs: Vec<CleanupDetailsCategoryTabViewModel>,
+    pub banner_title: String,
+    pub banner_message: String,
+    pub selected_count_value: String,
+    pub selected_bytes_value: String,
+    pub select_safe_enabled: bool,
+    pub clear_selected_enabled: bool,
+    pub open_selected_enabled: bool,
+    pub header_primary_enabled: bool,
+    pub permanent_enabled: bool,
+    pub footer_primary_enabled: bool,
+    pub select_safe_label: String,
+    pub clear_selected_label: String,
+    pub open_selected_label: String,
+    pub header_primary_label: String,
+    pub permanent_label: String,
+    pub footer_primary_label: String,
+    pub close_label: String,
+    pub items: Vec<CleanupDetailsItemViewModel>,
+}
+
+impl DirOtterNativeApp {
+    pub(super) fn materialize_ranked_items(
+        paths: &[dirotter_scan::RankedPath],
+        limit: usize,
+        include_dirs: bool,
+    ) -> Vec<dirotter_scan::RankedPath> {
+        paths
+            .iter()
+            .filter(|(path, _)| {
+                fs::metadata(path.as_ref())
+                    .map(|meta| {
+                        if include_dirs {
+                            meta.is_dir()
+                        } else {
+                            meta.is_file()
+                        }
+                    })
+                    .unwrap_or(false)
+            })
+            .take(limit)
+            .map(|(path, size)| (path.clone(), *size))
+            .collect()
+    }
+
+    pub(super) fn summary_cards(&self) -> Vec<(String, String, String)> {
+        let mut cards = vec![
+            (
+                self.t("文件", "Files").to_string(),
+                format_count(self.summary.scanned_files),
+                self.t("已发现文件数", "Discovered files").to_string(),
+            ),
+            (
+                self.t("目录", "Directories").to_string(),
+                format_count(self.summary.scanned_dirs),
+                self.t("已遍历目录数", "Traversed directories").to_string(),
+            ),
+            (
+                self.t("扫描体积", "Scanned Size").to_string(),
+                format_bytes(self.summary.bytes_observed),
+                self.t(
+                    "仅统计已扫描到的文件体积",
+                    "Only the file bytes actually scanned",
+                )
+                .to_string(),
+            ),
+        ];
+
+        if let Some(volume) = self.current_volume_info() {
+            let used = volume.total_bytes.saturating_sub(volume.available_bytes);
+            cards.push((
+                self.t("磁盘已用", "Volume Used").to_string(),
+                format_bytes(used),
+                format!(
+                    "{} {}  |  {} {}",
+                    format_bytes(volume.total_bytes),
+                    self.t("总容量", "total"),
+                    format_bytes(volume.available_bytes),
+                    self.t("可用", "free")
+                ),
+            ));
+        }
+
+        cards.push((
+            self.t("错误", "Errors").to_string(),
+            format_count(self.summary.error_count),
+            self.t("需要关注的问题项", "Items needing attention")
+                .to_string(),
+        ));
+
+        cards
+    }
+
+    pub(super) fn retain_existing_ranked_items(
+        items: &[dirotter_scan::RankedPath],
+        limit: usize,
+        include_dirs: bool,
+    ) -> Vec<dirotter_scan::RankedPath> {
+        Self::materialize_ranked_items(items, limit, include_dirs)
+    }
+
+    pub(super) fn scan_health_summary(&self) -> String {
+        let age = self
+            .scan_last_event_at
+            .map(|instant| instant.elapsed().as_secs_f32())
+            .unwrap_or_default();
+        format!(
+            "{} {:.1}s  |  {} {}  |  {} {}  |  {} {}",
+            self.t("最近事件", "Last event"),
+            age,
+            self.t("丢弃进度", "Dropped progress"),
+            format_count(self.scan_dropped_progress),
+            self.t("丢弃批次", "Dropped batches"),
+            format_count(self.scan_dropped_batches),
+            self.t("丢弃快照", "Dropped snapshots"),
+            format_count(self.scan_dropped_snapshots),
+        )
+    }
+
+    pub(super) fn scan_health_short(&self) -> String {
+        let age = self
+            .scan_last_event_at
+            .map(|instant| instant.elapsed().as_secs_f32())
+            .unwrap_or_default();
+        let path = self
+            .scan_current_path
+            .as_deref()
+            .map(|path| truncate_middle(path, 46))
+            .unwrap_or_else(|| self.t("准备中", "Preparing").to_string());
+        format!(
+            "{} {:.1}s  |  {}",
+            self.t("最近事件", "Last event"),
+            age,
+            path
+        )
+    }
+
+    pub(super) fn current_ranked_dirs(&self, limit: usize) -> Vec<dirotter_scan::RankedPath> {
+        if self.scan_active() && !self.live_top_dirs.is_empty() {
+            return Self::retain_existing_ranked_items(&self.live_top_dirs, limit, true);
+        }
+        if !self.scan_active() && !self.completed_top_dirs.is_empty() {
+            return Self::retain_existing_ranked_items(&self.completed_top_dirs, limit, true);
+        }
+
+        self.store
+            .as_ref()
+            .map(|store| {
+                store
+                    .largest_dirs(limit)
+                    .into_iter()
+                    .filter(|node| {
+                        fs::metadata(store.node_path(node))
+                            .map(|meta| meta.is_dir())
+                            .unwrap_or(false)
+                    })
+                    .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
+                    .take(limit)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(super) fn current_ranked_files(&self, limit: usize) -> Vec<dirotter_scan::RankedPath> {
+        if self.scan_active() && !self.live_top_files.is_empty() {
+            return Self::retain_existing_ranked_items(&self.live_top_files, limit, false);
+        }
+        if !self.scan_active() && !self.completed_top_files.is_empty() {
+            return Self::retain_existing_ranked_items(&self.completed_top_files, limit, false);
+        }
+
+        self.store
+            .as_ref()
+            .map(|store| {
+                store
+                    .top_n_largest_files(limit)
+                    .into_iter()
+                    .filter(|node| {
+                        fs::metadata(store.node_path(node))
+                            .map(|meta| meta.is_file())
+                            .unwrap_or(false)
+                    })
+                    .map(|node| (node.path.clone(), node.size_self))
+                    .take(limit)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(super) fn ranked_files_in_scope(
+        &self,
+        scope_path: &str,
+        limit: usize,
+    ) -> Vec<dirotter_scan::RankedPath> {
+        let Some(store) = self.store.as_ref() else {
+            return Vec::new();
+        };
+        let mut matches: Vec<dirotter_scan::RankedPath> = store
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, NodeKind::File))
+            .filter(|node| store.node_path(node) != scope_path)
+            .filter(|node| path_within_scope(store.node_path(node), scope_path))
+            .map(|node| (node.path.clone(), node.size_self))
+            .collect();
+        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_ref().cmp(b.0.as_ref())));
+        matches.truncate(limit);
+        matches
+    }
+
+    pub(super) fn contextual_ranked_files_panel(
+        &self,
+        limit: usize,
+    ) -> (String, String, Vec<dirotter_scan::RankedPath>) {
+        if let Some(target) = self.selected_target() {
+            let scope_path = match target.kind {
+                NodeKind::Dir => Some(target.path.to_string()),
+                NodeKind::File => PathBuf::from(target.path.as_ref())
+                    .parent()
+                    .map(|parent| parent.display().to_string()),
+            };
+
+            if let Some(scope_path) = scope_path {
+                let scoped_files = self.ranked_files_in_scope(&scope_path, limit);
+                if !scoped_files.is_empty() {
+                    let scope_name = PathBuf::from(&scope_path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| name.to_string())
+                        .unwrap_or_else(|| scope_path.clone());
+                    return (
+                        self.t("所选位置中的最大文件", "Largest Files In Selection")
+                            .to_string(),
+                        format!(
+                            "{}: {}",
+                            self.t("当前范围", "Current scope"),
+                            truncate_middle(&scope_name, 40)
+                        ),
+                        scoped_files,
+                    );
+                }
+            }
+        }
+
+        (
+            self.t("当前最大的文件", "Largest Files Found So Far")
+                .to_string(),
+            self.t(
+                "早期结果可能还不是最终顺序。",
+                "Early findings are not yet the final ordering.",
+            )
+            .to_string(),
+            self.current_ranked_files(limit),
+        )
+    }
+
+    pub(super) fn inspector_target_view_model(
+        &self,
+        target: &SelectedTarget,
+    ) -> InspectorTargetViewModel {
+        InspectorTargetViewModel {
+            name_value: target.name.clone(),
+            name_hint: match target.kind {
+                NodeKind::Dir => self.t("目录", "Directory"),
+                NodeKind::File => self.t("文件", "File"),
+            },
+            path_value: truncate_middle(target.path.as_ref(), 34),
+            path_hint: self.t("完整路径可在悬浮提示中查看", "Full path available on hover"),
+            size_value: format_bytes(target.size_bytes),
+            size_hint: format!(
+                "{} {} / {} {}",
+                format_count(target.file_count),
+                self.t("文件", "files"),
+                format_count(target.dir_count),
+                self.t("目录", "dirs")
+            ),
+        }
+    }
+
+    pub(super) fn delete_task_view_model(&self) -> Option<DeleteTaskViewModel> {
+        let snapshot = self.delete_session.as_ref()?.snapshot();
+        Some(DeleteTaskViewModel {
+            title: match snapshot.mode {
+                ExecutionMode::RecycleBin => {
+                    self.t("后台任务：移到回收站", "Background Task: Recycle Bin")
+                }
+                ExecutionMode::FastPurge => {
+                    self.t("后台任务：快速清理", "Background Task: Fast Cleanup")
+                }
+                ExecutionMode::Permanent => {
+                    self.t("后台任务：永久删除", "Background Task: Permanent Delete")
+                }
+            },
+            description: self.t(
+                "删除正在后台执行。你可以继续浏览结果，但新的删除操作会暂时锁定。",
+                "Deletion is running in the background. You can keep browsing results, but new delete actions stay locked for now.",
+            ),
+            target_value: truncate_middle(&snapshot.label, 34),
+            target_hint: format!(
+                "{} {}",
+                format_count(snapshot.target_count as u64),
+                self.t("个项目正在执行", "items in flight")
+            ),
+            progress_title: self.t("进度", "Progress").to_string(),
+            progress_value: format!(
+                "{} / {}",
+                format_count(snapshot.completed_count as u64),
+                format_count(snapshot.target_count as u64)
+            ),
+            progress_hint: format!(
+                "{} {} / {} {}",
+                format_count(snapshot.succeeded_count as u64),
+                self.t("成功", "succeeded"),
+                format_count(snapshot.failed_count as u64),
+                self.t("失败", "failed")
+            ),
+            elapsed_value: format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
+            elapsed_hint: match snapshot.mode {
+                ExecutionMode::RecycleBin => self.t("回收站删除", "Recycle-bin delete"),
+                ExecutionMode::FastPurge => self.t("秒移走后后台清除", "Instant move, background purge"),
+                ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
+            },
+            current_target_title: snapshot
+                .current_path
+                .as_ref()
+                .map(|_| self.t("当前项目", "Current Item").to_string()),
+            current_target_value: snapshot
+                .current_path
+                .as_deref()
+                .map(|path| truncate_middle(path, 42)),
+            current_target_hint: snapshot
+                .current_path
+                .as_ref()
+                .map(|_| self.t("当前处理项目", "Current item")),
+        })
+    }
+
+    pub(super) fn delete_confirmation_view_model(
+        &self,
+        pending: &PendingDeleteConfirmation,
+    ) -> Option<DeleteConfirmViewModel> {
+        let target = pending.request.targets.first()?;
+        Some(DeleteConfirmViewModel {
+            intro: self.t(
+                "该操作会直接删除文件或目录，不进入回收站。",
+                "This action deletes the file or folder directly without using the recycle bin.",
+            ),
+            target_value: truncate_middle(target.path.as_ref(), 42),
+            target_hint: match target.kind {
+                NodeKind::Dir => self.t("目录", "Directory"),
+                NodeKind::File => self.t("文件", "File"),
+            },
+            size_value: format_bytes(target.size_bytes),
+            size_hint: format!("{:?}", pending.risk),
+            recommendation: self.t(
+                "建议：如果只是普通清理，优先使用“移到回收站”。永久删除适合明确确认后再执行。",
+                "Recommendation: prefer recycle-bin deletion for routine cleanup. Use permanent delete only when you are certain.",
+            ),
+        })
+    }
+
+    pub(super) fn cleanup_delete_confirmation_view_model(
+        &self,
+        request: &CleanupDeleteRequest,
+    ) -> CleanupDeleteConfirmViewModel {
+        let is_fast_cleanup = request.mode == ExecutionMode::FastPurge;
+        let preview_items: Vec<CleanupDeletePreviewItemViewModel> = request
+            .targets
+            .iter()
+            .map(|target| CleanupDeletePreviewItemViewModel {
+                path_value: target.path.to_string(),
+                size_value: format_bytes(target.size_bytes),
+            })
+            .collect();
+        CleanupDeleteConfirmViewModel {
+            intro: self.t(
+                if is_fast_cleanup {
+                    "将先把建议项快速移出当前目录，再在后台继续释放空间。"
+                } else {
+                    "将优先把建议项移到回收站，避免直接永久删除。"
+                },
+                if is_fast_cleanup {
+                    "Suggested items will be moved out of the current view first, then reclaimed in the background."
+                } else {
+                    "Suggested items will be moved to the recycle bin first instead of being deleted permanently."
+                },
+            ),
+            task_value: request.label.clone(),
+            task_hint: self.t("规则驱动清理", "Rule-driven cleanup"),
+            item_count_value: format_count(request.targets.len() as u64),
+            item_count_hint: if is_fast_cleanup {
+                self.t("会先进入后台清理区", "Will be staged for background cleanup")
+            } else {
+                self.t("将进入系统回收站", "Will move to the system recycle bin")
+            },
+            estimated_reclaim_value: format_bytes(request.estimated_bytes),
+            estimated_reclaim_hint: if is_fast_cleanup {
+                self.t(
+                    "磁盘空间会在后台逐步释放",
+                    "Disk space will continue to be reclaimed in the background",
+                )
+            } else {
+                self.t(
+                    "实际释放量取决于系统删除结果",
+                    "Actual reclaim depends on execution results",
+                )
+            },
+            preview_title: self.t("本次将处理的项目", "Items In This Cleanup").to_string(),
+            preview_hint: self
+                .t(
+                    "下面按完整路径列出本次要处理的全部项目，请滚动确认后再继续。",
+                    "The complete target list is shown below. Scroll through the full paths before continuing.",
+                )
+                .to_string(),
+            preview_items,
+            confirm_label: if is_fast_cleanup {
+                self.t("立即清理", "Clean Now")
+            } else {
+                self.t("移到回收站", "Move to Recycle Bin")
+            },
+        }
+    }
+
+    fn delete_failure_suggestion(&self, failure_kind: Option<ActionFailureKind>) -> &'static str {
+        match failure_kind {
+            Some(ActionFailureKind::PermissionDenied) => self.t(
+                "权限不足。请检查目标是否为系统目录，或使用更高权限重试。",
+                "Permission denied. Check whether the target is protected or retry with higher privileges.",
+            ),
+            Some(ActionFailureKind::Protected) => self.t(
+                "该目标被风险策略拦截，建议优先使用回收站删除或重新评估路径。",
+                "This target was blocked by risk protection. Prefer recycle-bin deletion or review the path.",
+            ),
+            Some(ActionFailureKind::Io) => self.t(
+                "文件或目录可能正被占用。关闭相关程序后重试。",
+                "The file or directory may be in use. Close related programs and try again.",
+            ),
+            Some(ActionFailureKind::Missing) => self.t(
+                "目标已不存在，界面会在下一次刷新后自动同步。",
+                "The target no longer exists. The UI will synchronize on the next refresh.",
+            ),
+            Some(ActionFailureKind::PlatformUnavailable | ActionFailureKind::NotSupported) => {
+                self.t(
+                    "当前平台不支持该操作，建议改用回收站删除或系统文件管理器。",
+                    "This operation is not supported on the current platform. Try recycle-bin deletion or the system file manager.",
+                )
+            }
+            Some(ActionFailureKind::PrecheckMismatch) => self.t(
+                "预检查与执行前状态不一致，建议重新选择该对象后重试。",
+                "Precheck no longer matches current state. Re-select the item and try again.",
+            ),
+            Some(ActionFailureKind::UnsupportedType) => self.t(
+                "当前只支持文件和目录，特殊对象请改用系统工具处理。",
+                "Only files and directories are supported. Use system tools for special objects.",
+            ),
+            None => self.t(
+                "删除执行失败，请结合失败原因检查路径状态后重试。",
+                "Delete action failed. Review the failure reason and retry after checking the target state.",
+            ),
+        }
+    }
+
+    fn delete_failure_title(&self, failure_kind: Option<ActionFailureKind>, retries: u8) -> String {
+        match failure_kind {
+            Some(ActionFailureKind::PermissionDenied) => {
+                self.t("权限不足", "Permission Denied").to_string()
+            }
+            Some(ActionFailureKind::Protected) => self
+                .t("已被风险策略拦截", "Blocked by Safety Policy")
+                .to_string(),
+            Some(ActionFailureKind::Io) if retries > 0 => self
+                .t("重试后仍然失败", "Still Failed After Retries")
+                .to_string(),
+            Some(ActionFailureKind::Io) => self.t("I/O 执行失败", "I/O Failure").to_string(),
+            Some(ActionFailureKind::Missing) => {
+                self.t("目标已不存在", "Target Missing").to_string()
+            }
+            Some(ActionFailureKind::PlatformUnavailable) => {
+                self.t("当前平台不可用", "Platform Unavailable").to_string()
+            }
+            Some(ActionFailureKind::NotSupported) => self
+                .t("当前操作不受支持", "Operation Not Supported")
+                .to_string(),
+            Some(ActionFailureKind::PrecheckMismatch) => self
+                .t("执行前状态已变化", "State Changed Before Execution")
+                .to_string(),
+            Some(ActionFailureKind::UnsupportedType) => self
+                .t("对象类型不受支持", "Unsupported Target Type")
+                .to_string(),
+            None => self.t("删除执行失败", "Delete Failed").to_string(),
+        }
+    }
+
+    fn delete_failure_body(&self, failure_kind: Option<ActionFailureKind>, retries: u8) -> String {
+        match failure_kind {
+            Some(ActionFailureKind::PermissionDenied) => self
+                .t(
+                    "系统拒绝了这次删除请求，通常是因为权限不足或目标受系统保护。",
+                    "The system rejected this delete request, usually because of missing privileges or target protection.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::Protected) => self
+                .t(
+                    "该路径命中了当前风险保护规则，所以这次不会直接执行删除。",
+                    "This path matched the current safety rules, so deletion was not executed directly.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::Io) if retries > 0 => format!(
+                "{} {} {}。",
+                self.t(
+                    "系统已经自动重试",
+                    "The system already retried this operation",
+                ),
+                format_count(retries as u64 + 1),
+                self.t("次，但仍然没有成功。", "times, but it still did not succeed.")
+            ),
+            Some(ActionFailureKind::Io) => self
+                .t(
+                    "执行阶段遇到了 I/O 问题，常见原因是文件占用、临时锁定或权限切换。",
+                    "The execution hit an I/O issue, commonly due to file locks, transient handles, or permission transitions.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::Missing) => self
+                .t(
+                    "在真正执行前，目标已经从磁盘上消失。",
+                    "The target disappeared from disk before execution completed.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::PlatformUnavailable | ActionFailureKind::NotSupported) => self
+                .t(
+                    "当前平台或当前删除方式无法完成这次请求。",
+                    "The current platform or delete mode cannot complete this request.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::PrecheckMismatch) => self
+                .t(
+                    "执行前检查和真实执行时看到的磁盘状态已经不一致。",
+                    "The disk state changed between precheck and actual execution.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::UnsupportedType) => self
+                .t(
+                    "这个对象不是当前删除链路支持的普通文件或目录。",
+                    "This object is not a regular file or directory supported by the current delete flow.",
+                )
+                .to_string(),
+            None => self
+                .t(
+                    "这次删除没有成功完成，请结合下方建议重新检查目标状态。",
+                    "This delete did not complete successfully. Review the suggestion below and re-check the target state.",
+                )
+                .to_string(),
+        }
+    }
+
+    pub(super) fn inspector_actions_view_model(
+        &self,
+        selected_target: Option<&SelectedTarget>,
+    ) -> InspectorActionsViewModel {
+        let has_selection = selected_target.is_some();
+        let delete_active = self.delete_active();
+        let can_fast_purge_selection = selected_target
+            .map(|target| self.can_fast_purge_path(target.path.as_ref()))
+            .unwrap_or(false);
+        let can_release_memory = !self.system_memory_release_active();
+        let info_message = if delete_active {
+            Some(
+                self.t(
+                    "后台删除任务正在执行。你可以继续浏览列表，但新的删除动作会在完成前保持禁用。",
+                    "A background delete task is running. You can keep browsing, but new delete actions stay disabled until it finishes.",
+                )
+                .to_string(),
+            )
+        } else if self.system_memory_release_active() {
+            Some(
+                self.t(
+                    "系统内存释放正在后台执行。界面不会锁死，完成后会自动显示前后效果。",
+                    "System memory release is running in the background. The UI stays responsive and will show the before/after result automatically.",
+                )
+                .to_string(),
+            )
+        } else if !has_selection {
+            Some(
+                self.t(
+                    "先从列表、结果视图或其他页面里选中一个文件或文件夹。",
+                    "Select a file or folder from a list, result view, or another page first.",
+                )
+                .to_string(),
+            )
+        } else {
+            None
+        };
+
+        InspectorActionsViewModel {
+            section_description: self
+                .t(
+                    "直接在右侧完成清理，不再跳到单独的操作页。",
+                    "Delete directly from the inspector instead of jumping to a separate page.",
+                )
+                .to_string(),
+            open_location_label: self.t("打开所在位置", "Open File Location").to_string(),
+            fast_cleanup_label: self.t("快速清理缓存", "Fast Cleanup").to_string(),
+            recycle_label: self.t("移到回收站", "Move to Recycle Bin").to_string(),
+            permanent_label: self.t("永久删除", "Delete Permanently").to_string(),
+            release_memory_label: self
+                .t("一键释放系统内存", "Release System Memory")
+                .to_string(),
+            release_memory_tooltip: self
+                .t(
+                    "基于 Windows 官方能力，尝试收缩当前会话中的高占用进程，并在权限允许时裁剪系统文件缓存。",
+                    "Uses Windows-supported memory trimming to shrink large interactive processes and, when allowed, trim the system file cache.",
+                )
+                .to_string(),
+            can_open_location: has_selection,
+            can_fast_cleanup: has_selection && can_fast_purge_selection && !delete_active,
+            can_recycle: has_selection && !delete_active,
+            can_permanent_delete: has_selection && !delete_active,
+            can_release_memory,
+            info_message,
+        }
+    }
+
+    pub(super) fn inspector_explorer_feedback_view_model(
+        &self,
+    ) -> Option<InspectorFeedbackBannerViewModel> {
+        let (message, success) = self.explorer_feedback.as_ref()?;
+        Some(InspectorFeedbackBannerViewModel {
+            title: if *success {
+                self.t("已打开所在位置", "Opened Location").to_string()
+            } else {
+                self.t("打开位置失败", "Open Location Failed").to_string()
+            },
+            message: message.clone(),
+        })
+    }
+
+    pub(super) fn inspector_delete_feedback_view_model(
+        &self,
+    ) -> Option<(InspectorFeedbackBannerViewModel, bool)> {
+        let (title, hint, success) = self.delete_feedback_message()?;
+        Some((
+            InspectorFeedbackBannerViewModel {
+                title,
+                message: hint,
+            },
+            success,
+        ))
+    }
+
+    pub(super) fn inspector_execution_report_view_model(
+        &self,
+    ) -> Option<InspectorExecutionReportViewModel> {
+        let report = self.execution_report.as_ref()?;
+
+        Some(InspectorExecutionReportViewModel {
+            title: self.t("最近执行", "Last Action").to_string(),
+            summary_value: match report.mode {
+                ExecutionMode::RecycleBin => self.t("移到回收站", "Moved to recycle bin"),
+                ExecutionMode::FastPurge => self.t("快速清理缓存", "Fast cleanup"),
+                ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
+            }
+            .to_string(),
+            summary_hint: format!(
+                "{} {} / {} {}",
+                format_count(report.succeeded as u64),
+                self.t("成功", "succeeded"),
+                format_count(report.failed as u64),
+                self.t("失败", "failed")
+            ),
+            failure_detail_label: (report.failed > 0).then(|| {
+                format!(
+                    "{} {}",
+                    format_count(report.failed as u64),
+                    self.t("失败，查看详情", "failed, view details")
+                )
+            }),
+            failure_detail_hint: (report.failed > 0).then(|| {
+                self.t(
+                    "打开完整失败列表，查看具体路径、失败原因和处理建议。",
+                    "Open the full failed-item list with paths, reasons, and suggestions.",
+                )
+                .to_string()
+            }),
+        })
+    }
+
+    pub(super) fn execution_failure_details_view_model(
+        &self,
+    ) -> Option<ExecutionFailureDetailsViewModel> {
+        let report = self.execution_report.as_ref()?;
+        let items: Vec<ExecutionFailureDetailsItemViewModel> = report
+            .items
+            .iter()
+            .filter(|item| !item.success)
+            .map(|item| ExecutionFailureDetailsItemViewModel {
+                failure_title: self.delete_failure_title(item.failure_kind, item.retries),
+                failure_body: self.delete_failure_body(item.failure_kind, item.retries),
+                path_value: item.path.clone(),
+                suggestion_title: self.t("建议", "Suggested Next Step").to_string(),
+                suggestion_value: self
+                    .delete_failure_suggestion(item.failure_kind)
+                    .to_string(),
+                technical_detail_title: self.t("技术细节", "Technical Detail").to_string(),
+                technical_detail_value: (!item.message.is_empty()).then(|| item.message.clone()),
+            })
+            .collect();
+        if items.is_empty() {
+            return None;
+        }
+
+        Some(ExecutionFailureDetailsViewModel {
+            title: self.t("失败详情", "Failure Details").to_string(),
+            intro: self
+                .t(
+                    "以下项目执行失败。这里会显示完整路径、失败原因和对应建议。",
+                    "These items failed to execute. Full paths, failure reasons, and suggestions are listed here.",
+                )
+                .to_string(),
+            summary_title: self.t("执行方式", "Execution").to_string(),
+            summary_value: match report.mode {
+                ExecutionMode::RecycleBin => self.t("移到回收站", "Moved to recycle bin"),
+                ExecutionMode::FastPurge => self.t("快速清理缓存", "Fast cleanup"),
+                ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
+            }
+            .to_string(),
+            summary_hint: format!(
+                "{} {} / {} {}",
+                format_count(report.succeeded as u64),
+                self.t("成功", "succeeded"),
+                format_count(report.failed as u64),
+                self.t("失败", "failed")
+            ),
+            close_label: self.t("关闭", "Close").to_string(),
+            close_hint: self
+                .t(
+                    "关闭详情并返回右侧摘要。",
+                    "Close the details and return to the inspector summary.",
+                )
+                .to_string(),
+            items,
+        })
+    }
+
+    pub(super) fn inspector_workspace_context_view_model(
+        &self,
+    ) -> InspectorWorkspaceContextViewModel {
+        InspectorWorkspaceContextViewModel {
+            root_value: truncate_middle(&self.root_input, 32),
+            root_hint: self.t("当前扫描目标", "Current scan target"),
+            source_value: self
+                .selection
+                .source
+                .map(|source| self.source_label(source))
+                .unwrap_or_else(|| self.t("无", "None"))
+                .to_string(),
+            source_hint: self.t("当前聚焦来源", "Selection source"),
+        }
+    }
+
+    pub(super) fn cleanup_details_window_view_model(
+        &self,
+        category: CleanupCategory,
+        items: &[CleanupCandidate],
+    ) -> CleanupDetailsWindowViewModel {
+        let categories = self
+            .cleanup
+            .analysis
+            .as_ref()
+            .map(|analysis| analysis.categories.clone())
+            .unwrap_or_default();
+        let (selected_count, selected_bytes) = self.selected_cleanup_totals(category);
+        let delete_active = self.delete_active();
+        let header_primary_label = if category == CleanupCategory::Cache {
+            self.t("快速清理选中缓存", "Fast Cleanup Selected")
+        } else {
+            self.t("移到回收站", "Move to Recycle Bin")
+        };
+        let footer_primary_label = if category == CleanupCategory::Cache {
+            self.t("快速清理选中缓存", "Fast Cleanup Selected")
+        } else {
+            self.t("清理选中项", "Clean Selected")
+        };
+
+        CleanupDetailsWindowViewModel {
+            review_message: self
+                .t(
+                    "按分类检查后再决定清理范围。",
+                    "Review by category before deciding what to clean.",
+                )
+                .to_string(),
+            category_tabs: categories
+                .into_iter()
+                .map(|entry| CleanupDetailsCategoryTabViewModel {
+                    category: entry.category,
+                    label: format!(
+                        "{}  {}",
+                        self.cleanup_category_label(entry.category),
+                        format_bytes(entry.total_bytes)
+                    ),
+                    selected: self.cleanup.detail_category == Some(entry.category),
+                })
+                .collect(),
+            banner_title: self.cleanup_category_label(category).to_string(),
+            banner_message: self
+                .t(
+                    "绿色会默认勾选，黄色默认不勾选；红色项请点击条目后用“打开所选位置”自行确认处理。",
+                    "Safe items are selected by default and warning items stay unchecked. For red items, click the row and use Open Selected Location for manual review.",
+                )
+                .to_string(),
+            selected_count_value: format_count(selected_count as u64),
+            selected_bytes_value: format_bytes(selected_bytes),
+            select_safe_enabled: !delete_active,
+            clear_selected_enabled: !delete_active,
+            open_selected_enabled: self.selected_target().is_some(),
+            header_primary_enabled: selected_count > 0 && !delete_active,
+            permanent_enabled: selected_count > 0 && !delete_active,
+            footer_primary_enabled: selected_count > 0 && !delete_active,
+            select_safe_label: self.t("全选安全项", "Select Safe").to_string(),
+            clear_selected_label: self.t("清空所选", "Clear Selected").to_string(),
+            open_selected_label: self.t("打开所选位置", "Open Selected").to_string(),
+            header_primary_label: header_primary_label.to_string(),
+            permanent_label: self.t("永久删除", "Delete Permanently").to_string(),
+            footer_primary_label: footer_primary_label.to_string(),
+            close_label: self.t("关闭", "Close").to_string(),
+            items: items
+                .iter()
+                .map(|item| CleanupDetailsItemViewModel {
+                    target: item.target.clone(),
+                    checked: self.cleanup.selected_paths.contains(item.target.path.as_ref()),
+                    enabled: item.risk != RiskLevel::High,
+                    selected: self.selection_matches_target(&item.target),
+                    path_value: truncate_middle(item.target.path.as_ref(), 72),
+                    size_value: format_bytes(item.target.size_bytes),
+                    risk: item.risk,
+                    risk_label: self.cleanup_risk_label(item.risk),
+                    category_label: self.cleanup_category_label(item.category),
+                    unused_days_label: item.unused_days.map(|unused_days| {
+                        format!("{} {}", unused_days, self.t("天未使用", "days unused"))
+                    }),
+                    score_label: format!("{} {:.1}", self.t("评分", "Score"), item.cleanup_score),
+                    reason_text: self.cleanup_reason_text(item),
+                })
+                .collect(),
+        }
+    }
+}
+
+
+// END view_models.rs
+
+// BEGIN dashboard_impl.rs
+
+use super::*;
+
+pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    page_header(
+            ui,
+            app.t("DirOtter 工作台", "DirOtter Workspace"),
+            app.t("磁盘概览", "Drive Overview"),
+            app.t(
+                "先看结论和动作，再进入扫描设置，以及最大的文件夹和文件。",
+                "Start with the conclusion and action, then move into scan setup and the largest folders and files.",
+            ),
+        );
+    let ranked_dirs = app.current_ranked_dirs(10);
+    let ranked_files = app.current_ranked_files(10);
+    let folders_title = app.t("最大文件夹", "Largest Folders").to_string();
+    let folders_subtitle = app
+        .t(
+            "优先看哪些目录占空间最多。",
+            "Start with the folders consuming the most space.",
+        )
+        .to_string();
+    let files_title = app.t("最大文件", "Largest Files").to_string();
+    let files_subtitle = app
+        .t(
+            "这些通常是最直接可处理的空间占用点。",
+            "These are usually the quickest wins for reclaiming space.",
+        )
+        .to_string();
+    if app.scan_active() {
+        render_live_overview_hero(app, ui);
+    } else if app.summary.bytes_observed > 0 || app.cleanup.analysis.is_some() {
+        render_overview_hero(app, ui);
+    }
+    ui.add_space(14.0);
+    render_overview_metrics_strip(app, ui);
+    ui.add_space(18.0);
+    render_scan_target_card(app, ui);
+    ui.add_space(18.0);
+    let wide_layout = ui.available_width() >= 740.0;
+    if wide_layout {
+        let gap = 20.0;
+        let total = ui.available_width();
+        let left_width = (total - gap) / 2.0;
+        let right_width = total - gap - left_width;
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(left_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    render_ranked_size_list(
+                        ui,
+                        &folders_title,
+                        &folders_subtitle,
+                        &ranked_dirs,
+                        app.summary.bytes_observed,
+                        &mut app.selection,
+                        &mut app.execution_report,
+                    );
+                },
+            );
+            ui.add_space(gap);
+            ui.allocate_ui_with_layout(
+                egui::vec2(right_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    render_ranked_size_list(
+                        ui,
+                        &files_title,
+                        &files_subtitle,
+                        &ranked_files,
+                        app.summary.bytes_observed,
+                        &mut app.selection,
+                        &mut app.execution_report,
+                    );
+                },
+            );
+        });
+    } else {
+        render_ranked_size_list(
+            ui,
+            &folders_title,
+            &folders_subtitle,
+            &ranked_dirs,
+            app.summary.bytes_observed,
+            &mut app.selection,
+            &mut app.execution_report,
+        );
+        ui.add_space(18.0);
+        render_ranked_size_list(
+            ui,
+            &files_title,
+            &files_subtitle,
+            &ranked_files,
+            app.summary.bytes_observed,
+            &mut app.selection,
+            &mut app.execution_report,
+        );
+    }
+}
+
+pub(super) fn render_overview_hero(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    let analysis = app.cleanup.analysis.as_ref();
+    let reclaimable = analysis.map(|a| a.reclaimable_bytes).unwrap_or(0);
+    let quick_clean = analysis.map(|a| a.quick_clean_bytes).unwrap_or(0);
+    let has_items = analysis.is_some_and(|analysis| !analysis.items.is_empty());
+    let default_category =
+        analysis.and_then(|analysis| analysis.categories.first().map(|entry| entry.category));
+    let top_categories: Vec<_> = analysis
+        .map(|analysis| {
+            analysis
+                .categories
+                .iter()
+                .filter(|category| category.reclaimable_bytes > 0)
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let boost_action = app.recommended_boost_action();
+    let boost_title = app.t("一键提速", "One-Tap Boost").to_string();
+    let boost_body = match boost_action {
+            BoostAction::QuickCacheCleanup => format!(
+                "{} {}。",
+                app.t(
+                    "当前最安全、最直接的一键提速动作是清理缓存，预计可先释放",
+                    "The safest and most direct one-tap boost right now is cache cleanup, with about",
+                ),
+                format_bytes(quick_clean)
+            ),
+            BoostAction::StartScan => app
+                .t(
+                    "先完成一次扫描，DirOtter 才能识别安全缓存和真正值得处理的大文件。",
+                    "Run a scan first so DirOtter can identify safe cache and the largest cleanup targets.",
+                )
+                .to_string(),
+            BoostAction::ReviewSuggestions => app
+                .t(
+                    "已经找到可疑似拖慢系统的占用点，但它们还需要你确认后再执行。",
+                    "Potential system-slowing storage targets were found, but they still need your confirmation before execution.",
+                )
+                .to_string(),
+            BoostAction::NoImmediateAction => app
+                .t(
+                    "当前没有明确的安全一键提速项，通常从最大的文件夹和文件开始最有效。",
+                    "No safe one-tap boost stands out right now. Starting from the largest folders and files is usually the most effective next step.",
+                )
+                .to_string(),
+        };
+    let boost_button = match boost_action {
+        BoostAction::QuickCacheCleanup => app.t("一键提速（推荐）", "Boost Now (Recommended)"),
+        BoostAction::StartScan => app.t("开始提速扫描", "Start Boost Scan"),
+        BoostAction::ReviewSuggestions => app.t("查看提速建议", "Review Boost Suggestions"),
+        BoostAction::NoImmediateAction => app.t("查看最大占用", "Review Largest Items"),
+    }
+    .to_string();
+    let review_suggestions_button = app.t("查看建议详情", "Review Suggestions").to_string();
+    let action_enabled = !app.scan_active() && !app.delete_active();
+    let action_returns_to_dashboard = matches!(boost_action, BoostAction::NoImmediateAction);
+    let hero_value_size = if reclaimable > 0 || app.summary.bytes_observed > 0 {
+        36.0
+    } else {
+        26.0
+    };
+    let hero_label = if reclaimable > 0 {
+        app.t("清理建议", "Cleanup Suggestions")
+    } else if app.summary.bytes_observed > 0 {
+        app.t("磁盘概览", "Drive Overview")
+    } else {
+        app.t("准备开始一次目录巡检", "Ready for a New Pass")
+    };
+    let hero_value = if reclaimable > 0 {
+        format_bytes(reclaimable)
+    } else if app.summary.bytes_observed > 0 {
+        format_bytes(app.summary.bytes_observed)
+    } else {
+        app.t("先选一个盘符开始扫描。", "Pick a drive to begin scanning.")
+            .to_string()
+    };
+    let hero_body = if reclaimable > 0 {
+        app.t(
+            "只统计通过规则筛选后的建议项，先告诉你哪里最值得处理。",
+            "Only counts rule-based suggestions so the next action is obvious.",
+        )
+    } else if app.summary.bytes_observed > 0 {
+        app.t(
+                "如果当前还没有明确建议，就先从最大文件夹和最大文件开始处理。",
+                "If there is no clear cleanup suggestion yet, start from the largest folders and files.",
+            )
+    } else {
+        app.t(
+            "从盘符按钮直接开始，或先调整根目录和扫描模式。",
+            "Start from a drive button, or adjust the root path and scan mode first.",
+        )
+    };
+    let current_scope = if app.root_input.trim().is_empty() {
+        app.t("未设置", "Not set").to_string()
+    } else {
+        truncate_middle(&app.root_input, 44)
+    };
+    let scope_mode_title = app.t("当前范围与模式", "Current Scope & Mode").to_string();
+    let root_label = app.t("根目录", "Root path").to_string();
+    let root_subtitle = app.t("当前扫描目标", "Current scope").to_string();
+    let mode_label = app.t("当前模式", "Current Mode").to_string();
+    let mode_title = app.scan_mode_title(app.scan_mode).to_string();
+    let mode_description = app.scan_mode_description(app.scan_mode).to_string();
+    let no_suggestions_title = app.t("还没有建议项", "No Suggestions Yet").to_string();
+    let no_suggestions_body = app
+        .t(
+            "继续完成一次扫描，或直接看下方的最大文件夹和最大文件。",
+            "Finish a scan or move straight to the largest folders and files below.",
+        )
+        .to_string();
+    let top_sources_label = app.t("主要来源", "Top Sources").to_string();
+    let top_source_rows: Vec<_> = top_categories
+        .iter()
+        .map(|category| {
+            (
+                app.cleanup_category_color(category.category),
+                app.cleanup_category_label(category.category).to_string(),
+                format_bytes(category.reclaimable_bytes),
+            )
+        })
+        .collect();
+    dashboard_panel(ui, |ui| {
+        dashboard_split(
+            ui,
+            320.0,
+            20.0,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(&boost_title)
+                        .text_style(egui::TextStyle::Small)
+                        .color(river_teal()),
+                );
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(&boost_button).size(28.0).strong());
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(&boost_body)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(12.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled_ui(action_enabled, |ui| {
+                            sized_primary_button(ui, 220.0, &boost_button)
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        if action_returns_to_dashboard {
+                            app.page = Page::Dashboard;
+                        }
+                        app.execute_recommended_boost();
+                    }
+
+                    if ui
+                        .add_enabled_ui(has_items, |ui| {
+                            sized_button(ui, 180.0, &review_suggestions_button)
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        app.cleanup.detail_category = default_category;
+                    }
+                });
+            },
+            |ui| {
+                ui.label(
+                    egui::RichText::new(hero_label)
+                        .text_style(egui::TextStyle::Small)
+                        .color(river_teal()),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(hero_value)
+                        .size(hero_value_size)
+                        .strong(),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(hero_body)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+            },
+        );
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(14.0);
+        dashboard_split(
+            ui,
+            320.0,
+            20.0,
+            |ui| {
+                ui.label(egui::RichText::new(&scope_mode_title).strong());
+                ui.add_space(6.0);
+                stat_row(ui, &root_label, &current_scope, &root_subtitle);
+                ui.add_space(8.0);
+                stat_row(ui, &mode_label, &mode_title, &mode_description);
+            },
+            |ui| {
+                if top_source_rows.is_empty() {
+                    empty_state_panel(ui, &no_suggestions_title, &no_suggestions_body);
+                } else {
+                    ui.label(
+                        egui::RichText::new(&top_sources_label)
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                    ui.add_space(6.0);
+                    for (color, label, value) in &top_source_rows {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(*color, "●");
+                            ui.label(egui::RichText::new(label).strong());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(egui::RichText::new(value).strong());
+                                },
+                            );
+                        });
+                        ui.add_space(6.0);
+                    }
+                }
+            },
+        );
+    });
+}
+
+pub(super) fn render_live_overview_hero(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    let current_path = app
+        .scan_current_path
+        .as_deref()
+        .map(|path| truncate_middle(path, 84))
+        .unwrap_or_else(|| {
+            app.t("正在准备扫描路径…", "Preparing scan path...")
+                .to_string()
+        });
+    let coverage_label = app
+        .scanned_coverage_ratio()
+        .map(|ratio| format!("{:.0}%", ratio * 100.0))
+        .unwrap_or_else(|| app.t("估算中", "Estimating").to_string());
+    dashboard_panel(ui, |ui| {
+        ui.label(
+            egui::RichText::new(app.t("实时总览", "Live Overview"))
+                .text_style(egui::TextStyle::Small)
+                .color(river_teal()),
+        );
+        ui.add_space(8.0);
+        dashboard_split(
+            ui,
+            320.0,
+            20.0,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(format_bytes(app.summary.bytes_observed))
+                        .size(36.0)
+                        .strong(),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                        egui::RichText::new(app.t(
+                            "扫描中首页只保留当前态势，不提前给最终结论。",
+                            "While scanning, the overview stays focused on current state instead of premature conclusions.",
+                        ))
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                    );
+                ui.add_space(12.0);
+                stat_row(
+                    ui,
+                    app.t("当前处理路径", "Current Path"),
+                    &current_path,
+                    app.scan_health_summary().as_str(),
+                );
+            },
+            |ui| {
+                ui.label(egui::RichText::new(app.t("扫描态势", "Scan Status")).strong());
+                ui.add_space(6.0);
+                stat_row(
+                    ui,
+                    app.t("扫描覆盖率", "Coverage"),
+                    &coverage_label,
+                    app.t("按卷容量估算", "Estimated against volume size"),
+                );
+                ui.add_space(8.0);
+                stat_row(
+                    ui,
+                    app.t("错误", "Errors"),
+                    &format_count(app.summary.error_count),
+                    app.t("当前已累计的问题项", "Issues accumulated so far"),
+                );
+                ui.add_space(8.0);
+                stat_row(
+                    ui,
+                    app.t("已观察体积", "Observed Bytes"),
+                    &format_bytes(app.summary.bytes_observed),
+                    app.t(
+                        "这是实时增量状态，不是最终结论。",
+                        "This is live incremental state, not the final conclusion.",
+                    ),
+                );
+            },
+        );
+    });
+}
+
+pub(super) fn render_overview_metrics_strip(app: &DirOtterNativeApp, ui: &mut egui::Ui) {
+    let cards = if let Some((used, free, total)) = app.volume_numbers() {
+        [
+            (
+                app.t("磁盘已用", "Used"),
+                format_bytes(used),
+                format!(
+                    "{} {}",
+                    format_bytes(total),
+                    app.t("总容量", "total capacity")
+                ),
+                river_teal(),
+            ),
+            (
+                app.t("磁盘可用", "Free"),
+                format_bytes(free),
+                app.t("当前卷剩余可用空间", "Remaining free space on this volume")
+                    .to_string(),
+                info_blue(),
+            ),
+            (
+                app.t("已扫描体积", "Observed"),
+                format_bytes(app.summary.bytes_observed),
+                app.t(
+                    "本次扫描已经确认的文件体积",
+                    "File bytes already confirmed in this scan",
+                )
+                .to_string(),
+                success_green(),
+            ),
+            (
+                app.t("错误", "Errors"),
+                format_count(app.summary.error_count),
+                app.t("无法读取或被跳过的路径", "Unreadable or skipped paths")
+                    .to_string(),
+                if app.summary.error_count > 0 {
+                    danger_red()
+                } else {
+                    egui::Color32::from_rgb(0x5F, 0x8D, 0x96)
+                },
+            ),
+        ]
+    } else {
+        [
+            (
+                app.t("文件", "Files"),
+                format_count(app.summary.scanned_files),
+                app.t("已发现文件数", "Files discovered").to_string(),
+                river_teal(),
+            ),
+            (
+                app.t("目录", "Folders"),
+                format_count(app.summary.scanned_dirs),
+                app.t("已遍历目录数", "Folders traversed").to_string(),
+                info_blue(),
+            ),
+            (
+                app.t("已扫描体积", "Observed"),
+                format_bytes(app.summary.bytes_observed),
+                app.t(
+                    "本次扫描已经确认的文件体积",
+                    "File bytes already confirmed in this scan",
+                )
+                .to_string(),
+                success_green(),
+            ),
+            (
+                app.t("错误", "Errors"),
+                format_count(app.summary.error_count),
+                app.t("无法读取或被跳过的路径", "Unreadable or skipped paths")
+                    .to_string(),
+                if app.summary.error_count > 0 {
+                    danger_red()
+                } else {
+                    egui::Color32::from_rgb(0x5F, 0x8D, 0x96)
+                },
+            ),
+        ]
+    };
+    if ui.available_width() >= 980.0 {
+        dashboard_metric_row(ui, &cards);
+    } else if ui.available_width() >= 620.0 {
+        dashboard_metric_row(ui, &cards[..2]);
+        ui.add_space(12.0);
+        dashboard_metric_row(ui, &cards[2..]);
+    } else {
+        for card in cards {
+            dashboard_metric_tile(ui, card.0, &card.1, &card.2, card.3);
+            ui.add_space(12.0);
+        }
+    }
+}
+
+pub(super) fn render_scan_target_card(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    dashboard_panel(ui, |ui| {
+        ui.label(
+            egui::RichText::new(app.t("开始扫描", "Start Scan"))
+                .text_style(egui::TextStyle::Name("title".into())),
+        );
+        ui.add_space(4.0);
+        ui.label(
+                egui::RichText::new(app.t(
+                    "扫描负责查找磁盘占用；内存释放请使用右侧快速操作中的独立入口。",
+                    "Scanning finds storage hotspots. Use the separate memory action in Quick Actions for memory release.",
+                ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+            );
+        ui.add_space(12.0);
+        if ui
+            .add_enabled_ui(!app.scan_active(), |ui| {
+                sized_primary_button(
+                    ui,
+                    ui.available_width(),
+                    if app.scan_active() {
+                        app.t("扫描进行中", "Scanning")
+                    } else {
+                        app.t("开始扫描", "Start Scan")
+                    },
+                )
+            })
+            .inner
+            .on_hover_text(app.t(
+                "扫描进行中时请使用右上角的停止按钮。",
+                "Use the top-right stop button while a scan is running.",
+            ))
+            .clicked()
+        {
+            app.start_scan();
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(12.0);
+        ui.label(egui::RichText::new(app.t("扫描设置", "Scan Setup")).strong());
+        ui.label(
+                egui::RichText::new(app.t(
+                    "如果需要更细粒度地排查空间占用，再手动调整盘符、目录和扫描模式。",
+                    "Adjust the drive, folder, and scan mode only when you need a more targeted storage investigation.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+        ui.add_space(12.0);
+        ui.label(egui::RichText::new(app.t("快速盘符", "Quick Drives")).strong());
+        ui.label(
+                egui::RichText::new(app.t(
+                    "优先点击盘符直接开始；只有要扫子目录时再手动输入。",
+                    "Start with a drive button first. Only type a manual path when you need a subfolder.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+        ui.add_space(8.0);
+        if app.available_volumes.is_empty() {
+            empty_state_panel(
+                ui,
+                app.t("没有检测到卷", "No Volumes Detected"),
+                app.t(
+                    "仍可手动输入任意目录作为扫描目标。",
+                    "You can still enter any folder manually as the scan target.",
+                ),
+            );
+        } else {
+            let volumes = app.available_volumes.clone();
+            ui.horizontal_wrapped(|ui| {
+                for volume in volumes {
+                    let used = volume.total_bytes.saturating_sub(volume.available_bytes);
+                    let selected = app.root_input == volume.mount_point;
+                    let label = format!(
+                        "{}  {} / {}",
+                        short_volume_label(&volume),
+                        format_bytes(used),
+                        format_bytes(volume.total_bytes)
+                    );
+                    let response = ui
+                        .add_enabled_ui(!app.scan_active(), |ui| {
+                            sized_selectable(ui, 156.0, selected, label.clone())
+                        })
+                        .inner
+                        .on_hover_text(format!(
+                            "{}\n{} {}\n{} {}",
+                            volume.name,
+                            app.t("已用", "Used"),
+                            format_bytes(used),
+                            app.t("总量", "Total"),
+                            format_bytes(volume.total_bytes)
+                        ));
+                    if response.clicked() {
+                        app.start_scan_for_root(volume.mount_point.clone());
+                    }
+                }
+            });
+        }
+
+        ui.add_space(14.0);
+        ui.label(egui::RichText::new(app.t("手动目录（可选）", "Manual path (optional)")).strong());
+        ui.add_space(6.0);
+        let root_hint = app
+            .t("例如 D:\\Projects", "For example D:\\Projects")
+            .to_string();
+        ui.add_sized(
+            [ui.available_width().min(420.0), CONTROL_HEIGHT],
+            egui::TextEdit::singleline(&mut app.root_input)
+                .desired_width(420.0)
+                .hint_text(root_hint),
+        );
+
+        ui.add_space(14.0);
+        ui.label(egui::RichText::new(app.t("扫描模式", "Scan Mode")).strong());
+        ui.label(
+                egui::RichText::new(app.t(
+                    "三种模式都会完整扫描当前范围，差异只在扫描节奏和界面刷新方式。",
+                    "All three modes scan the same scope. The only difference is pacing and UI update cadence.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+        ui.add_space(8.0);
+        ui.add_enabled_ui(!app.scan_active(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for mode in [ScanMode::Quick, ScanMode::Deep, ScanMode::LargeDisk] {
+                    let response = sized_selectable(
+                        ui,
+                        190.0,
+                        app.scan_mode == mode,
+                        app.scan_mode_title(mode),
+                    )
+                    .on_hover_text(app.scan_mode_description(mode));
+                    if response.clicked() {
+                        app.set_scan_mode(mode);
+                    }
+                }
+            });
+        });
+        ui.add_space(10.0);
+        tone_banner(
+            ui,
+            app.scan_mode_title(app.scan_mode),
+            app.scan_mode_description(app.scan_mode),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(app.scan_mode_note())
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+        );
+
+        if let Some((used, free, _)) = app.volume_numbers() {
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                compact_stat_chip(ui, app.t("磁盘已用", "Used"), &format_bytes(used));
+                compact_stat_chip(ui, app.t("磁盘可用", "Free"), &format_bytes(free));
+                if let Some(ratio) = app.scanned_coverage_ratio() {
+                    compact_stat_chip(
+                        ui,
+                        app.t("扫描覆盖率", "Coverage"),
+                        &format!("{:.0}%", ratio * 100.0),
+                    );
+                }
+                compact_stat_chip(
+                    ui,
+                    app.t("文件", "Files"),
+                    &format_count(app.summary.scanned_files),
+                );
+            });
+        }
+
+        ui.add_space(14.0);
+        let scan_only_response = ui
+            .add_enabled_ui(!app.scan_active(), |ui| {
+                sized_button(ui, ui.available_width(), app.t("仅执行扫描", "Scan Only"))
+            })
+            .inner
+            .on_hover_text(app.t(
+                "按当前路径和模式直接开始扫描。",
+                "Start a scan directly with the current path and mode.",
+            ));
+        if scan_only_response.clicked() {
+            app.start_scan();
+        }
+    });
+}
+
+
+// END dashboard_impl.rs
+
+// BEGIN advanced_pages.rs
+
+use super::*;
+
+pub(super) fn ui_history(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    page_header(
+        ui,
+        app.t("DirOtter 工作台", "DirOtter Workspace"),
+        app.t("历史快照", "History"),
+        app.t(
+            "按时间回看扫描快照，所有数字都改为适合人读的格式。",
+            "Review previous scans with human-friendly formatting and clearer snapshot summaries.",
+        ),
+    );
+    ui.add_space(8.0);
+    if ui.button(app.t("刷新列表", "Refresh")).clicked() {
+        let _ = app.reload_history();
+    }
+
+    let selected = app
+        .selected_history_id
+        .and_then(|id| app.history.iter().find(|h| h.id == id))
+        .cloned();
+
+    if let Some(h) = selected {
+        surface_panel(ui, |ui| {
+            ui.label(
+                egui::RichText::new(app.t("快照详情", "Snapshot Detail"))
+                    .text_style(egui::TextStyle::Name("title".into())),
+            );
+            ui.add_space(8.0);
+            stat_row(
+                ui,
+                app.t("编号", "ID"),
+                &h.id.to_string(),
+                &truncate_middle(&h.root, 44),
+            );
+            stat_row(
+                ui,
+                app.t("文件", "Files"),
+                &format_count(h.scanned_files),
+                app.t("扫描到的文件数", "File count"),
+            );
+            stat_row(
+                ui,
+                app.t("目录", "Dirs"),
+                &format_count(h.scanned_dirs),
+                app.t("扫描到的目录数", "Directory count"),
+            );
+            stat_row(
+                ui,
+                app.t("体积", "Bytes"),
+                &format_bytes(h.bytes_observed),
+                app.t("历史扫描到的文件体积", "Historical scanned file size"),
+            );
+            stat_row(
+                ui,
+                app.t("错误", "Errors"),
+                &format_count(h.error_count),
+                &h.created_at.to_string(),
+            );
+        });
+        ui.separator();
+    }
+
+    egui::ScrollArea::vertical().show_rows(ui, 22.0, app.history.len(), |ui, range| {
+        for i in range {
+            if let Some(h) = app.history.get(i) {
+                let label = format!(
+                    "#{} {}  |  {} {}  |  {} {}  |  {} {}",
+                    h.id,
+                    truncate_middle(&h.root, 34),
+                    format_count(h.scanned_files),
+                    app.t("文件", "files"),
+                    format_count(h.scanned_dirs),
+                    app.t("目录", "dirs"),
+                    format_bytes(h.bytes_observed),
+                    app.t("扫描体积", "scanned")
+                );
+                if ui
+                    .selectable_label(app.selected_history_id == Some(h.id), label)
+                    .clicked()
+                {
+                    app.selected_history_id = Some(h.id);
+                    if let Ok(e) = app.cache.list_errors_by_history(h.id) {
+                        app.errors = e;
+                    }
+                    app.selection.source = Some(SelectionSource::History);
+                    app.execution_report = None;
+                }
+            }
+        }
+    });
+}
+
+pub(super) fn ui_errors(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    page_header(
+        ui,
+        app.t("DirOtter 工作台", "DirOtter Workspace"),
+        app.t("错误中心", "Errors"),
+        app.t(
+            "保留错误分类与路径跳转，但避免把原始状态直接堆叠成噪声。",
+            "Keep error categories and jump actions while reducing raw-text noise.",
+        ),
+    );
+    ui.add_space(8.0);
+    let mut user = 0usize;
+    let mut transient = 0usize;
+    let mut system = 0usize;
+    for e in &app.errors {
+        match e.kind {
+            ErrorKind::User => user += 1,
+            ErrorKind::Transient => transient += 1,
+            ErrorKind::System => system += 1,
+        }
+    }
+    ui.columns(3, |columns| {
+        metric_card(
+            &mut columns[0],
+            app.t("用户", "User"),
+            &format_count(user as u64),
+            app.t("用户输入或权限问题", "Input or permission issues"),
+            warning_amber(),
+        );
+        metric_card(
+            &mut columns[1],
+            app.t("瞬时", "Transient"),
+            &format_count(transient as u64),
+            app.t("可重试的瞬时失败", "Retryable transient failures"),
+            info_blue(),
+        );
+        metric_card(
+            &mut columns[2],
+            app.t("系统", "System"),
+            &format_count(system as u64),
+            app.t("系统级故障", "System-level failures"),
+            danger_red(),
+        );
+    });
+
+    let filter_label = app.t("全部", "All").to_string();
+    let user_filter_label = app.t("用户", "User").to_string();
+    let transient_filter_label = app.t("瞬时", "Transient").to_string();
+    let system_filter_label = app.t("系统", "System").to_string();
+    ui.add_space(10.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(app.t("过滤", "Filter"));
+        ui.selectable_value(&mut app.error_filter, ErrorFilter::All, filter_label);
+        ui.selectable_value(&mut app.error_filter, ErrorFilter::User, user_filter_label);
+        ui.selectable_value(
+            &mut app.error_filter,
+            ErrorFilter::Transient,
+            transient_filter_label,
+        );
+        ui.selectable_value(
+            &mut app.error_filter,
+            ErrorFilter::System,
+            system_filter_label,
+        );
+    });
+
+    let filtered: Vec<_> = app
+        .errors
+        .iter()
+        .filter(|e| match app.error_filter {
+            ErrorFilter::All => true,
+            ErrorFilter::User => matches!(e.kind, ErrorKind::User),
+            ErrorFilter::Transient => matches!(e.kind, ErrorKind::Transient),
+            ErrorFilter::System => matches!(e.kind, ErrorKind::System),
+        })
+        .cloned()
+        .collect();
+
+    ui.add_space(10.0);
+    let list_height = ui.available_height().max(240.0);
+    surface_panel(ui, |ui| {
+        ui.set_min_height(list_height);
+        ui.set_min_width(ui.available_width());
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                for e in &filtered {
+                    let is_selected = app.selection.selected_path.as_deref() == Some(&e.path);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            let mut frame = surface_frame(ui);
+                            if is_selected {
+                                frame = frame.stroke(egui::Stroke::new(1.5, river_teal()));
+                            }
+                            show_frame_with_relaxed_clip(ui, frame, |ui| {
+                                if ui
+                                    .add_sized(
+                                        [ui.available_width(), 24.0],
+                                        egui::SelectableLabel::new(
+                                            is_selected,
+                                            format!(
+                                                "[{:?}] {}",
+                                                e.kind,
+                                                truncate_middle(&e.path, 68)
+                                            ),
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    app.select_path(&e.path, SelectionSource::Error);
+                                }
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    if ui.button(app.t("选中查看", "Inspect")).clicked() {
+                                        app.select_path(&e.path, SelectionSource::Error);
+                                    }
+                                });
+                                ui.add_space(6.0);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&e.reason)
+                                            .text_style(egui::TextStyle::Small)
+                                            .color(ui.visuals().weak_text_color()),
+                                    )
+                                    .wrap(),
+                                );
+                            });
+                        },
+                    );
+                    ui.add_space(8.0);
+                }
+            });
+    });
+}
+
+
+// END advanced_pages.rs
+
+// BEGIN result_pages.rs
+
+use super::*;
+
+pub(super) fn ui_current_scan(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    page_header(
+            ui,
+            app.t("DirOtter 工作台", "DirOtter Workspace"),
+            app.t("实时扫描", "Live Scan"),
+            app.t(
+                "这里展示的是“扫描中已发现的最大项”，不是最终结果。内部性能指标已移到诊断页。",
+                "This page shows the largest items discovered so far, not the final result. Internal performance counters have been moved to Diagnostics.",
+            ),
+        );
+    ui.add_space(8.0);
+    if app.scan_finalizing() {
+        tone_banner(
+                ui,
+                app.t("正在整理最终结果", "Finalizing Final Results"),
+                app.t(
+                    "目录遍历已经结束，当前正在后台保存快照、写入历史并生成清理建议。界面应保持可操作，完成后会自动切到正常完成态。",
+                    "Directory traversal has finished. DirOtter is now saving the snapshot, writing history, and preparing cleanup suggestions in the background. The UI should stay responsive and will switch to the normal completed state automatically.",
+                ),
+            );
+        ui.add_space(10.0);
+    } else if app.scan_active() {
+        let current_path = app
+            .scan_current_path
+            .as_deref()
+            .map(|path| truncate_middle(path, 84))
+            .unwrap_or_else(|| {
+                app.t("正在准备扫描路径…", "Preparing scan path...")
+                    .to_string()
+            });
+        tone_banner(
+                ui,
+                app.t("这是实时增量视图", "This Is a Live Incremental View"),
+                &format!(
+                    "{} {}\n{}",
+                    app.t(
+                        "当前结果会持续更新，最终结论请以扫描完成后的概览页为准。正在处理：",
+                        "Results keep updating while the scan runs. Use Overview after completion for the final summary. Working on:",
+                    ),
+                    current_path,
+                    app.scan_health_summary()
+                ),
+            );
+        ui.add_space(10.0);
+    }
+
+    ui.columns(5, |columns| {
+        let cards = app.summary_cards();
+        let accents = [
+            river_teal(),
+            info_blue(),
+            success_green(),
+            egui::Color32::from_rgb(0x5F, 0x8D, 0x96),
+            danger_red(),
+        ];
+        for (idx, column) in columns.iter_mut().enumerate() {
+            if let Some(card) = cards.get(idx) {
+                metric_card(column, &card.0, &card.1, &card.2, accents[idx]);
+            }
+        }
+    });
+
+    ui.add_space(12.0);
+    let ranked_dirs = app.current_ranked_dirs(12);
+    let (live_files_title, live_files_subtitle, ranked_files) =
+        app.contextual_ranked_files_panel(12);
+    let live_folders_title = app
+        .t("当前最大的文件夹", "Largest Folders Found So Far")
+        .to_string();
+    let live_folders_subtitle = app
+        .t(
+            "扫描还未结束时，这里会持续更新。",
+            "This keeps updating until the scan finishes.",
+        )
+        .to_string();
+    ui.columns(2, |columns| {
+        render_ranked_size_list(
+            &mut columns[0],
+            &live_folders_title,
+            &live_folders_subtitle,
+            &ranked_dirs,
+            app.summary.bytes_observed,
+            &mut app.selection,
+            &mut app.execution_report,
+        );
+        render_ranked_size_list(
+            &mut columns[1],
+            &live_files_title,
+            &live_files_subtitle,
+            &ranked_files,
+            app.summary.bytes_observed,
+            &mut app.selection,
+            &mut app.execution_report,
+        );
+    });
+
+    ui.add_space(12.0);
+    surface_panel(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(app.t("最近扫描到的文件", "Recently Scanned Files"))
+                    .text_style(egui::TextStyle::Name("title".into())),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {}",
+                        format_count(app.live_files.len() as u64),
+                        app.t("条", "rows")
+                    ))
+                    .color(ui.visuals().weak_text_color()),
+                );
+            });
+        });
+        ui.add_space(6.0);
+        let rows = app.live_files.len();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show_rows(ui, 28.0, rows, |ui, row_range| {
+                for row in row_range {
+                    if let Some((path, size)) = app.live_files.get(row).cloned() {
+                        let row_width = (ui.available_width() - 120.0).max(120.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_sized(
+                                    [row_width, 24.0],
+                                    egui::SelectableLabel::new(
+                                        app.selection_matches_path(path.as_ref()),
+                                        truncate_middle(path.as_ref(), 92),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                app.select_path(path.as_ref(), SelectionSource::Table);
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(format_bytes(size));
+                                },
+                            );
+                        });
+                    }
+                }
+            });
+    });
+}
+
+pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    page_header(
+            ui,
+            app.t("DirOtter 工作台", "DirOtter Workspace"),
+            app.t("结果视图", "Result View"),
+            app.t(
+                "这里只展示扫描完成后的结果，不跟实时扫描绑定。每次只看当前目录的直接子项，再按需逐层进入。",
+                "This page only shows completed scan results. It is not bound to live scanning. Inspect one directory level at a time and drill in only when needed.",
+            ),
+        );
+    ui.add_space(8.0);
+
+    if app.scan_active() {
+        tone_banner(
+                ui,
+                app.t("Treemap 不参与实时刷新", "Treemap Stays Out of Live Updates"),
+                app.t(
+                    "扫描完成后再生成结果视图，避免 UI 线程、海量节点和布局开销叠加卡顿。",
+                    "The result view is generated only after scan completion, avoiding UI thread churn, huge node counts, and layout overhead piling up together.",
+                ),
+            );
+        return;
+    }
+
+    if app.can_reload_result_store_from_cache() {
+        app.ensure_store_loaded_from_cache();
+    }
+
+    let Some(scope) = app.treemap_focus_target() else {
+        tone_banner(
+                ui,
+                app.t("还没有可用结果", "No Completed Result Yet"),
+                app.t(
+                    "先完成一次扫描后再使用这个结果视图。DirOtter 不会在这里自动载入旧缓存，避免把界面拖慢。",
+                    "Complete a scan first before using this result view. DirOtter does not auto-load old cached results here, so the UI stays responsive.",
+                ),
+            );
+        return;
+    };
+
+    let entries = app.treemap_entries(&scope.path, MAX_TREEMAP_CHILDREN);
+    let selected_dir = app.selected_directory_target();
+    let root_target = app
+        .root_node_id()
+        .and_then(|node_id| app.target_from_node_id(node_id));
+    let scope_total = scope.size_bytes.max(1);
+
+    tone_banner(
+        ui,
+        app.t("轻量结果视图", "Lightweight Result View"),
+        &format!(
+            "{} {}\n{}",
+            app.t("当前目录：", "Current directory:"),
+            truncate_middle(&scope.path, 88),
+            app.t(
+                "只展示直接子项，不递归整树，不做实时布局。",
+                "Only direct children are shown. No whole-tree recursion and no live layout work.",
+            )
+        ),
+    );
+    ui.add_space(10.0);
+
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(
+                app.treemap_focus_path.is_some(),
+                egui::Button::new(app.t("返回上级", "Up One Level")),
+            )
+            .clicked()
+        {
+            app.focus_treemap_parent();
+        }
+
+        if let Some(root) = root_target.clone() {
+            if scope.path != root.path && ui.button(app.t("回到根目录", "Back to Root")).clicked()
+            {
+                app.treemap_focus_path = None;
+                app.select_path(&root.path, SelectionSource::Treemap);
+            }
+        }
+
+        if let Some(target) = selected_dir {
+            if target.path != scope.path
+                && ui
+                    .button(app.t("跳到当前选中目录", "Use Selected Directory"))
+                    .clicked()
+            {
+                app.focus_treemap_path(target.path);
+            }
+        }
+    });
+
+    ui.add_space(10.0);
+    ui.columns(3, |columns| {
+        compact_metric_block(
+            &mut columns[0],
+            app.t("当前层级体积", "Current Level Size"),
+            &format_bytes(scope.size_bytes),
+            app.t("作为本层占比基准", "Used as the local baseline"),
+        );
+        compact_metric_block(
+            &mut columns[1],
+            app.t("直接子项", "Direct Children"),
+            &format_count(entries.len() as u64),
+            app.t("只统计当前目录下一层", "Current directory only"),
+        );
+        compact_metric_block(
+            &mut columns[2],
+            app.t("显示上限", "Display Cap"),
+            &format_count(MAX_TREEMAP_CHILDREN as u64),
+            app.t("避免大目录压垮结果视图", "Keeps large folders responsive"),
+        );
+    });
+
+    ui.add_space(12.0);
+    if entries.is_empty() {
+        tone_banner(
+                ui,
+                app.t("这一层没有可展示的子项", "No Children to Show at This Level"),
+                app.t(
+                    "当前目录可能为空，或缓存结果里还没有可用子节点。",
+                    "This directory may be empty, or the cached result does not currently have child nodes for it.",
+                ),
+            );
+        return;
+    }
+
+    let panel_height = ui.available_height().max(320.0);
+    surface_panel(ui, |ui| {
+        ui.set_min_height(panel_height);
+        ui.label(
+            egui::RichText::new(app.t("目录结果条形图", "Directory Result Bars"))
+                .text_style(egui::TextStyle::Name("title".into())),
+        );
+        ui.label(
+            egui::RichText::new(app.t(
+                "点击条目可联动 Inspector；目录可继续进入下一层。",
+                "Click an item to sync Inspector. Directories can drill into the next level.",
+            ))
+            .text_style(egui::TextStyle::Small)
+            .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(8.0);
+
+        let list_height = (panel_height - 84.0).max(220.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), list_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show_rows(ui, 96.0, entries.len(), |ui, row_range| {
+                        for row in row_range {
+                            let Some(entry) = entries.get(row) else {
+                                continue;
+                            };
+                            let share =
+                                (entry.size_bytes as f32 / scope_total as f32).clamp(0.0, 1.0);
+                            let selected = app.selection_matches_treemap_entry(entry);
+                            let label = format!(
+                                "{} {}",
+                                if matches!(entry.kind, NodeKind::Dir) {
+                                    app.t("目录", "DIR")
+                                } else {
+                                    app.t("文件", "FILE")
+                                },
+                                truncate_middle(entry.name.as_ref(), 56)
+                            );
+                            let subtitle = match entry.kind {
+                                NodeKind::Dir => format!(
+                                    "{} {}  |  {} {}",
+                                    format_count(entry.file_count),
+                                    app.t("文件", "files"),
+                                    format_count(entry.dir_count.saturating_sub(1)),
+                                    app.t("子目录", "subdirs")
+                                ),
+                                NodeKind::File => app.t("文件项", "File item").to_string(),
+                            };
+
+                            surface_panel(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add_sized(
+                                            [
+                                                (ui.available_width() - 220.0).max(160.0),
+                                                CONTROL_HEIGHT,
+                                            ],
+                                            egui::SelectableLabel::new(selected, label.clone()),
+                                        )
+                                        .clicked()
+                                    {
+                                        app.select_node(entry.node_id, SelectionSource::Treemap);
+                                    }
+                                    if matches!(entry.kind, NodeKind::Dir)
+                                        && ui.button(app.t("进入下一层", "Open Level")).clicked()
+                                    {
+                                        app.focus_treemap_node(entry.node_id);
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(format_bytes(entry.size_bytes));
+                                        },
+                                    );
+                                });
+                                ui.add_space(4.0);
+                                ui.add(
+                                    egui::ProgressBar::new(share)
+                                        .desired_width(ui.available_width())
+                                        .fill(if matches!(entry.kind, NodeKind::Dir) {
+                                            river_teal()
+                                        } else {
+                                            info_blue()
+                                        })
+                                        .text(format!("{:.1}%", share * 100.0)),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(subtitle)
+                                        .text_style(egui::TextStyle::Small)
+                                        .color(ui.visuals().weak_text_color()),
+                                );
+                            });
+                            ui.add_space(8.0);
+                        }
+                    });
+            },
+        );
+    });
+}
+
+
+// END result_pages.rs
+
+// BEGIN settings_pages.rs
+
+use super::*;
+
+pub(super) fn ui_diagnostics(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    page_header(
+        ui,
+        app.t("DirOtter 工作台", "DirOtter Workspace"),
+        app.t("诊断导出", "Diagnostics"),
+        app.t(
+            "保留结构化 JSON，但给导出动作更明确的位置和说明。",
+            "Keep the structured JSON, but surface export actions and explanation more clearly.",
+        ),
+    );
+    ui.add_space(8.0);
+    let mut refresh_diag = false;
+    let mut export_bundle = false;
+    let mut save_snapshot = false;
+    let mut record_history = false;
+    let mut export_error_csv = false;
+    let mut optimize_app_memory = false;
+    let mut clean_interrupted_cleanup_area = false;
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .button(app.t("刷新诊断", "Refresh diagnostics"))
+            .clicked()
+        {
+            refresh_diag = true;
+        }
+        if ui
+            .button(app.t("导出诊断包", "Export diagnostics bundle"))
+            .clicked()
+        {
+            export_bundle = true;
+        }
+        if ui
+            .add_enabled_ui(app.store.is_some(), |ui| {
+                sized_button(
+                    ui,
+                    170.0,
+                    app.t("手动保存当前快照", "Save Current Snapshot"),
+                )
+            })
+            .inner
+            .clicked()
+        {
+            save_snapshot = true;
+        }
+        if ui
+            .add_enabled_ui(app.summary.bytes_observed > 0, |ui| {
+                sized_button(ui, 188.0, app.t("手动记录扫描摘要", "Record Scan Summary"))
+            })
+            .inner
+            .clicked()
+        {
+            record_history = true;
+        }
+        if ui
+            .button(app.t("手动导出错误 CSV", "Export Errors CSV"))
+            .clicked()
+        {
+            export_error_csv = true;
+        }
+    });
+    ui.add_space(10.0);
+    settings_section(
+            ui,
+            app.t("高级维护", "Advanced Maintenance"),
+            app.t(
+                "这些动作主要用于诊断和恢复，不属于普通用户的一键提速主路径。",
+                "These actions are mainly for diagnostics and recovery. They are not part of the normal one-tap speed path for everyday users.",
+            ),
+            |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled_ui(!app.scan_active() && !app.delete_active(), |ui| {
+                            sized_button(
+                                ui,
+                                220.0,
+                                app.t("优化 DirOtter 内存占用", "Optimize DirOtter Memory"),
+                            )
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        optimize_app_memory = true;
+                    }
+                    if ui
+                        .add_enabled_ui(!app.scan_active() && !app.delete_active(), |ui| {
+                            sized_button(
+                                ui,
+                                260.0,
+                                app.t(
+                                    "清理异常中断的临时删除区",
+                                    "Clean Interrupted Cleanup Area",
+                                ),
+                            )
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        clean_interrupted_cleanup_area = true;
+                    }
+                });
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(app.t(
+                        "当快速清理缓存在后台删除完成前被异常中断时，内部 staging 临时区可能会留下待删内容。这个动作只负责把这些残留项清掉。",
+                        "If a fast cache cleanup is interrupted before background deletion finishes, the internal staging area may keep leftover temporary items. This action only removes those leftovers.",
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+            },
+        );
+    if let Some((message, success)) = app.maintenance_feedback.as_ref() {
+        ui.add_space(8.0);
+        tone_banner(
+            ui,
+            if *success {
+                app.t("已完成", "Done")
+            } else {
+                app.t("操作失败", "Action Failed")
+            },
+            message,
+        );
+    }
+    if refresh_diag {
+        app.refresh_diagnostics();
+    }
+    if export_bundle {
+        let mut manifest = default_manifest();
+        manifest.diagnostics_payload_file = "dirotter_diagnostics.json".to_string();
+        manifest.summary_report_file = "dirotter_summary.json".to_string();
+        manifest.duplicate_report_file = "dirotter_duplicates.csv".to_string();
+        manifest.error_report_file = "dirotter_errors.csv".to_string();
+        let _ = export_diagnostics_bundle(
+            &app.diagnostics_json,
+            "dirotter_diagnostics.json",
+            &manifest,
+        );
+        let _ =
+            export_diagnostics_archive(&app.diagnostics_json, "diagnostics", "dirotter", &manifest);
+        app.set_maintenance_feedback(
+            app.t("已导出诊断包。", "Exported the diagnostics bundle.")
+                .to_string(),
+            true,
+        );
+    }
+    if save_snapshot {
+        app.save_current_snapshot_manually();
+    }
+    if record_history {
+        app.record_current_history_manually();
+    }
+    if export_error_csv {
+        app.export_errors_csv_manually();
+    }
+    if optimize_app_memory {
+        app.release_dir_otter_memory();
+    }
+    if clean_interrupted_cleanup_area {
+        app.purge_staging_manually();
+    }
+    ui.separator();
+    let panel_width = ui.available_width();
+    let viewport_height = ui.ctx().input(|i| i.screen_rect().height());
+    let editor_height = (viewport_height - TOOLBAR_HEIGHT - STATUSBAR_HEIGHT - 220.0).max(420.0);
+    surface_panel(ui, |ui| {
+        ui.set_min_width(panel_width);
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), editor_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::both()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            [ui.available_width().max(320.0), editor_height],
+                            egui::TextEdit::multiline(&mut app.diagnostics_json)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .code_editor()
+                                .interactive(false),
+                        );
+                    });
+            },
+        );
+    });
+}
+
+pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &egui::Context) {
+    page_header(
+        ui,
+        app.t("DirOtter 工作台", "DirOtter Workspace"),
+        app.t("偏好设置", "Settings"),
+        app.t(
+            "让 DirOtter 保持冷静、低对比、长时间可用的工作状态。",
+            "Keep DirOtter calm, low-contrast, and comfortable for long sessions.",
+        ),
+    );
+    ui.add_space(10.0);
+    tone_banner(
+            ui,
+            app.t("舒适优先的工作台", "A Comfort-First Workspace"),
+            app.t(
+                "语言、主题和字体回退都会立即生效。这里的目标不是“更花哨”，而是让长时间浏览目录树时更稳定、更耐看。",
+                "Language, theme, and font fallback all apply immediately. The goal here is not flashy UI, but a steadier workspace for long file-tree sessions.",
+            ),
+        );
+    ui.add_space(14.0);
+    settings_section(
+            ui,
+            app.t("常用设置", "Common Settings"),
+            app.t(
+                "主流设置页会把高频项放在最上面，并保持分组稳定、可预期。",
+                "Mainstream settings pages place high-frequency controls first and keep groups stable and predictable.",
+            ),
+            |ui| {
+                settings_row(
+                    ui,
+                    app.t("界面语言", "Interface Language"),
+                    app.t(
+                        "手动选择会覆盖系统语言检测。",
+                        "Manual selection overrides automatic locale detection.",
+                    ),
+                    |ui| {
+                        let mut selected_language = app.language;
+                        surface_frame(ui).show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.vertical(|ui| {
+                                egui::ComboBox::from_id_source("settings.language")
+                                    .width(ui.available_width().min(320.0))
+                                    .selected_text(format!(
+                                        "{} ({})",
+                                        lang_native_label(selected_language),
+                                        lang_setting_value(selected_language).to_uppercase(),
+                                    ))
+                                    .truncate()
+                                    .show_ui(ui, |ui| {
+                                        for &lang in supported_languages() {
+                                            ui.selectable_value(
+                                                &mut selected_language,
+                                                lang,
+                                                lang_picker_label(lang),
+                                            );
+                                        }
+                                    });
+                            });
+                        });
+                        if selected_language != app.language {
+                            app.set_language(selected_language);
+                        }
+                    },
+                );
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(14.0);
+                settings_row(
+                    ui,
+                    app.t("界面主题", "Interface Theme"),
+                    app.t(
+                        "深色更适合长时间分析；浅色则保持低对比和柔和明度。",
+                        "Dark is better for long analysis sessions; light stays restrained and low contrast.",
+                    ),
+                    |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            if ui
+                                .add_sized(
+                                    [132.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(
+                                        !app.theme_dark,
+                                        app.t("浅色", "Light"),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                app.theme_dark = false;
+                                app.apply_theme(ctx);
+                                let _ = app.cache.set_setting("theme", "light");
+                            }
+                            if ui
+                                .add_sized(
+                                    [132.0, CONTROL_HEIGHT],
+                                    egui::SelectableLabel::new(
+                                        app.theme_dark,
+                                        app.t("深色", "Dark"),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                app.theme_dark = true;
+                                app.apply_theme(ctx);
+                                let _ = app.cache.set_setting("theme", "dark");
+                            }
+                        });
+                    },
+                );
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(14.0);
+                settings_row(
+                    ui,
+                    app.t("高级工具", "Advanced Tools"),
+                    app.t(
+                        "把历史、错误和诊断页面收进二级入口。普通清理流程默认不需要它们。",
+                        "Keeps history, errors, and diagnostics behind a secondary entry. Most cleanup flows do not need them by default.",
+                    ),
+                    |ui| {
+                        let button_width = 168.0;
+                        if ui
+                            .add_sized(
+                                [button_width, CONTROL_HEIGHT],
+                                egui::SelectableLabel::new(
+                                    app.advanced_tools_enabled,
+                                    if app.advanced_tools_enabled {
+                                        app.t("已开启", "Enabled")
+                                    } else {
+                                        app.t("已隐藏", "Hidden")
+                                    },
+                                ),
+                            )
+                            .clicked()
+                        {
+                            app.set_advanced_tools_enabled(!app.advanced_tools_enabled);
+                        }
+                    },
+                );
+            },
+        );
+
+    ui.add_space(14.0);
+    settings_section(
+            ui,
+            app.t("视觉方向", "Visual Direction"),
+            app.t(
+                "这一组只保留品牌语义和当前状态，不把说明文字拆成零散卡片。",
+                "This section keeps brand semantics and current state together instead of splitting them into disconnected cards.",
+            ),
+            |ui| {
+                color_note_row(
+                    ui,
+                    river_teal(),
+                    app.t("River Teal", "River Teal"),
+                    app.t(
+                        "主品牌色，用于主按钮、选中与重点数据。",
+                        "Primary brand accent for key actions, selection, and emphasis.",
+                    ),
+                );
+                ui.add_space(10.0);
+                color_note_row(
+                    ui,
+                    if app.theme_dark {
+                        egui::Color32::from_rgb(0x18, 0x22, 0x27)
+                    } else {
+                        egui::Color32::from_rgb(0xEE, 0xF1, 0xF0)
+                    },
+                    app.t("基础面板", "Base Surfaces"),
+                    app.t(
+                        "保持低对比、长时间查看不刺眼。",
+                        "Kept low-contrast so long sessions stay easy on the eyes.",
+                    ),
+                );
+                ui.add_space(10.0);
+                color_note_row(
+                    ui,
+                    sand_accent(),
+                    app.t("暖色辅助", "Warm Accent"),
+                    app.t(
+                        "只做轻微平衡，不大面积出现。",
+                        "Used sparingly to soften the palette, not dominate it.",
+                    ),
+                );
+                ui.add_space(14.0);
+                tone_banner(
+                    ui,
+                    app.t("当前模式", "Current Mode"),
+                    if app.theme_dark {
+                        app.t(
+                            "深色主题已启用：更适合长时间扫描和对比文件体积。",
+                            "Dark theme is enabled: better for extended scanning and file-size comparison.",
+                        )
+                    } else {
+                        app.t(
+                            "浅色主题已启用：保持低对比和柔和明度，避免纯白带来的刺眼感。",
+                            "Light theme is enabled: low contrast and softer luminance to avoid harsh white surfaces.",
+                        )
+                    },
+                );
+            },
+        );
+
+    ui.add_space(14.0);
+    settings_section(
+            ui,
+            app.t("本地化说明", "Localization Notes"),
+            app.t(
+                "把与语言相关的规则放在一起，减少用户在不同卡片间来回找解释。",
+                "Keep language-related rules together so people do not have to hunt across separate cards.",
+            ),
+            |ui| {
+                ui.label(app.t(
+                    "应用会优先加载系统中的多脚本字体回退（Windows 优先 Microsoft YaHei / DengXian / Yu Gothic / Malgun / Nirmala / Leelawadee），尽量避免中文、日文、韩文、印地语、泰语等标签显示为方框。",
+                    "The app now prefers multi-script system fallback fonts (Windows prioritizes Microsoft YaHei, DengXian, Yu Gothic, Malgun, Nirmala, and Leelawadee) to reduce tofu boxes across CJK, Indic, and Thai labels.",
+                ));
+                ui.add_space(8.0);
+                ui.label(app.t(
+                    "首次启动会根据系统语言环境识别已接入的 19 种语言；这里的手动选择仍然会覆盖自动检测结果。",
+                    "The first launch can now infer all 19 supported languages from the system locale, and the manual choice here still overrides auto-detection.",
+                ));
+            },
+        );
+
+    ui.add_space(14.0);
+    settings_section(
+            ui,
+            app.t("品牌含义", "Why DirOtter"),
+            app.t(
+                "把品牌语义单独留成一个说明章节，而不是塞进控制区旁边。",
+                "Keep brand meaning in its own explanatory section instead of squeezing it beside controls.",
+            ),
+            |ui| {
+                ui.label(app.t(
+                    "Dir 指 directory，Otter 借用水獭聪明、灵活、善于整理的联想。它更像一个冷静探索存储结构的分析工具，而不是只会“清理垃圾”的工具。",
+                    "Dir points to directories, while Otter brings a clever, tidy, exploratory character. The product should feel like a calm storage analyzer, not a noisy junk cleaner.",
+                ));
+            },
+        );
+}
+
+
+// END settings_pages.rs
+
+// BEGIN cleanup.rs
+
+use crate::{
+    path_within_scope, SelectedTarget, MAX_BLOCKED_ITEMS_PER_CATEGORY,
+    MAX_CLEANUP_ITEMS_PER_CATEGORY, MAX_CLEANUP_TOTAL_ITEMS, MIN_CACHE_DIR_BYTES,
+    MIN_CLEANUP_BYTES,
+};
+use dirotter_actions::ExecutionMode;
+use dirotter_core::{NodeKind, NodeStore, RiskLevel};
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum CleanupCategory {
+    Cache,
+    Downloads,
+    Video,
+    Archive,
+    Installer,
+    Image,
+    System,
+    Other,
+}
+
+#[derive(Clone)]
+pub(crate) struct CleanupCandidate {
+    pub(crate) target: SelectedTarget,
+    pub(crate) category: CleanupCategory,
+    pub(crate) risk: RiskLevel,
+    pub(crate) cleanup_score: f32,
+    pub(crate) unused_days: Option<u64>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CleanupCategorySummary {
+    pub(crate) category: CleanupCategory,
+    pub(crate) total_bytes: u64,
+    pub(crate) reclaimable_bytes: u64,
+    pub(crate) blocked_bytes: u64,
+    pub(crate) item_count: usize,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct CleanupAnalysis {
+    pub(crate) reclaimable_bytes: u64,
+    pub(crate) quick_clean_bytes: u64,
+    pub(crate) categories: Vec<CleanupCategorySummary>,
+    pub(crate) items: Vec<CleanupCandidate>,
+}
+
+pub(crate) fn cleanup_category_for_path(path: &str, kind: NodeKind) -> CleanupCategory {
+    let lower = path.to_ascii_lowercase();
+    let extension = PathBuf::from(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!(".{}", ext.to_ascii_lowercase()))
+        .unwrap_or_default();
+
+    if is_system_path(&lower) {
+        return CleanupCategory::System;
+    }
+    if is_cache_path(&lower, kind) {
+        return CleanupCategory::Cache;
+    }
+    if lower.contains("\\downloads\\") || lower.ends_with("\\downloads") {
+        return CleanupCategory::Downloads;
+    }
+    if matches!(
+        extension.as_str(),
+        ".mp4" | ".mkv" | ".avi" | ".mov" | ".wmv" | ".flv" | ".webm"
+    ) {
+        return CleanupCategory::Video;
+    }
+    if matches!(extension.as_str(), ".zip" | ".rar" | ".7z" | ".tar" | ".gz") {
+        return CleanupCategory::Archive;
+    }
+    if matches!(extension.as_str(), ".exe" | ".msi" | ".pkg" | ".dmg") {
+        return CleanupCategory::Installer;
+    }
+    if matches!(
+        extension.as_str(),
+        ".jpg" | ".jpeg" | ".png" | ".gif" | ".bmp" | ".webp" | ".heic"
+    ) {
+        return CleanupCategory::Image;
+    }
+    CleanupCategory::Other
+}
+
+pub(crate) fn cleanup_risk_for_path(path: &str, category: CleanupCategory) -> RiskLevel {
+    let lower = path.to_ascii_lowercase();
+    if is_system_path(&lower)
+        || lower.ends_with("\\hiberfil.sys")
+        || lower.ends_with("\\pagefile.sys")
+        || lower.ends_with("\\swapfile.sys")
+    {
+        RiskLevel::High
+    } else if category == CleanupCategory::Cache {
+        RiskLevel::Low
+    } else if lower.contains("\\appdata\\") {
+        RiskLevel::Medium
+    } else {
+        RiskLevel::Low
+    }
+}
+
+pub(crate) fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
+    let mut cache_dirs: Vec<&dirotter_core::Node> = store
+        .nodes
+        .iter()
+        .filter(|node| {
+            let path = store.node_path(node);
+            node.kind == NodeKind::Dir
+                && is_cache_path(&path.to_ascii_lowercase(), node.kind)
+                && node.size_subtree.max(node.size_self) >= MIN_CACHE_DIR_BYTES
+        })
+        .collect();
+    cache_dirs.sort_by(|a, b| {
+        store
+            .node_path(a)
+            .len()
+            .cmp(&store.node_path(b).len())
+            .then_with(|| b.size_subtree.cmp(&a.size_subtree))
+    });
+
+    let mut cache_scope_paths: Vec<String> = Vec::new();
+    let mut category_candidates: HashMap<CleanupCategory, Vec<CleanupCandidate>> = HashMap::new();
+
+    for node in cache_dirs {
+        let node_path = store.node_path(node);
+        if cache_scope_paths
+            .iter()
+            .any(|scope| path_within_scope(node_path, scope))
+        {
+            continue;
+        }
+
+        cache_scope_paths.push(node_path.to_string());
+        let target = SelectedTarget {
+            node_id: Some(node.id),
+            name: store
+                .resolve_string_arc(node.name_id)
+                .unwrap_or_else(|| std::sync::Arc::from("")),
+            path: node.path.clone(),
+            size_bytes: node.size_subtree.max(node.size_self),
+            kind: node.kind,
+            file_count: node.file_count,
+            dir_count: node.dir_count,
+        };
+        let unused_days = cleanup_unused_days(target.path.as_ref());
+        push_ranked_cleanup_candidate(
+            &mut category_candidates,
+            CleanupCandidate {
+                cleanup_score: cleanup_score(
+                    target.size_bytes,
+                    unused_days,
+                    CleanupCategory::Cache,
+                    RiskLevel::Low,
+                ),
+                target,
+                category: CleanupCategory::Cache,
+                risk: RiskLevel::Low,
+                unused_days,
+            },
+        );
+    }
+
+    for node in store
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+    {
+        let node_path = store.node_path(node);
+        if cache_scope_paths
+            .iter()
+            .any(|scope| path_within_scope(node_path, scope))
+        {
+            continue;
+        }
+
+        let category = cleanup_category_for_path(node_path, node.kind);
+        let risk = cleanup_risk_for_path(node_path, category);
+        if category == CleanupCategory::Other && node.size_self < MIN_CLEANUP_BYTES * 4 {
+            continue;
+        }
+        if category != CleanupCategory::System && node.size_self < MIN_CLEANUP_BYTES {
+            continue;
+        }
+
+        let unused_days = if risk == RiskLevel::High {
+            None
+        } else {
+            cleanup_unused_days(node_path)
+        };
+        let score = cleanup_score(node.size_self, unused_days, category, risk);
+        if risk != RiskLevel::High && score < 1.0 {
+            continue;
+        }
+
+        push_ranked_cleanup_candidate(
+            &mut category_candidates,
+            CleanupCandidate {
+                target: SelectedTarget {
+                    node_id: Some(node.id),
+                    name: store
+                        .resolve_string_arc(node.name_id)
+                        .unwrap_or_else(|| std::sync::Arc::from("")),
+                    path: node.path.clone(),
+                    size_bytes: node.size_self,
+                    kind: node.kind,
+                    file_count: node.file_count,
+                    dir_count: node.dir_count,
+                },
+                category,
+                risk,
+                cleanup_score: score,
+                unused_days,
+            },
+        );
+    }
+
+    let mut items: Vec<CleanupCandidate> = category_candidates.into_values().flatten().collect();
+    items.sort_by(|a, b| {
+        rank_cleanup_candidate(b)
+            .cmp(&rank_cleanup_candidate(a))
+            .then_with(|| cleanup_sort_priority(a.category).cmp(&cleanup_sort_priority(b.category)))
+            .then_with(|| a.target.path.cmp(&b.target.path))
+    });
+    if items.len() > MAX_CLEANUP_TOTAL_ITEMS {
+        items.truncate(MAX_CLEANUP_TOTAL_ITEMS);
+    }
+
+    let mut category_map: HashMap<CleanupCategory, CleanupCategorySummary> = HashMap::new();
+    let mut reclaimable_bytes = 0u64;
+    let mut quick_clean_bytes = 0u64;
+    for item in &items {
+        let summary = category_map
+            .entry(item.category)
+            .or_insert_with(|| CleanupCategorySummary {
+                category: item.category,
+                total_bytes: 0,
+                reclaimable_bytes: 0,
+                blocked_bytes: 0,
+                item_count: 0,
+            });
+        summary.total_bytes = summary.total_bytes.saturating_add(item.target.size_bytes);
+        summary.item_count += 1;
+        if item.risk == RiskLevel::High {
+            summary.blocked_bytes = summary.blocked_bytes.saturating_add(item.target.size_bytes);
+        } else {
+            summary.reclaimable_bytes = summary
+                .reclaimable_bytes
+                .saturating_add(item.target.size_bytes);
+            reclaimable_bytes = reclaimable_bytes.saturating_add(item.target.size_bytes);
+            if item.category == CleanupCategory::Cache && item.risk == RiskLevel::Low {
+                quick_clean_bytes = quick_clean_bytes.saturating_add(item.target.size_bytes);
+            }
+        }
+    }
+
+    let mut categories: Vec<_> = category_map.into_values().collect();
+    categories.sort_by(|a, b| {
+        b.reclaimable_bytes
+            .cmp(&a.reclaimable_bytes)
+            .then_with(|| b.total_bytes.cmp(&a.total_bytes))
+            .then_with(|| cleanup_sort_priority(a.category).cmp(&cleanup_sort_priority(b.category)))
+    });
+
+    CleanupAnalysis {
+        reclaimable_bytes,
+        quick_clean_bytes,
+        categories,
+        items,
+    }
+}
+
+pub(crate) fn cleanup_delete_mode_for_category(category: CleanupCategory) -> ExecutionMode {
+    if category == CleanupCategory::Cache {
+        ExecutionMode::FastPurge
+    } else {
+        ExecutionMode::RecycleBin
+    }
+}
+
+pub(crate) fn can_fast_purge_path(path: &str) -> bool {
+    let kind = fs::metadata(path)
+        .ok()
+        .map(|meta| {
+            if meta.is_dir() {
+                NodeKind::Dir
+            } else {
+                NodeKind::File
+            }
+        })
+        .unwrap_or(NodeKind::File);
+    let category = cleanup_category_for_path(path, kind);
+    let risk = cleanup_risk_for_path(path, category);
+    category == CleanupCategory::Cache && risk == RiskLevel::Low
+}
+
+fn cleanup_sort_priority(category: CleanupCategory) -> usize {
+    match category {
+        CleanupCategory::Cache => 0,
+        CleanupCategory::Downloads => 1,
+        CleanupCategory::Installer => 2,
+        CleanupCategory::Archive => 3,
+        CleanupCategory::Video => 4,
+        CleanupCategory::Image => 5,
+        CleanupCategory::Other => 6,
+        CleanupCategory::System => 7,
+    }
+}
+
+fn is_system_path(lower_path: &str) -> bool {
+    lower_path.contains("\\windows")
+        || lower_path.contains("\\program files")
+        || lower_path.contains("\\programdata")
+        || lower_path.contains("\\system volume information")
+        || lower_path.contains("\\$recycle.bin")
+}
+
+fn is_cache_path(lower_path: &str, kind: NodeKind) -> bool {
+    lower_path.contains("\\appdata\\local\\temp")
+        || lower_path.contains("\\temp\\")
+        || lower_path.ends_with("\\temp")
+        || lower_path.contains("\\cache\\")
+        || lower_path.ends_with("\\cache")
+        || lower_path.contains("\\tmp\\")
+        || lower_path.ends_with("\\tmp")
+        || (matches!(kind, NodeKind::Dir)
+            && (lower_path.ends_with("\\gpucache")
+                || lower_path.ends_with("\\shadercache")
+                || lower_path.ends_with("\\code cache")
+                || lower_path.ends_with("\\cached data")))
+}
+
+fn cleanup_unused_days(path: &str) -> Option<u64> {
+    let metadata = fs::metadata(path).ok()?;
+    let now = std::time::SystemTime::now();
+    let stamp = metadata
+        .accessed()
+        .ok()
+        .or_else(|| metadata.modified().ok())?;
+    now.duration_since(stamp)
+        .ok()
+        .map(|duration| duration.as_secs() / 86_400)
+}
+
+fn cleanup_score(
+    size_bytes: u64,
+    unused_days: Option<u64>,
+    category: CleanupCategory,
+    risk: RiskLevel,
+) -> f32 {
+    if risk == RiskLevel::High {
+        return -100.0;
+    }
+    let size_gb = size_bytes as f32 / 1024.0 / 1024.0 / 1024.0;
+    let mut score = size_gb * 0.7 + unused_days.unwrap_or(0) as f32 * 0.3;
+    match category {
+        CleanupCategory::Cache => score += 0.5,
+        CleanupCategory::Installer => score += 0.3,
+        CleanupCategory::System => score -= 100.0,
+        _ => {}
+    }
+    score
+}
+
+fn cleanup_candidate_limit(risk: RiskLevel) -> usize {
+    if risk == RiskLevel::High {
+        MAX_BLOCKED_ITEMS_PER_CATEGORY
+    } else {
+        MAX_CLEANUP_ITEMS_PER_CATEGORY
+    }
+}
+
+fn rank_cleanup_candidate(candidate: &CleanupCandidate) -> (i64, i64) {
+    let score_key = (candidate.cleanup_score * 10.0).round() as i64;
+    (score_key, candidate.target.size_bytes as i64)
+}
+
+fn push_ranked_cleanup_candidate(
+    category_candidates: &mut HashMap<CleanupCategory, Vec<CleanupCandidate>>,
+    candidate: CleanupCandidate,
+) {
+    let limit = cleanup_candidate_limit(candidate.risk);
+    let bucket = category_candidates.entry(candidate.category).or_default();
+    bucket.push(candidate);
+    bucket.sort_by(|a, b| {
+        rank_cleanup_candidate(b)
+            .cmp(&rank_cleanup_candidate(a))
+            .then_with(|| a.target.path.cmp(&b.target.path))
+    });
+    if bucket.len() > limit {
+        bucket.truncate(limit);
+    }
+}
+
+
+// END cleanup.rs

@@ -172,8 +172,32 @@ pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
         return;
     }
 
+    if app.delete_active() && app.store.is_none() {
+        tone_banner(
+            ui,
+            app.t("结果视图等待删除同步完成", "Result View Is Waiting For Cleanup Sync"),
+            app.t(
+                "后台删除或结果同步仍在进行。DirOtter 会在同步完成后恢复结果视图，避免把快照载入和结果重建压回 UI 主线程。",
+                "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread.",
+            ),
+        );
+        return;
+    }
+
     if app.can_reload_result_store_from_cache() {
-        app.ensure_store_loaded_from_cache();
+        app.begin_result_store_load_if_needed();
+    }
+
+    if app.result_store_load_active() {
+        tone_banner(
+            ui,
+            app.t("正在后台载入结果快照", "Loading Saved Result Snapshot"),
+            app.t(
+                "DirOtter 正在后台载入已保存的结果快照。准备完成后会自动打开轻量结果视图，不会在当前帧里同步解压或重建整棵结果树。",
+                "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame.",
+            ),
+        );
+        return;
     }
 
     let Some(scope) = app.treemap_focus_target() else {

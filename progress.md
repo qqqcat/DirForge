@@ -1,5 +1,77 @@
 # Progress Log
 
+## 2026-04-04（确认窗完整列表与失败详情卡片）
+- `一键提速` / cleanup 确认窗已改为可滚动列表，全部待处理路径都会以完整路径展示，不再只预览前几项或使用截断路径。
+- Inspector `最近执行` 在存在失败项时已新增可点击详情入口，完整失败路径、失败原因和处理建议统一收口到详情卡片。
+- 外层删除失败 banner 已移除对首条原始失败原因的直接拼接，避免在 Inspector 外层继续显示被截断的失败文本。
+- 已为上述改动补回归测试：
+  - cleanup 确认窗列出全部目标
+  - 最近执行失败详情入口
+  - 失败详情中的完整路径 / 原因 / 建议
+  - 外层失败反馈不再泄露原始失败原因
+- 本轮验证：
+  - `cargo fmt`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo build`：通过
+  - `cargo run -p dirotter-app`：应用已启动，因 GUI 常驻运行在超时后终止
+
+## 2026-04-04（失败详情窗重设计与删除进度回传）
+- 参考 `web-design-guidelines` skill 的最新规则，重新收口了失败详情窗：
+  - 窗口宽度进一步受控，避免内容卡超出屏幕
+  - 关闭动作上移到顶部，避免滚到底部才能关闭
+  - 每个失败项改为整行全宽卡片，路径文本强制换行，不再按内容宽度把卡片撑爆
+- 失败原因展示已改为“本地化失败标题 + 本地化解释 + 建议 + 可选技术细节”，不再把英文原始错误串当主文案。
+- 删除后台线程现已逐项上报进度并主动请求重绘，Inspector 后台任务卡和顶部横幅会持续显示：
+  - 已处理数量
+  - 成功 / 失败数量
+  - 当前处理路径
+- 本轮验证：
+  - `cargo test -p dirotter-actions`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo test --workspace`：通过
+
+## 2026-04-04（失败详情多语言补齐）
+- 已补齐失败详情按钮、标题、说明、失败卡片标题、建议标题，以及 `view_models` 中关联的快速清理/选择操作文案，覆盖全部已支持语言，不再只修补法语/西语。
+- `i18n` 现已对拆分生成字典缺失的键增加补丁层与 legacy fallback，避免 `view_models.rs` 中的新键在部分语言下直接回退成英文。
+- 已新增并保留 `view_models.rs` 英文键覆盖测试，用来持续卡住后续多语言漏翻。
+- 本轮验证：
+  - `cargo fmt`：通过
+  - `cargo test -p dirotter-ui`：通过
+
+## 2026-04-04（删除后结果同步迁出 UI 主线程）
+- 重新定位“一键提速删除时窗口变成 Not Responding”的根因后，已确认问题不在删除执行线程本身，而在删除完成后的结果同步仍压在 `egui::App::update()` 主线程：
+  - 旧实现会在主线程同步重建 `NodeStore`
+  - 同步重算 cleanup analysis，而这一步会再次大量访问文件系统元数据
+  - 同步刷新结果排行与 diagnostics
+- 参考 `egui` 官方最新异步建议，现已把删除完成后的结果同步拆成单独后台阶段：删除线程结束后，UI 进入 `结果同步中`，后台线程重建结果视图、清理建议和相关摘要，完成后再一次性回填界面状态。
+- Inspector 后台任务卡和顶部横幅新增了独立的 `结果同步中 / Sync Results` 阶段，避免删除完成后主线程长时间卡死并被 Windows 判定为 `Not Responding`。
+- 已新增回归测试，覆盖删除完成后进入后台结果同步阶段时的 Inspector 展示模型。
+- 本轮验证：
+  - `cargo fmt`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo build`：通过
+  - `dirotter-app`：已重编译并重新启动验证
+
+## 2026-04-04（结果视图按需载入迁出 UI 主线程）
+- 进一步复盘后又发现第二个阻塞点：`结果视图` 页面在进入时仍会同步执行 `ensure_store_loaded_from_cache()`，直接在 UI 线程完成：
+  - SQLite 读取快照
+  - zstd 解压
+  - `NodeStore` 反序列化
+  - 排行与 cleanup analysis 重建
+- 这条链路在删除/结果同步期间点击 `结果视图` 时会再次触发，并重新把界面拖进 `Not Responding`。
+- 现已把结果视图的按需快照载入也改成后台 session：
+  - 删除或结果同步进行中且 `store` 不在内存时，结果视图会显示等待同步提示，不再同步读快照
+  - 非删除场景下，结果视图需要恢复快照时会先进入后台加载态，准备完成后再一次性落回 UI
+- 已新增回归测试：
+  - 删除同步期间禁止启动结果快照载入
+  - 结果视图恢复快照时必须使用后台 session，而不是同步塞住 UI 线程
+  - `result_pages.rs` 新增文案已纳入全语言翻译覆盖测试
+- 本轮验证：
+  - `cargo fmt`：通过
+  - `cargo test -p dirotter-ui`：通过
+  - `cargo build`：通过
+  - `dirotter-app`：已重编译并重新启动验证
+
 ## 2026-04-03（整体工程评估、计划落地与质量收口）
 - 已完成一轮针对 workspace、核心 crate、扫描链路、平台层与 UI 主体的整体质量评估。
 - 结论已从“继续加功能”切换为“先做质量收口和架构减债”，并识别出三条主线：
@@ -533,3 +605,23 @@
 - 当前意义是：
   - cleanup 详情窗主函数继续从“渲染 + 一堆尾部状态判断”退回“渲染 + 动作收集”
   - 后续如果要继续补测试或调整动作策略，可以直接围绕 action handler 做局部演进
+
+## 2026-04-04（剩余确认窗控制流也已统一）
+- `crates/dirotter-ui/src/lib.rs` 中：
+  - `ui_delete_confirm_dialog()`
+  - `ui_cleanup_delete_confirm_dialog()`
+  现在都已改成“收集动作 -> handler 处理”的窗口模式。
+- 当前这些确认窗不再直接在局部布局函数里混合维护确认态和执行态，而是把确认动作统一下沉到 handler。
+- 当前意义是：
+  - 窗口级控制流风格已经从单点优化扩展到剩余主要弹窗
+  - `dirotter-ui` 里这批确认窗现在更适合继续补行为回归测试
+
+## 2026-04-04（FastPurge 平台回退修复）
+- 在回归验证中发现，`FastPurge` 之前默认把 staging 根放在卷根目录；当前环境下这会因为无权写入 `C:\\.dirotter-staging` 而失败。
+- `crates/dirotter-platform/src/delete.rs` 现在已改成：
+  - 先尝试卷根 staging
+  - 权限/IO 失败时回退到源路径父目录下的 `.dirotter-staging`
+  - 如果 staging rename 仍失败，再对源路径做立即删除兜底，保证快清语义仍然是“源路径立刻消失”
+- 当前结果是：
+  - `dirotter-platform` 的 `stage_and_purge_file_roundtrip` 已恢复通过
+  - `dirotter-actions` 的 `fast_purge_stages_path_and_returns_quickly` 也已恢复通过

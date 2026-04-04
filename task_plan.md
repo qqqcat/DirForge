@@ -477,6 +477,75 @@
    - `cargo test --workspace`：通过
    - `cargo clippy --workspace --all-targets -- -D warnings`：通过
 
+### 一键提速确认与失败详情改进（2026-04-04）
+1. 已完成
+   - cleanup 确认窗已改为可滚动完整目标列表，所有待处理路径都会完整展示
+   - Inspector `最近执行` 在存在失败项时已新增可点击详情入口
+   - 外层失败反馈已不再直接拼接首条失败原因，完整失败原因与建议改由详情窗承载
+2. 当前收益
+   - 用户在点击确认前可以完整复核本次一键提速/批量清理到底会处理哪些路径
+   - 多失败项场景不再只暴露一条被截断的失败文本，失败定位与重试建议更可用
+3. 当前验证
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo build --workspace`：通过
+   - `cargo run -p dirotter-app`：已启动验证，进程因 GUI 持续运行被超时终止
+
+### 失败详情窗布局与删除期间响应性修复（2026-04-04）
+1. 已完成
+   - 失败详情窗已重排为顶部关闭、受控宽度、全宽失败卡片布局
+   - 失败原因主文案已改为本地化失败标题与解释，英文原始错误信息只保留在技术细节区
+   - 删除链路已新增逐项进度回传，后台执行期间会持续刷新已处理/成功/失败统计与当前处理项
+2. 当前收益
+   - 失败详情不再横向撑爆窗口，也不需要滚到底部才能关闭
+   - 多语言界面不再被英文硬编码失败原因主导
+   - 一键提速执行过程中，前台可以持续看到进度与当前处理项，减少“界面卡死”的观感
+3. 当前验证
+   - `cargo test -p dirotter-actions`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo test --workspace`：通过
+
+### 失败详情全语言补齐（2026-04-04）
+1. 已完成
+   - 失败详情按钮、窗口标题、说明文案、失败卡片标题、建议/技术细节标题已补齐到全部已支持语言
+   - `view_models.rs` 中新增的 `快速清理 / 选择安全项 / 打开所选` 等关联键也已同步补齐，避免部分语言继续回退英文
+   - `i18n` 已增加缺失键补丁层与 legacy fallback，用于承接拆分生成字典中尚未覆盖的新键
+2. 当前收益
+   - 所有已支持语言在失败详情相关流程中都不会再混入英文硬编码
+   - 后续新增 `view-model` 文案如果漏翻，会被测试直接拦下
+3. 当前验证
+   - `cargo fmt`：通过
+   - `cargo test -p dirotter-ui`：通过
+
+### 删除后结果同步脱离 UI 主线程（2026-04-04）
+1. 已完成
+   - 已重新分析并确认窗口 `Not Responding` 的根因是删除完成后的结果同步仍在 UI 主线程执行，而不是删除执行线程本身
+   - 删除完成后的 `NodeStore` 重建、cleanup analysis 重算、排行和结果摘要同步已迁到独立后台阶段
+   - Inspector 后台任务卡与顶部横幅新增 `结果同步中 / Sync Results` 阶段，删除完成后不会再直接把重活压回 `update()`
+2. 当前收益
+   - Windows 不会再因为删除收尾阶段长时间阻塞消息循环而把窗口标记成 `Not Responding`
+   - 删除完成后的结果视图和清理建议仍会自动同步，但这一步不会再卡住前台
+   - 根因与 `egui` 官方“GUI 线程保持非阻塞”的建议重新对齐，避免同类问题反复出现
+3. 当前验证
+   - `cargo fmt`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo build`：通过
+   - `dirotter-app`：已重新编译并启动
+
+### 结果视图按需载入脱离 UI 主线程（2026-04-04）
+1. 已完成
+   - 已确认 `结果视图` 页面自身仍存在同步快照载入链路，会在切页时直接读取 SQLite、解压快照并重建 `NodeStore`
+   - 结果视图快照恢复现已迁到独立后台 session，切页时只触发后台加载，不再在渲染函数里同步读缓存
+   - 删除或结果同步期间，如果结果 `store` 当前不在内存，结果视图会先显示等待同步提示，避免再次把重活压回 UI 主线程
+2. 当前收益
+   - 删除期间点击 `结果视图` 不会再触发同步快照恢复导致窗口进入 `Not Responding`
+   - 平时从快照恢复结果页时也不会再因为大快照解压和反序列化直接卡住界面
+   - `结果视图` 页的重活链路也和 `egui` 官方非阻塞原则重新对齐
+3. 当前验证
+   - `cargo fmt`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo build`：通过
+   - `dirotter-app`：已重新编译并启动
+
 ### Inspector Workspace Context 下沉进展（2026-04-04）
 1. 已完成
    - `view_models.rs` 已新增 Workspace Context 展示模型
@@ -509,6 +578,19 @@
 2. 当前收益
    - cleanup 详情窗主函数不再依赖多组 `trigger_* / request_* / select_*` 状态拼接控制流
    - 交互分发边界更清楚，后续补测试或继续拆函数时更容易定位单个动作路径
+3. 当前验证
+   - `cargo check -p dirotter-ui`：通过
+   - `cargo test -p dirotter-ui`：通过
+   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
+
+### Remaining Dialog 控制流收口进展（2026-04-04）
+1. 已完成
+   - `ui_delete_confirm_dialog()` 已改为“收集确认窗动作 -> handler 处理”
+   - `ui_cleanup_delete_confirm_dialog()` 已改为同样的动作分发模式
+   - 剩余窗口现在都不再依赖局部 `confirmed / keep_open` 之外再叠加额外分支状态来驱动执行
+2. 当前收益
+   - cleanup 详情窗、永久删除确认窗、cleanup 确认窗三类窗口的控制流风格已统一
+   - 后续继续补行为测试或抽公共窗口模式时，边界已经更整齐
 3. 当前验证
    - `cargo check -p dirotter-ui`：通过
    - `cargo test -p dirotter-ui`：通过

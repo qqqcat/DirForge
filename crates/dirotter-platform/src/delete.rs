@@ -18,11 +18,32 @@ pub fn stage_for_fast_cleanup(path: &str) -> Result<String, PlatformError> {
     }
 
     let canonical = source.canonicalize().unwrap_or_else(|_| source.clone());
-    let staging_root = ensure_staging_root(path)?;
-    let staged = staging_root.join(unique_stage_name(&canonical));
-    std::fs::rename(&source, &staged)
-        .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
-    Ok(staged.display().to_string())
+    let mut last_error = None;
+    for staging_root in staging_root_candidates(path, &source)? {
+        let staged = staging_root.join(unique_stage_name(&canonical));
+        match std::fs::rename(&source, &staged) {
+            Ok(_) => return Ok(staged.display().to_string()),
+            Err(err) => {
+                last_error = Some(PlatformError::new(map_io_error(&err), err.to_string()));
+            }
+        }
+    }
+
+    if let Some(err) = last_error {
+        if matches!(
+            err.kind,
+            PlatformErrorKind::Permission | PlatformErrorKind::Io
+        ) {
+            fast_delete_source_immediately(&source)?;
+            return Ok(source.display().to_string());
+        }
+        return Err(err);
+    }
+
+    Err(PlatformError::new(
+        PlatformErrorKind::Io,
+        format!("failed to stage path: {path}"),
+    ))
 }
 
 pub fn purge_staged_path(path: &str) -> Result<(), PlatformError> {
@@ -61,13 +82,70 @@ pub fn purge_all_staging_roots() -> Result<(), PlatformError> {
     Ok(())
 }
 
-fn ensure_staging_root(path: &str) -> Result<PathBuf, PlatformError> {
+fn staging_root_candidates(path: &str, source: &Path) -> Result<Vec<PathBuf>, PlatformError> {
     let volume = volume_info(path)?;
-    let root = PathBuf::from(volume.mount_point).join(STAGING_DIR_NAME);
-    std::fs::create_dir_all(&root)
+    let preferred_root = PathBuf::from(volume.mount_point).join(STAGING_DIR_NAME);
+    let fallback_root = source.parent().unwrap_or(source).join(STAGING_DIR_NAME);
+
+    let mut roots = Vec::new();
+    match create_staging_root(&preferred_root) {
+        Ok(root) => roots.push(root),
+        Err(err)
+            if !matches!(
+                err.kind,
+                PlatformErrorKind::Permission | PlatformErrorKind::Io
+            ) =>
+        {
+            return Err(err);
+        }
+        Err(_) => {}
+    }
+
+    if fallback_root != preferred_root {
+        match create_staging_root(&fallback_root) {
+            Ok(root) => roots.push(root),
+            Err(err)
+                if !matches!(
+                    err.kind,
+                    PlatformErrorKind::Permission | PlatformErrorKind::Io
+                ) =>
+            {
+                return Err(err);
+            }
+            Err(_) => {}
+        }
+    }
+
+    if roots.is_empty() {
+        return Err(PlatformError::new(
+            PlatformErrorKind::Permission,
+            format!("no writable staging root available for {path}"),
+        ));
+    }
+
+    Ok(roots)
+}
+
+fn create_staging_root(root: &Path) -> Result<PathBuf, PlatformError> {
+    std::fs::create_dir_all(root)
         .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
-    hide_staging_root(&root);
-    Ok(root)
+    hide_staging_root(root);
+    Ok(root.to_path_buf())
+}
+
+fn fast_delete_source_immediately(source: &Path) -> Result<(), PlatformError> {
+    let metadata = std::fs::metadata(source)
+        .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
+    if metadata.is_dir() {
+        std::fs::remove_dir_all(source)
+            .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
+        return Ok(());
+    }
+
+    fast_permanent_delete_file(source).or_else(|_| {
+        std::fs::remove_file(source)
+            .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))
+    })
 }
 
 fn unique_stage_name(path: &Path) -> String {
@@ -174,6 +252,11 @@ fn last_platform_error(op: &str) -> PlatformError {
         _ => PlatformErrorKind::Io,
     };
     PlatformError::new(kind, format!("{op} failed with win32 error {code}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn last_platform_error(_op: &str) -> PlatformError {
+    PlatformError::new(PlatformErrorKind::Io, "platform error".to_string())
 }
 
 #[cfg(test)]

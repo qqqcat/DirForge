@@ -14,8 +14,14 @@ pub(super) struct DeleteTaskViewModel {
     pub description: &'static str,
     pub target_value: String,
     pub target_hint: String,
+    pub progress_title: String,
+    pub progress_value: String,
+    pub progress_hint: String,
     pub elapsed_value: String,
     pub elapsed_hint: &'static str,
+    pub current_target_title: Option<String>,
+    pub current_target_value: Option<String>,
+    pub current_target_hint: Option<&'static str>,
 }
 
 pub(super) struct DeleteConfirmViewModel {
@@ -35,9 +41,15 @@ pub(super) struct CleanupDeleteConfirmViewModel {
     pub item_count_hint: &'static str,
     pub estimated_reclaim_value: String,
     pub estimated_reclaim_hint: &'static str,
-    pub preview_items: Vec<String>,
-    pub more_items_label: Option<String>,
+    pub preview_title: String,
+    pub preview_hint: String,
+    pub preview_items: Vec<CleanupDeletePreviewItemViewModel>,
     pub confirm_label: &'static str,
+}
+
+pub(super) struct CleanupDeletePreviewItemViewModel {
+    pub path_value: String,
+    pub size_value: String,
 }
 
 pub(super) struct InspectorActionsViewModel {
@@ -65,8 +77,29 @@ pub(super) struct InspectorExecutionReportViewModel {
     pub title: String,
     pub summary_value: String,
     pub summary_hint: String,
-    pub detail_message: Option<String>,
-    pub detail_success: bool,
+    pub failure_detail_label: Option<String>,
+    pub failure_detail_hint: Option<String>,
+}
+
+pub(super) struct ExecutionFailureDetailsViewModel {
+    pub title: String,
+    pub intro: String,
+    pub summary_title: String,
+    pub summary_value: String,
+    pub summary_hint: String,
+    pub close_label: String,
+    pub close_hint: String,
+    pub items: Vec<ExecutionFailureDetailsItemViewModel>,
+}
+
+pub(super) struct ExecutionFailureDetailsItemViewModel {
+    pub failure_title: String,
+    pub failure_body: String,
+    pub path_value: String,
+    pub suggestion_title: String,
+    pub suggestion_value: String,
+    pub technical_detail_title: String,
+    pub technical_detail_value: Option<String>,
 }
 
 pub(super) struct InspectorWorkspaceContextViewModel {
@@ -379,35 +412,102 @@ impl DirOtterNativeApp {
     }
 
     pub(super) fn delete_task_view_model(&self) -> Option<DeleteTaskViewModel> {
-        let snapshot = self.delete_session.as_ref()?.snapshot();
+        if let Some(snapshot) = self
+            .delete_session
+            .as_ref()
+            .map(|session| session.snapshot())
+        {
+            return Some(DeleteTaskViewModel {
+                title: match snapshot.mode {
+                    ExecutionMode::RecycleBin => {
+                        self.t("后台任务：移到回收站", "Background Task: Recycle Bin")
+                    }
+                    ExecutionMode::FastPurge => {
+                        self.t("后台任务：快速清理", "Background Task: Fast Cleanup")
+                    }
+                    ExecutionMode::Permanent => {
+                        self.t("后台任务：永久删除", "Background Task: Permanent Delete")
+                    }
+                },
+                description: self.t(
+                    "删除正在后台执行。你可以继续浏览结果，但新的删除操作会暂时锁定。",
+                    "Deletion is running in the background. You can keep browsing results, but new delete actions stay locked for now.",
+                ),
+                target_value: truncate_middle(&snapshot.label, 34),
+                target_hint: format!(
+                    "{} {}",
+                    format_count(snapshot.target_count as u64),
+                    self.t("个项目正在执行", "items in flight")
+                ),
+                progress_title: self.t("进度", "Progress").to_string(),
+                progress_value: format!(
+                    "{} / {}",
+                    format_count(snapshot.completed_count as u64),
+                    format_count(snapshot.target_count as u64)
+                ),
+                progress_hint: format!(
+                    "{} {} / {} {}",
+                    format_count(snapshot.succeeded_count as u64),
+                    self.t("成功", "succeeded"),
+                    format_count(snapshot.failed_count as u64),
+                    self.t("失败", "failed")
+                ),
+                elapsed_value: format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
+                elapsed_hint: match snapshot.mode {
+                    ExecutionMode::RecycleBin => self.t("回收站删除", "Recycle-bin delete"),
+                    ExecutionMode::FastPurge => {
+                        self.t("秒移走后后台清除", "Instant move, background purge")
+                    }
+                    ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
+                },
+                current_target_title: snapshot
+                    .current_path
+                    .as_ref()
+                    .map(|_| self.t("当前项目", "Current Item").to_string()),
+                current_target_value: snapshot
+                    .current_path
+                    .as_deref()
+                    .map(|path| truncate_middle(path, 42)),
+                current_target_hint: snapshot
+                    .current_path
+                    .as_ref()
+                    .map(|_| self.t("当前处理项目", "Current item")),
+            });
+        }
+
+        let snapshot = self
+            .delete_finalize_session
+            .as_ref()
+            .and_then(|session| session.snapshot())?;
         Some(DeleteTaskViewModel {
-            title: match snapshot.mode {
-                ExecutionMode::RecycleBin => {
-                    self.t("后台任务：移到回收站", "Background Task: Recycle Bin")
-                }
-                ExecutionMode::FastPurge => {
-                    self.t("后台任务：快速清理", "Background Task: Fast Cleanup")
-                }
-                ExecutionMode::Permanent => {
-                    self.t("后台任务：永久删除", "Background Task: Permanent Delete")
-                }
-            },
+            title: self.t("后台任务：同步结果", "Background Task: Sync Results"),
             description: self.t(
-                "删除正在后台执行。你可以继续浏览结果，但新的删除操作会暂时锁定。",
-                "Deletion is running in the background. You can keep browsing results, but new delete actions stay locked for now.",
+                "删除已完成，结果视图和清理建议正在后台同步。界面会在同步后自动刷新。",
+                "Deletion has finished. The result view and cleanup suggestions are synchronizing in the background and will refresh automatically.",
             ),
             target_value: truncate_middle(&snapshot.label, 34),
             target_hint: format!(
                 "{} {}",
                 format_count(snapshot.target_count as u64),
-                self.t("个项目正在执行", "items in flight")
+                self.t("个项目已处理", "items processed")
+            ),
+            progress_title: self.t("结果同步", "Result Sync").to_string(),
+            progress_value: self.t("后台整理中", "Syncing in background").to_string(),
+            progress_hint: format!(
+                "{} {} / {} {}",
+                format_count(snapshot.succeeded_count as u64),
+                self.t("成功", "succeeded"),
+                format_count(snapshot.failed_count as u64),
+                self.t("失败", "failed")
             ),
             elapsed_value: format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
-            elapsed_hint: match snapshot.mode {
-                ExecutionMode::RecycleBin => self.t("回收站删除", "Recycle-bin delete"),
-                ExecutionMode::FastPurge => self.t("秒移走后后台清除", "Instant move, background purge"),
-                ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
-            },
+            elapsed_hint: self.t(
+                "删除完成后同步结果视图和清理建议",
+                "Synchronizing the result view and cleanup suggestions after deletion",
+            ),
+            current_target_title: None,
+            current_target_value: None,
+            current_target_hint: None,
         })
     }
 
@@ -440,16 +540,12 @@ impl DirOtterNativeApp {
         request: &CleanupDeleteRequest,
     ) -> CleanupDeleteConfirmViewModel {
         let is_fast_cleanup = request.mode == ExecutionMode::FastPurge;
-        let preview_items: Vec<String> = request
+        let preview_items: Vec<CleanupDeletePreviewItemViewModel> = request
             .targets
             .iter()
-            .take(6)
-            .map(|target| {
-                format!(
-                    "• {}  {}",
-                    truncate_middle(target.path.as_ref(), 52),
-                    format_bytes(target.size_bytes)
-                )
+            .map(|target| CleanupDeletePreviewItemViewModel {
+                path_value: target.path.to_string(),
+                size_value: format_bytes(target.size_bytes),
             })
             .collect();
         CleanupDeleteConfirmViewModel {
@@ -485,19 +581,151 @@ impl DirOtterNativeApp {
                     "Actual reclaim depends on execution results",
                 )
             },
-            preview_items,
-            more_items_label: (request.targets.len() > 6).then(|| {
-                format!(
-                    "{} {}",
-                    format_count((request.targets.len() - 6) as u64),
-                    self.t("项未展开显示", "more items not shown")
+            preview_title: self.t("本次将处理的项目", "Items In This Cleanup").to_string(),
+            preview_hint: self
+                .t(
+                    "下面按完整路径列出本次要处理的全部项目，请滚动确认后再继续。",
+                    "The complete target list is shown below. Scroll through the full paths before continuing.",
                 )
-            }),
+                .to_string(),
+            preview_items,
             confirm_label: if is_fast_cleanup {
                 self.t("立即清理", "Clean Now")
             } else {
                 self.t("移到回收站", "Move to Recycle Bin")
             },
+        }
+    }
+
+    fn delete_failure_suggestion(&self, failure_kind: Option<ActionFailureKind>) -> &'static str {
+        match failure_kind {
+            Some(ActionFailureKind::PermissionDenied) => self.t(
+                "权限不足。请检查目标是否为系统目录，或使用更高权限重试。",
+                "Permission denied. Check whether the target is protected or retry with higher privileges.",
+            ),
+            Some(ActionFailureKind::Protected) => self.t(
+                "该目标被风险策略拦截，建议优先使用回收站删除或重新评估路径。",
+                "This target was blocked by risk protection. Prefer recycle-bin deletion or review the path.",
+            ),
+            Some(ActionFailureKind::Io) => self.t(
+                "文件或目录可能正被占用。关闭相关程序后重试。",
+                "The file or directory may be in use. Close related programs and try again.",
+            ),
+            Some(ActionFailureKind::Missing) => self.t(
+                "目标已不存在，界面会在下一次刷新后自动同步。",
+                "The target no longer exists. The UI will synchronize on the next refresh.",
+            ),
+            Some(ActionFailureKind::PlatformUnavailable | ActionFailureKind::NotSupported) => {
+                self.t(
+                    "当前平台不支持该操作，建议改用回收站删除或系统文件管理器。",
+                    "This operation is not supported on the current platform. Try recycle-bin deletion or the system file manager.",
+                )
+            }
+            Some(ActionFailureKind::PrecheckMismatch) => self.t(
+                "预检查与执行前状态不一致，建议重新选择该对象后重试。",
+                "Precheck no longer matches current state. Re-select the item and try again.",
+            ),
+            Some(ActionFailureKind::UnsupportedType) => self.t(
+                "当前只支持文件和目录，特殊对象请改用系统工具处理。",
+                "Only files and directories are supported. Use system tools for special objects.",
+            ),
+            None => self.t(
+                "删除执行失败，请结合失败原因检查路径状态后重试。",
+                "Delete action failed. Review the failure reason and retry after checking the target state.",
+            ),
+        }
+    }
+
+    fn delete_failure_title(&self, failure_kind: Option<ActionFailureKind>, retries: u8) -> String {
+        match failure_kind {
+            Some(ActionFailureKind::PermissionDenied) => {
+                self.t("权限不足", "Permission Denied").to_string()
+            }
+            Some(ActionFailureKind::Protected) => self
+                .t("已被风险策略拦截", "Blocked by Safety Policy")
+                .to_string(),
+            Some(ActionFailureKind::Io) if retries > 0 => self
+                .t("重试后仍然失败", "Still Failed After Retries")
+                .to_string(),
+            Some(ActionFailureKind::Io) => self.t("I/O 执行失败", "I/O Failure").to_string(),
+            Some(ActionFailureKind::Missing) => {
+                self.t("目标已不存在", "Target Missing").to_string()
+            }
+            Some(ActionFailureKind::PlatformUnavailable) => {
+                self.t("当前平台不可用", "Platform Unavailable").to_string()
+            }
+            Some(ActionFailureKind::NotSupported) => self
+                .t("当前操作不受支持", "Operation Not Supported")
+                .to_string(),
+            Some(ActionFailureKind::PrecheckMismatch) => self
+                .t("执行前状态已变化", "State Changed Before Execution")
+                .to_string(),
+            Some(ActionFailureKind::UnsupportedType) => self
+                .t("对象类型不受支持", "Unsupported Target Type")
+                .to_string(),
+            None => self.t("删除执行失败", "Delete Failed").to_string(),
+        }
+    }
+
+    fn delete_failure_body(&self, failure_kind: Option<ActionFailureKind>, retries: u8) -> String {
+        match failure_kind {
+            Some(ActionFailureKind::PermissionDenied) => self
+                .t(
+                    "系统拒绝了这次删除请求，通常是因为权限不足或目标受系统保护。",
+                    "The system rejected this delete request, usually because of missing privileges or target protection.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::Protected) => self
+                .t(
+                    "该路径命中了当前风险保护规则，所以这次不会直接执行删除。",
+                    "This path matched the current safety rules, so deletion was not executed directly.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::Io) if retries > 0 => format!(
+                "{} {} {}。",
+                self.t(
+                    "系统已经自动重试",
+                    "The system already retried this operation",
+                ),
+                format_count(retries as u64 + 1),
+                self.t("次，但仍然没有成功。", "times, but it still did not succeed.")
+            ),
+            Some(ActionFailureKind::Io) => self
+                .t(
+                    "执行阶段遇到了 I/O 问题，常见原因是文件占用、临时锁定或权限切换。",
+                    "The execution hit an I/O issue, commonly due to file locks, transient handles, or permission transitions.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::Missing) => self
+                .t(
+                    "在真正执行前，目标已经从磁盘上消失。",
+                    "The target disappeared from disk before execution completed.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::PlatformUnavailable | ActionFailureKind::NotSupported) => self
+                .t(
+                    "当前平台或当前删除方式无法完成这次请求。",
+                    "The current platform or delete mode cannot complete this request.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::PrecheckMismatch) => self
+                .t(
+                    "执行前检查和真实执行时看到的磁盘状态已经不一致。",
+                    "The disk state changed between precheck and actual execution.",
+                )
+                .to_string(),
+            Some(ActionFailureKind::UnsupportedType) => self
+                .t(
+                    "这个对象不是当前删除链路支持的普通文件或目录。",
+                    "This object is not a regular file or directory supported by the current delete flow.",
+                )
+                .to_string(),
+            None => self
+                .t(
+                    "这次删除没有成功完成，请结合下方建议重新检查目标状态。",
+                    "This delete did not complete successfully. Review the suggestion below and re-check the target state.",
+                )
+                .to_string(),
         }
     }
 
@@ -599,22 +827,6 @@ impl DirOtterNativeApp {
         &self,
     ) -> Option<InspectorExecutionReportViewModel> {
         let report = self.execution_report.as_ref()?;
-        let detail_message = report.items.first().map(|item| {
-            format!(
-                "{}: {}",
-                if item.success {
-                    self.t("结果", "Result")
-                } else {
-                    self.t("失败原因", "Failure")
-                },
-                item.message
-            )
-        });
-        let detail_success = report
-            .items
-            .first()
-            .map(|item| item.success)
-            .unwrap_or(true);
 
         Some(InspectorExecutionReportViewModel {
             title: self.t("最近执行", "Last Action").to_string(),
@@ -631,8 +843,77 @@ impl DirOtterNativeApp {
                 format_count(report.failed as u64),
                 self.t("失败", "failed")
             ),
-            detail_message,
-            detail_success,
+            failure_detail_label: (report.failed > 0).then(|| {
+                format!(
+                    "{} {}",
+                    format_count(report.failed as u64),
+                    self.t("失败，查看详情", "failed, view details")
+                )
+            }),
+            failure_detail_hint: (report.failed > 0).then(|| {
+                self.t(
+                    "打开完整失败列表，查看具体路径、失败原因和处理建议。",
+                    "Open the full failed-item list with paths, reasons, and suggestions.",
+                )
+                .to_string()
+            }),
+        })
+    }
+
+    pub(super) fn execution_failure_details_view_model(
+        &self,
+    ) -> Option<ExecutionFailureDetailsViewModel> {
+        let report = self.execution_report.as_ref()?;
+        let items: Vec<ExecutionFailureDetailsItemViewModel> = report
+            .items
+            .iter()
+            .filter(|item| !item.success)
+            .map(|item| ExecutionFailureDetailsItemViewModel {
+                failure_title: self.delete_failure_title(item.failure_kind, item.retries),
+                failure_body: self.delete_failure_body(item.failure_kind, item.retries),
+                path_value: item.path.clone(),
+                suggestion_title: self.t("建议", "Suggested Next Step").to_string(),
+                suggestion_value: self
+                    .delete_failure_suggestion(item.failure_kind)
+                    .to_string(),
+                technical_detail_title: self.t("技术细节", "Technical Detail").to_string(),
+                technical_detail_value: (!item.message.is_empty()).then(|| item.message.clone()),
+            })
+            .collect();
+        if items.is_empty() {
+            return None;
+        }
+
+        Some(ExecutionFailureDetailsViewModel {
+            title: self.t("失败详情", "Failure Details").to_string(),
+            intro: self
+                .t(
+                    "以下项目执行失败。这里会显示完整路径、失败原因和对应建议。",
+                    "These items failed to execute. Full paths, failure reasons, and suggestions are listed here.",
+                )
+                .to_string(),
+            summary_title: self.t("执行方式", "Execution").to_string(),
+            summary_value: match report.mode {
+                ExecutionMode::RecycleBin => self.t("移到回收站", "Moved to recycle bin"),
+                ExecutionMode::FastPurge => self.t("快速清理缓存", "Fast cleanup"),
+                ExecutionMode::Permanent => self.t("永久删除", "Permanent delete"),
+            }
+            .to_string(),
+            summary_hint: format!(
+                "{} {} / {} {}",
+                format_count(report.succeeded as u64),
+                self.t("成功", "succeeded"),
+                format_count(report.failed as u64),
+                self.t("失败", "failed")
+            ),
+            close_label: self.t("关闭", "Close").to_string(),
+            close_hint: self
+                .t(
+                    "关闭详情并返回右侧摘要。",
+                    "Close the details and return to the inspector summary.",
+                )
+                .to_string(),
+            items,
         })
     }
 

@@ -106,8 +106,16 @@ Stage 6 Finished Publish
 - **Inspector / Confirm 展示边界**：Inspector 摘要、后台删除任务摘要和两个确认窗的展示整形也已改为由 `view_models` 统一生成，主状态函数更多只保留布局与交互。
 - **Inspector 动作态边界**：Inspector 的按钮可用性、提示文案和反馈 banner/执行摘要现在也由 `view_models` 统一生成，布局代码里不再穿插大段状态判断。
 - **Inspector Workspace Context**：根目录和来源两行也已从 `ui_inspector()` 中下沉到 `view_models`，Inspector 展示整形边界已基本闭合。
+- **Cleanup Confirm 可审阅性**：批量清理确认窗现在会按完整路径提供可滚动目标列表，避免用户只看到前几项或被截断的待删路径。
+- **Execution Failure 可追溯性**：Inspector 的最近执行摘要在存在失败项时会提供详情入口，完整路径、失败原因和建议集中放入详情窗，而不是在外层摘要区截断显示。
+- **Execution Failure 可读性**：失败详情窗改为受控宽度和全宽卡片列表，顶部固定关闭入口；失败主文案优先走本地化标题/解释，技术原文退到次级细节。
+- **Delete Progress 可感知性**：删除后台线程会逐项上报进度并请求重绘，顶部横幅和 Inspector 后台任务卡会持续显示已处理/成功/失败统计与当前处理项。
+- **Delete Result Sync 非阻塞化**：删除完成后的 `NodeStore` 重建、cleanup analysis 重算、排行刷新与结果摘要同步已迁到独立后台阶段，UI 主线程只轮询完成态并一次性落回状态；这条链路显式遵循 `egui` 官方“GUI 线程保持非阻塞，重活通过后台任务 + 轻量状态轮询回传”的建议。
+- **Result View Snapshot Load 非阻塞化**：结果视图对缓存快照的恢复也已迁到后台 session；页面切换不允许在渲染期同步执行 SQLite 读取、zstd 解压、`NodeStore` 反序列化或 cleanup analysis 重建。删除/结果同步期间若结果 `store` 未驻留内存，结果页必须先显示等待态。
 - **Cleanup Details 展示边界**：cleanup 详情窗的 tabs、统计区、按钮态和 item 行展示整形也已开始由 `view_models` 统一生成，主函数主要保留勾选写回和动作分发。
 - **Cleanup Details 动作边界**：cleanup 详情窗交互现已从多布尔旗标流改成动作枚举分发，窗口函数与动作执行逻辑边界更清楚。
+- **Confirm Dialog 动作边界**：永久删除确认窗和 cleanup 确认窗也已改成动作分发模式，窗口级控制流风格已基本统一。
+- **FastPurge 平台回退**：快清 staging 现在会先尝试卷根 `.dirotter-staging`，权限受限时回退到源路径父目录；如果 rename 仍失败，则执行立即删除兜底，保证源路径能马上消失。
 - 快照策略：同一路径只保留最新一份 `NodeStore` 快照，避免重复扫描同一路径时 SQLite 体积线性增长；默认不在每次扫描结束后自动写入。
 - WAL 管理：快照写入保留 WAL 模式，但不再在每次保存热路径上强制 checkpoint；后续维护动作或空闲期再做收口。
 - Staging 清理：应用启动时会扫描并继续清理遗留的 `.dirotter-staging` 项，避免上次异常退出后残留缓存占用。

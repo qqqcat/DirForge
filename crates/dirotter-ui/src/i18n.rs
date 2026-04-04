@@ -10,6 +10,10 @@ mod generated_group2;
 mod generated_group3a;
 #[path = "i18n_generated_group3b.rs"]
 mod generated_group3b;
+#[path = "i18n_generated.rs"]
+mod legacy_generated;
+#[path = "i18n_missing_keys_patch.rs"]
+mod missing_keys_patch;
 
 pub(crate) fn parse_lang_setting(value: &str) -> Option<Lang> {
     match value {
@@ -176,50 +180,191 @@ pub(crate) fn detect_lang_from_locale(locale: &str) -> Lang {
 }
 
 pub(crate) fn translate_ui<'a>(lang: Lang, zh: &'a str, en: &'a str) -> &'a str {
+    if let Some(translated) = missing_keys_patch::translate_missing_ui_key(lang, en) {
+        return translated;
+    }
     match lang {
-        Lang::Ar => generated_group1::translate_ar(en),
-        Lang::De => generated_group1::translate_de(en),
+        Lang::Ar => {
+            let translated = generated_group1::translate_ar(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_ar(en)
+            }
+        }
+        Lang::De => {
+            let translated = generated_group1::translate_de(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_de(en)
+            }
+        }
         Lang::En => en,
-        Lang::He => generated_group1::translate_he(en),
-        Lang::Hi => generated_group1::translate_hi(en),
-        Lang::Id => generated_group1::translate_id(en),
-        Lang::It => generated_group2::translate_it(en),
-        Lang::Ja => generated_group2::translate_ja(en),
-        Lang::Ko => generated_group2::translate_ko(en),
-        Lang::Nl => generated_group2::translate_nl(en),
-        Lang::Pl => generated_group2::translate_pl(en),
-        Lang::Ru => generated_group3a::translate_ru(en),
+        Lang::He => {
+            let translated = generated_group1::translate_he(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_he(en)
+            }
+        }
+        Lang::Hi => {
+            let translated = generated_group1::translate_hi(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_hi(en)
+            }
+        }
+        Lang::Id => {
+            let translated = generated_group1::translate_id(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_id(en)
+            }
+        }
+        Lang::It => {
+            let translated = generated_group2::translate_it(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_it(en)
+            }
+        }
+        Lang::Ja => {
+            let translated = generated_group2::translate_ja(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_ja(en)
+            }
+        }
+        Lang::Ko => {
+            let translated = generated_group2::translate_ko(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_ko(en)
+            }
+        }
+        Lang::Nl => {
+            let translated = generated_group2::translate_nl(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_nl(en)
+            }
+        }
+        Lang::Pl => {
+            let translated = generated_group2::translate_pl(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_pl(en)
+            }
+        }
+        Lang::Ru => {
+            let translated = generated_group3a::translate_ru(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_ru(en)
+            }
+        }
         Lang::Zh => zh,
         Lang::Fr => translate_fr(en),
         Lang::Es => translate_es(en),
-        Lang::Th => generated_group3a::translate_th(en),
-        Lang::Tr => generated_group3a::translate_tr(en),
-        Lang::Uk => generated_group3b::translate_uk(en),
-        Lang::Vi => generated_group3b::translate_vi(en),
+        Lang::Th => {
+            let translated = generated_group3a::translate_th(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_th(en)
+            }
+        }
+        Lang::Tr => {
+            let translated = generated_group3a::translate_tr(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_tr(en)
+            }
+        }
+        Lang::Uk => {
+            let translated = generated_group3b::translate_uk(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_uk(en)
+            }
+        }
+        Lang::Vi => {
+            let translated = generated_group3b::translate_vi(en);
+            if translated != en {
+                translated
+            } else {
+                legacy_generated::translate_vi(en)
+            }
+        }
     }
 }
 
 #[cfg(test)]
 pub(crate) fn has_translation(lang: Lang, en: &str) -> bool {
+    if missing_keys_patch::has_missing_ui_translation(lang, en) {
+        return true;
+    }
     match lang {
         Lang::En | Lang::Zh => true,
         Lang::Fr => has_translation_fr(en),
         Lang::Es => has_translation_es(en),
-        Lang::Ar => generated_group1::has_translation_ar(en),
-        Lang::De => generated_group1::has_translation_de(en),
-        Lang::He => generated_group1::has_translation_he(en),
-        Lang::Hi => generated_group1::has_translation_hi(en),
-        Lang::Id => generated_group1::has_translation_id(en),
-        Lang::It => generated_group2::has_translation_it(en),
-        Lang::Ja => generated_group2::has_translation_ja(en),
-        Lang::Ko => generated_group2::has_translation_ko(en),
-        Lang::Nl => generated_group2::has_translation_nl(en),
-        Lang::Pl => generated_group2::has_translation_pl(en),
-        Lang::Ru => generated_group3a::has_translation_ru(en),
-        Lang::Th => generated_group3a::has_translation_th(en),
-        Lang::Tr => generated_group3a::has_translation_tr(en),
-        Lang::Uk => generated_group3b::has_translation_uk(en),
-        Lang::Vi => generated_group3b::has_translation_vi(en),
+        Lang::Ar => {
+            generated_group1::has_translation_ar(en) || legacy_generated::has_translation_ar(en)
+        }
+        Lang::De => {
+            generated_group1::has_translation_de(en) || legacy_generated::has_translation_de(en)
+        }
+        Lang::He => {
+            generated_group1::has_translation_he(en) || legacy_generated::has_translation_he(en)
+        }
+        Lang::Hi => {
+            generated_group1::has_translation_hi(en) || legacy_generated::has_translation_hi(en)
+        }
+        Lang::Id => {
+            generated_group1::has_translation_id(en) || legacy_generated::has_translation_id(en)
+        }
+        Lang::It => {
+            generated_group2::has_translation_it(en) || legacy_generated::has_translation_it(en)
+        }
+        Lang::Ja => {
+            generated_group2::has_translation_ja(en) || legacy_generated::has_translation_ja(en)
+        }
+        Lang::Ko => {
+            generated_group2::has_translation_ko(en) || legacy_generated::has_translation_ko(en)
+        }
+        Lang::Nl => {
+            generated_group2::has_translation_nl(en) || legacy_generated::has_translation_nl(en)
+        }
+        Lang::Pl => {
+            generated_group2::has_translation_pl(en) || legacy_generated::has_translation_pl(en)
+        }
+        Lang::Ru => {
+            generated_group3a::has_translation_ru(en) || legacy_generated::has_translation_ru(en)
+        }
+        Lang::Th => {
+            generated_group3a::has_translation_th(en) || legacy_generated::has_translation_th(en)
+        }
+        Lang::Tr => {
+            generated_group3a::has_translation_tr(en) || legacy_generated::has_translation_tr(en)
+        }
+        Lang::Uk => {
+            generated_group3b::has_translation_uk(en) || legacy_generated::has_translation_uk(en)
+        }
+        Lang::Vi => {
+            generated_group3b::has_translation_vi(en) || legacy_generated::has_translation_vi(en)
+        }
     }
 }
 
@@ -574,6 +719,62 @@ translation_table!(lookup_fr, {
     "Memory release completed: transient caches were cleared and the current process was trimmed." => "Libération de mémoire terminée : les caches temporaires ont été vidés et le processus actuel a été réduit.",
     "There is no additional application-side memory to release right now." => "Il n'y a pas de mémoire supplémentaire côté application à libérer pour le moment.",
     "Complete a scan first before using this result view. DirOtter does not auto-load old cached results here, so the UI stays responsive." => "Terminez d'abord une analyse avant d'utiliser cette vue des résultats. DirOtter ne recharge pas automatiquement ici les anciens résultats en cache afin de préserver la réactivité de l'interface.",
+    "Failure Details" => "Détails des échecs",
+    "These items failed to execute. Full paths, failure reasons, and suggestions are listed here." => "Ces éléments n'ont pas pu être exécutés. Les chemins complets, les causes d'échec et les suggestions sont listés ici.",
+    "Close the details and return to the inspector summary." => "Fermez ce panneau et revenez au résumé de l'inspecteur.",
+    "Progress" => "Progression",
+    "Current Item" => "Élément en cours",
+    "Current item" => "Élément en cours",
+    "Items In This Cleanup" => "Éléments inclus dans ce nettoyage",
+    "Delete action failed. Review the failure reason and retry after checking the target state." => "La suppression a échoué. Consultez la raison de l'échec puis réessayez après avoir vérifié l'état de la cible.",
+    "Background Task: Fast Cleanup" => "Tâche en arrière-plan : nettoyage rapide",
+    "Instant move, background purge" => "Déplacement immédiat, purge en arrière-plan",
+    "Will be staged for background cleanup" => "Sera placé dans la zone de nettoyage en arrière-plan",
+    "Will move to the system recycle bin" => "Sera déplacé vers la corbeille du système",
+    "Disk space will continue to be reclaimed in the background" => "L'espace disque continuera d'être récupéré en arrière-plan",
+    "Clean Now" => "Nettoyer maintenant",
+    "Fast Cleanup" => "Nettoyage rapide",
+    "Fast cleanup" => "Nettoyage rapide",
+    "Select Safe" => "Sélectionner les éléments sûrs",
+    "Clear Selected" => "Effacer la sélection",
+    "Open Selected" => "Ouvrir la sélection",
+    "Background Task: Sync Results" => "Tâche en arrière-plan : synchronisation des résultats",
+    "Deletion has finished. The result view and cleanup suggestions are synchronizing in the background and will refresh automatically." => "La suppression est terminée. La vue des résultats et les suggestions de nettoyage se synchronisent en arrière-plan et se mettront à jour automatiquement.",
+    "items processed" => "éléments traités",
+    "Result Sync" => "Synchronisation des résultats",
+    "Syncing in background" => "Synchronisation en arrière-plan",
+    "Synchronizing the result view and cleanup suggestions after deletion" => "Synchronisation de la vue des résultats et des suggestions de nettoyage après la suppression",
+    "Synchronizing Cleanup Results" => "Synchronisation des résultats du nettoyage",
+    "Deletion finished. The result view and cleanup suggestions are being synchronized in the background." => "La suppression est terminée. La vue des résultats et les suggestions de nettoyage sont en cours de synchronisation en arrière-plan.",
+    "System is synchronizing post-delete results" => "Le système synchronise les résultats après suppression",
+    "Result View Is Waiting For Cleanup Sync" => "La vue des résultats attend la fin de la synchronisation du nettoyage",
+    "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "La suppression en arrière-plan ou la synchronisation des résultats est toujours en cours. DirOtter réouvrira la vue des résultats une fois terminée afin que le chargement du snapshot et la reconstruction des résultats ne bloquent pas le thread UI.",
+    "Loading Saved Result Snapshot" => "Chargement du snapshot de résultat enregistré",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter charge le snapshot de résultat enregistré en arrière-plan. La vue légère des résultats s'ouvrira automatiquement lorsqu'elle sera prête, sans décompresser ni reconstruire tout l'arbre de résultats sur la frame UI courante.",
+    "Permission Denied" => "Permission refusée",
+    "Open the full failed-item list with paths, reasons, and suggestions." => "Ouvrez la liste complète des éléments en échec avec les chemins, raisons et suggestions.",
+    "Execution" => "Exécution",
+    "Still Failed After Retries" => "Échec après plusieurs tentatives",
+    "Blocked by Safety Policy" => "Bloqué par la politique de sécurité",
+    "I/O Failure" => "Échec d'E/S",
+    "Target Missing" => "Cible introuvable",
+    "Platform Unavailable" => "Plateforme indisponible",
+    "Operation Not Supported" => "Opération non prise en charge",
+    "State Changed Before Execution" => "L'état a changé avant l'exécution",
+    "Unsupported Target Type" => "Type de cible non pris en charge",
+    "The system rejected this delete request, usually because of missing privileges or target protection." => "Le système a rejeté cette demande de suppression, généralement à cause de privilèges insuffisants ou d'une protection de la cible.",
+    "This path matched the current safety rules, so deletion was not executed directly." => "Ce chemin correspond aux règles de sécurité actuelles, la suppression directe n'a donc pas été exécutée.",
+    "The system already retried this operation" => "Le système a déjà retenté cette opération",
+    "times, but it still did not succeed." => "fois, mais elle a quand même échoué.",
+    "The execution hit an I/O issue, commonly due to file locks, transient handles, or permission transitions." => "L'exécution a rencontré un problème d'E/S, souvent causé par un fichier verrouillé, un handle transitoire ou un changement de permissions.",
+    "The target disappeared from disk before execution completed." => "La cible a disparu du disque avant la fin de l'exécution.",
+    "The current platform or delete mode cannot complete this request." => "La plateforme actuelle ou le mode de suppression choisi ne permet pas de terminer cette demande.",
+    "The disk state changed between precheck and actual execution." => "L'état du disque a changé entre la pré-vérification et l'exécution réelle.",
+    "This object is not a regular file or directory supported by the current delete flow." => "Cet objet n'est ni un fichier ni un dossier standard pris en charge par le flux de suppression actuel.",
+    "This delete did not complete successfully. Review the suggestion below and re-check the target state." => "Cette suppression ne s'est pas terminée correctement. Consultez la suggestion ci-dessous puis revérifiez l'état de la cible.",
+    "failed, view details" => "échecs, voir le détail",
+    "Suggested Next Step" => "Étape recommandée",
+    "Technical Detail" => "Détail technique",
 });
 
 translation_table!(lookup_es, {
@@ -916,14 +1117,78 @@ translation_table!(lookup_es, {
     "Memory release completed: transient caches were cleared and the current process was trimmed." => "La liberación de memoria se completó: se limpiaron las cachés temporales y se redujo el proceso actual.",
     "There is no additional application-side memory to release right now." => "Ahora mismo no hay memoria adicional del lado de la aplicación para liberar.",
     "Complete a scan first before using this result view. DirOtter does not auto-load old cached results here, so the UI stays responsive." => "Completa primero un escaneo antes de usar esta vista de resultados. DirOtter no carga aquí automáticamente resultados antiguos en caché para mantener la interfaz receptiva.",
+    "Failure Details" => "Detalles del fallo",
+    "These items failed to execute. Full paths, failure reasons, and suggestions are listed here." => "Estos elementos no pudieron ejecutarse. Aquí se muestran las rutas completas, los motivos del fallo y las sugerencias.",
+    "Close the details and return to the inspector summary." => "Cierra este panel y vuelve al resumen del inspector.",
+    "Progress" => "Progreso",
+    "Current Item" => "Elemento actual",
+    "Current item" => "Elemento actual",
+    "Items In This Cleanup" => "Elementos incluidos en esta limpieza",
+    "Delete action failed. Review the failure reason and retry after checking the target state." => "La eliminación falló. Revisa el motivo del fallo y vuelve a intentarlo después de comprobar el estado del objetivo.",
+    "Background Task: Fast Cleanup" => "Tarea en segundo plano: limpieza rápida",
+    "Instant move, background purge" => "Movimiento instantáneo, purga en segundo plano",
+    "Will be staged for background cleanup" => "Se moverá al área de limpieza en segundo plano",
+    "Will move to the system recycle bin" => "Se moverá a la papelera del sistema",
+    "Disk space will continue to be reclaimed in the background" => "El espacio en disco se seguirá recuperando en segundo plano",
+    "Clean Now" => "Limpiar ahora",
+    "Fast Cleanup" => "Limpieza rápida",
+    "Fast cleanup" => "Limpieza rápida",
+    "Select Safe" => "Seleccionar seguros",
+    "Clear Selected" => "Limpiar selección",
+    "Open Selected" => "Abrir selección",
+    "Background Task: Sync Results" => "Tarea en segundo plano: sincronizar resultados",
+    "Deletion has finished. The result view and cleanup suggestions are synchronizing in the background and will refresh automatically." => "La eliminación ha terminado. La vista de resultados y las sugerencias de limpieza se están sincronizando en segundo plano y se actualizarán automáticamente.",
+    "items processed" => "elementos procesados",
+    "Result Sync" => "Sincronización de resultados",
+    "Syncing in background" => "Sincronizando en segundo plano",
+    "Synchronizing the result view and cleanup suggestions after deletion" => "Sincronizando la vista de resultados y las sugerencias de limpieza después de la eliminación",
+    "Synchronizing Cleanup Results" => "Sincronizando resultados de limpieza",
+    "Deletion finished. The result view and cleanup suggestions are being synchronized in the background." => "La eliminación terminó. La vista de resultados y las sugerencias de limpieza se están sincronizando en segundo plano.",
+    "System is synchronizing post-delete results" => "El sistema está sincronizando los resultados posteriores a la eliminación",
+    "Result View Is Waiting For Cleanup Sync" => "La vista de resultados está esperando a que termine la sincronización de limpieza",
+    "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "La eliminación en segundo plano o la sincronización de resultados sigue en curso. DirOtter reanudará la vista de resultados cuando termine para que la carga de instantáneas y la reconstrucción de resultados no bloqueen el hilo de la interfaz.",
+    "Loading Saved Result Snapshot" => "Cargando instantánea guardada de resultados",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter está cargando en segundo plano la instantánea guardada de resultados. La vista ligera de resultados se abrirá automáticamente cuando esté lista, sin descomprimir ni reconstruir todo el árbol de resultados en el hilo actual de la interfaz.",
+    "Permission Denied" => "Permiso denegado",
+    "Open the full failed-item list with paths, reasons, and suggestions." => "Abre la lista completa de elementos fallidos con rutas, motivos y sugerencias.",
+    "Execution" => "Ejecución",
+    "Still Failed After Retries" => "Sigue fallando tras los reintentos",
+    "Blocked by Safety Policy" => "Bloqueado por la política de seguridad",
+    "I/O Failure" => "Error de E/S",
+    "Target Missing" => "Objetivo no encontrado",
+    "Platform Unavailable" => "Plataforma no disponible",
+    "Operation Not Supported" => "Operación no compatible",
+    "State Changed Before Execution" => "El estado cambió antes de ejecutar",
+    "Unsupported Target Type" => "Tipo de objetivo no compatible",
+    "The system rejected this delete request, usually because of missing privileges or target protection." => "El sistema rechazó esta solicitud de eliminación, normalmente por falta de privilegios o porque el objetivo está protegido.",
+    "This path matched the current safety rules, so deletion was not executed directly." => "Esta ruta coincidió con las reglas de seguridad actuales, así que la eliminación directa no se ejecutó.",
+    "The system already retried this operation" => "El sistema ya reintentó esta operación",
+    "times, but it still did not succeed." => "veces, pero aun así no tuvo éxito.",
+    "The execution hit an I/O issue, commonly due to file locks, transient handles, or permission transitions." => "La ejecución encontró un problema de E/S, normalmente causado por archivos bloqueados, identificadores transitorios o cambios de permisos.",
+    "The target disappeared from disk before execution completed." => "El objetivo desapareció del disco antes de que terminara la ejecución.",
+    "The current platform or delete mode cannot complete this request." => "La plataforma actual o el modo de eliminación no pueden completar esta solicitud.",
+    "The disk state changed between precheck and actual execution." => "El estado del disco cambió entre la comprobación previa y la ejecución real.",
+    "This object is not a regular file or directory supported by the current delete flow." => "Este objeto no es un archivo o carpeta normal compatible con el flujo de eliminación actual.",
+    "This delete did not complete successfully. Review the suggestion below and re-check the target state." => "Esta eliminación no se completó correctamente. Revisa la sugerencia de abajo y vuelve a comprobar el estado del objetivo.",
+    "failed, view details" => "fallos, ver detalles",
+    "Suggested Next Step" => "Siguiente paso sugerido",
+    "Technical Detail" => "Detalle técnico",
 });
 
 pub(crate) fn translate_fr(en: &str) -> &str {
-    lookup_fr(en).unwrap_or_else(|| generated_group0::translate_fr(en))
+    if let Some(local) = lookup_fr(en) {
+        local
+    } else {
+        generated_group0::translate_fr(en)
+    }
 }
 
 pub(crate) fn translate_es(en: &str) -> &str {
-    lookup_es(en).unwrap_or_else(|| generated_group0::translate_es(en))
+    if let Some(local) = lookup_es(en) {
+        local
+    } else {
+        generated_group0::translate_es(en)
+    }
 }
 
 #[cfg(test)]
