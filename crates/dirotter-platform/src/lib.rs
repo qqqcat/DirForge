@@ -199,18 +199,15 @@ pub fn process_memory_stats() -> Result<ProcessMemoryStats, PlatformError> {
 
 #[cfg(target_os = "macos")]
 pub fn process_memory_stats() -> Result<ProcessMemoryStats, PlatformError> {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
     let mut system = System::new_with_specifics(
         RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
     );
     let current_pid = Pid::from_u32(std::process::id());
-    let refreshed = system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[current_pid]),
-        true,
-        ProcessRefreshKind::everything(),
-    );
-    if refreshed == 0 {
+    let refreshed =
+        system.refresh_process_specifics(current_pid, ProcessRefreshKind::everything());
+    if !refreshed {
         return Err(PlatformError::new(
             PlatformErrorKind::System,
             "failed to refresh current process memory stats",
