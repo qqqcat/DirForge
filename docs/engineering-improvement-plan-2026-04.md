@@ -510,10 +510,10 @@
 - Explorer 反馈、删除反馈和最近执行摘要的展示文本现在也由 `view_models.rs` 统一整形。
 - 这一步的价值在于，Inspector 已经不只是“展示文本下沉”，而是连动作态判断和反馈态判断都开始脱离布局代码，后续调整交互状态时的改动面会更小。
 
-### 2026-04-04 Inspector Workspace Context Extraction
+### 2026-04-04 Inspector Memory Status Redesign
 
-- Inspector 底部的 Workspace Context 也已改为由 `view_models.rs` 统一整形。
-- 这意味着根目录截断、来源文案选择这类轻量展示逻辑也不再散落在 `ui_inspector()` 内部。
+- Inspector 底部的 `Workspace Context` 已被系统内存状态卡替换，并继续由 `view_models.rs` 统一整形。
+- 这次重做把系统可用内存、内存负载、DirOtter 占用和最近一次释放结果从底部状态栏/布局拼装中收口回 Inspector。
 - 到这一步，Inspector 区域的大部分展示整形已经完成下沉，主函数主要只剩：
   - 面板布局
   - 按钮点击后的动作分发

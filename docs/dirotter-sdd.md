@@ -105,7 +105,7 @@ Stage 6 Finished Publish
 - **UI 路径状态**：cleanup 勾选集合和 treemap 当前聚焦路径也已切到共享 `Arc<str>`，避免 UI 内部继续维护高频路径型 `String` 状态。
 - **Inspector / Confirm 展示边界**：Inspector 摘要、后台删除任务摘要和两个确认窗的展示整形也已改为由 `view_models` 统一生成，主状态函数更多只保留布局与交互。
 - **Inspector 动作态边界**：Inspector 的按钮可用性、提示文案和反馈 banner/执行摘要现在也由 `view_models` 统一生成，布局代码里不再穿插大段状态判断。
-- **Inspector Workspace Context**：根目录和来源两行也已从 `ui_inspector()` 中下沉到 `view_models`，Inspector 展示整形边界已基本闭合。
+- **Inspector Memory Status**：Inspector 下半区已从 `Workspace Context` 改成系统内存状态卡，并改由 `view_models` 统一整形；系统可用内存、内存负载、DirOtter 占用与最近一次释放结果都不再散落在状态栏和布局代码里。
 - **Cleanup Confirm 可审阅性**：批量清理确认窗现在会按完整路径提供可滚动目标列表，避免用户只看到前几项或被截断的待删路径。
 - **Execution Failure 可追溯性**：Inspector 的最近执行摘要在存在失败项时会提供详情入口，完整路径、失败原因和建议集中放入详情窗，而不是在外层摘要区截断显示。
 - **Execution Failure 可读性**：失败详情窗改为受控宽度和全宽卡片列表，顶部固定关闭入口；失败主文案优先走本地化标题/解释，技术原文退到次级细节。

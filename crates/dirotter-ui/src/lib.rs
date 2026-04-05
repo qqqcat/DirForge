@@ -2443,315 +2443,312 @@ impl DirOtterNativeApp {
                 .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(10.0);
+        egui::ScrollArea::vertical()
+            .id_source("inspector-scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                surface_panel(ui, |ui| {
+                    if let Some(target) = selected_target_view.as_ref() {
+                        stat_row(
+                            ui,
+                            self.t("名称", "Name"),
+                            target.name_value.as_ref(),
+                            target.name_hint,
+                        );
+                        stat_row(
+                            ui,
+                            self.t("路径", "Path"),
+                            &target.path_value,
+                            target.path_hint,
+                        );
+                        stat_row(
+                            ui,
+                            self.t("大小", "Size"),
+                            &target.size_value,
+                            &target.size_hint,
+                        );
+                    } else {
+                        ui.label(self.t(
+                            "尚未选择任何文件或目录。可以从实时列表、结果视图或其他页面点选对象。",
+                            "No file or folder is selected yet. Pick one from the live list, result view, or another page.",
+                        ));
+                    }
+                });
 
-        surface_panel(ui, |ui| {
-            if let Some(target) = selected_target_view.as_ref() {
-                stat_row(
-                    ui,
-                    self.t("名称", "Name"),
-                    target.name_value.as_ref(),
-                    target.name_hint,
-                );
-                stat_row(
-                    ui,
-                    self.t("路径", "Path"),
-                    &target.path_value,
-                    target.path_hint,
-                );
-                stat_row(
-                    ui,
-                    self.t("大小", "Size"),
-                    &target.size_value,
-                    &target.size_hint,
-                );
-            } else {
-                ui.label(self.t(
-                    "尚未选择任何文件或目录。可以从实时列表、结果视图或其他页面点选对象。",
-                    "No file or folder is selected yet. Pick one from the live list, result view, or another page.",
-                ));
-            }
-        });
+                if let Some(snapshot) = delete_task_view.as_ref() {
+                    ui.add_space(10.0);
+                    surface_panel(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(snapshot.title)
+                                    .text_style(egui::TextStyle::Name("title".into())),
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.add(egui::Spinner::new().size(18.0));
+                            });
+                        });
+                        ui.label(
+                            egui::RichText::new(snapshot.description)
+                                .text_style(egui::TextStyle::Small)
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_space(8.0);
+                        stat_row(
+                            ui,
+                            self.t("目标", "Target"),
+                            &snapshot.target_value,
+                            &snapshot.target_hint,
+                        );
+                        stat_row(
+                            ui,
+                            &snapshot.progress_title,
+                            &snapshot.progress_value,
+                            &snapshot.progress_hint,
+                        );
+                        stat_row(
+                            ui,
+                            self.t("已耗时", "Elapsed"),
+                            &snapshot.elapsed_value,
+                            snapshot.elapsed_hint,
+                        );
+                        if let (Some(current_title), Some(current_target)) = (
+                            snapshot.current_target_title.as_ref(),
+                            snapshot.current_target_value.as_ref(),
+                        ) {
+                            stat_row(
+                                ui,
+                                current_title,
+                                current_target,
+                                snapshot.current_target_hint.unwrap_or(""),
+                            );
+                        }
+                    });
+                }
 
-        if let Some(snapshot) = delete_task_view.as_ref() {
-            ui.add_space(10.0);
-            surface_panel(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                surface_panel(ui, |ui| {
                     ui.label(
-                        egui::RichText::new(snapshot.title)
+                        egui::RichText::new(self.t("快速操作", "Quick Actions"))
                             .text_style(egui::TextStyle::Name("title".into())),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add(egui::Spinner::new().size(18.0));
-                    });
-                });
-                ui.label(
-                    egui::RichText::new(snapshot.description)
-                        .text_style(egui::TextStyle::Small)
-                        .color(ui.visuals().weak_text_color()),
-                );
-                ui.add_space(8.0);
-                stat_row(
-                    ui,
-                    self.t("目标", "Target"),
-                    &snapshot.target_value,
-                    &snapshot.target_hint,
-                );
-                stat_row(
-                    ui,
-                    &snapshot.progress_title,
-                    &snapshot.progress_value,
-                    &snapshot.progress_hint,
-                );
-                stat_row(
-                    ui,
-                    self.t("已耗时", "Elapsed"),
-                    &snapshot.elapsed_value,
-                    snapshot.elapsed_hint,
-                );
-                if let (Some(current_title), Some(current_target)) = (
-                    snapshot.current_target_title.as_ref(),
-                    snapshot.current_target_value.as_ref(),
-                ) {
-                    stat_row(
-                        ui,
-                        current_title,
-                        current_target,
-                        snapshot.current_target_hint.unwrap_or(""),
+                    ui.label(
+                        egui::RichText::new(&inspector_actions_view.section_description)
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
                     );
-                }
-            });
-        }
-
-        ui.add_space(10.0);
-        surface_panel(ui, |ui| {
-            ui.label(
-                egui::RichText::new(self.t("快速操作", "Quick Actions"))
-                    .text_style(egui::TextStyle::Name("title".into())),
-            );
-            ui.label(
-                egui::RichText::new(&inspector_actions_view.section_description)
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-            );
-            ui.add_space(8.0);
-            ui.vertical(|ui| {
-                if ui
-                    .add_enabled_ui(inspector_actions_view.can_open_location, |ui| {
-                        sized_button(
-                            ui,
-                            ui.available_width(),
-                            &inspector_actions_view.open_location_label,
-                        )
-                    })
-                    .inner
-                    .clicked()
-                {
-                    if let Some(target) = selected_target.as_ref() {
-                        match dirotter_platform::select_in_explorer(target.path.as_ref()) {
-                            Ok(_) => {
-                                self.explorer_feedback = Some((
-                                    self.t(
-                                        "已在系统文件管理器中打开目标位置。",
-                                        "Opened the target location in the system file manager.",
-                                    )
-                                    .to_string(),
-                                    true,
-                                ));
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        if ui
+                            .add_enabled_ui(inspector_actions_view.can_open_location, |ui| {
+                                sized_button(
+                                    ui,
+                                    ui.available_width(),
+                                    &inspector_actions_view.open_location_label,
+                                )
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            if let Some(target) = selected_target.as_ref() {
+                                match dirotter_platform::select_in_explorer(target.path.as_ref()) {
+                                    Ok(_) => {
+                                        self.explorer_feedback = Some((
+                                            self.t(
+                                                "已在系统文件管理器中打开目标位置。",
+                                                "Opened the target location in the system file manager.",
+                                            )
+                                            .to_string(),
+                                            true,
+                                        ));
+                                    }
+                                    Err(err) => {
+                                        self.explorer_feedback = Some((
+                                            format!(
+                                                "{}: {}",
+                                                self.t("打开位置失败", "Failed to open location"),
+                                                err.message
+                                            ),
+                                            false,
+                                        ));
+                                    }
+                                }
                             }
-                            Err(err) => {
-                                self.explorer_feedback = Some((
-                                    format!(
-                                        "{}: {}",
-                                        self.t("打开位置失败", "Failed to open location"),
-                                        err.message
-                                    ),
-                                    false,
-                                ));
+                        }
+                        if ui
+                            .add_enabled_ui(inspector_actions_view.can_fast_cleanup, |ui| {
+                                sized_primary_button(
+                                    ui,
+                                    ui.available_width(),
+                                    &inspector_actions_view.fast_cleanup_label,
+                                )
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            if let Some(target) = selected_target.clone() {
+                                self.queue_delete_for_target(target, ExecutionMode::FastPurge);
+                            }
+                        }
+                        if ui
+                            .add_enabled_ui(inspector_actions_view.can_recycle, |ui| {
+                                sized_button(
+                                    ui,
+                                    ui.available_width(),
+                                    &inspector_actions_view.recycle_label,
+                                )
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            self.execute_selected_delete(ExecutionMode::RecycleBin);
+                        }
+                        let permanent = egui::Button::new(&inspector_actions_view.permanent_label)
+                            .fill(danger_red());
+                        if ui
+                            .add_enabled_ui(inspector_actions_view.can_permanent_delete, |ui| {
+                                ui.add_sized([ui.available_width(), CONTROL_HEIGHT], permanent)
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            if let Some(target) = selected_target.clone() {
+                                self.pending_delete_confirmation = Some(PendingDeleteConfirmation {
+                                    request: Self::delete_request_for_target(target.clone()),
+                                    risk: self.risk_for_path(target.path.as_ref()),
+                                });
+                            }
+                        }
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                        if ui
+                            .add_enabled_ui(inspector_actions_view.can_release_memory, |ui| {
+                                sized_primary_button(
+                                    ui,
+                                    ui.available_width(),
+                                    &inspector_actions_view.release_memory_label,
+                                )
+                            })
+                            .inner
+                            .on_hover_text(&inspector_actions_view.release_memory_tooltip)
+                            .clicked()
+                        {
+                            self.start_system_memory_release();
+                        }
+                    });
+                    if let Some(message) = inspector_actions_view.info_message.as_ref() {
+                        ui.label(
+                            egui::RichText::new(message)
+                                .text_style(egui::TextStyle::Small)
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                    if let Some(feedback) = explorer_feedback_view.as_ref() {
+                        ui.add_space(8.0);
+                        tone_banner(ui, &feedback.title, &feedback.message);
+                    }
+                    if let Some((feedback, success)) = delete_feedback_view.as_ref() {
+                        ui.add_space(10.0);
+                        tone_banner(ui, &feedback.title, &feedback.message);
+                        if !success {
+                            ui.add_space(6.0);
+                        }
+                    }
+                    if let Some(report) = execution_report_view.as_ref() {
+                        ui.add_space(10.0);
+                        stat_row(
+                            ui,
+                            &report.title,
+                            &report.summary_value,
+                            &report.summary_hint,
+                        );
+                        if let Some(label) = report.failure_detail_label.as_ref() {
+                            ui.add_space(8.0);
+                            let response = ui.add_sized(
+                                [ui.available_width(), CONTROL_HEIGHT],
+                                egui::Button::new(label),
+                            );
+                            let response = if let Some(hint) = report.failure_detail_hint.as_ref()
+                            {
+                                response.on_hover_text(hint)
+                            } else {
+                                response
+                            };
+                            if response.clicked() {
+                                self.set_execution_failure_details_open(true);
                             }
                         }
                     }
-                }
-                if ui
-                    .add_enabled_ui(inspector_actions_view.can_fast_cleanup, |ui| {
-                        sized_primary_button(
-                            ui,
-                            ui.available_width(),
-                            &inspector_actions_view.fast_cleanup_label,
-                        )
-                    })
-                    .inner
-                    .clicked()
-                {
-                    if let Some(target) = selected_target.clone() {
-                        self.queue_delete_for_target(target, ExecutionMode::FastPurge);
-                    }
-                }
-                if ui
-                    .add_enabled_ui(inspector_actions_view.can_recycle, |ui| {
-                        sized_button(
-                            ui,
-                            ui.available_width(),
-                            &inspector_actions_view.recycle_label,
-                        )
-                    })
-                    .inner
-                    .clicked()
-                {
-                    self.execute_selected_delete(ExecutionMode::RecycleBin);
-                }
-                let permanent =
-                    egui::Button::new(&inspector_actions_view.permanent_label).fill(danger_red());
-                if ui
-                    .add_enabled_ui(inspector_actions_view.can_permanent_delete, |ui| {
-                        ui.add_sized([ui.available_width(), CONTROL_HEIGHT], permanent)
-                    })
-                    .inner
-                    .clicked()
-                {
-                    if let Some(target) = selected_target.clone() {
-                        self.pending_delete_confirmation = Some(PendingDeleteConfirmation {
-                            request: Self::delete_request_for_target(target.clone()),
-                            risk: self.risk_for_path(target.path.as_ref()),
-                        });
-                    }
-                }
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
-                if ui
-                    .add_enabled_ui(inspector_actions_view.can_release_memory, |ui| {
-                        sized_primary_button(
-                            ui,
-                            ui.available_width(),
-                            &inspector_actions_view.release_memory_label,
-                        )
-                    })
-                    .inner
-                    .on_hover_text(&inspector_actions_view.release_memory_tooltip)
-                    .clicked()
-                {
-                    self.start_system_memory_release();
-                }
-            });
-            if let Some(message) = inspector_actions_view.info_message.as_ref() {
-                ui.label(
-                    egui::RichText::new(message)
-                        .text_style(egui::TextStyle::Small)
-                        .color(ui.visuals().weak_text_color()),
-                );
-            }
-            if let Some(feedback) = explorer_feedback_view.as_ref() {
-                ui.add_space(8.0);
-                tone_banner(ui, &feedback.title, &feedback.message);
-            }
-            if let Some((feedback, success)) = delete_feedback_view.as_ref() {
-                ui.add_space(10.0);
-                tone_banner(ui, &feedback.title, &feedback.message);
-                if !success {
-                    ui.add_space(6.0);
-                }
-            }
-            if let Some(report) = execution_report_view.as_ref() {
-                ui.add_space(10.0);
-                stat_row(
-                    ui,
-                    &report.title,
-                    &report.summary_value,
-                    &report.summary_hint,
-                );
-                if let Some(label) = report.failure_detail_label.as_ref() {
-                    ui.add_space(8.0);
-                    let response = ui.add_sized(
-                        [ui.available_width(), CONTROL_HEIGHT],
-                        egui::Button::new(label),
-                    );
-                    let response = if let Some(hint) = report.failure_detail_hint.as_ref() {
-                        response.on_hover_text(hint)
-                    } else {
-                        response
-                    };
-                    if response.clicked() {
-                        self.set_execution_failure_details_open(true);
-                    }
-                }
-            }
-        });
+                });
 
-        ui.add_space(10.0);
-        surface_panel(ui, |ui| {
-            ui.label(
-                egui::RichText::new(self.t("一键释放系统内存", "Release System Memory"))
-                    .text_style(egui::TextStyle::Name("title".into())),
-            );
-            ui.label(
-                egui::RichText::new(&inspector_actions_view.release_memory_tooltip)
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-            );
-            ui.add_space(10.0);
-            if let Some(system_free) = memory_status_view.system_free_value.as_ref() {
-                ui.label(egui::RichText::new(system_free).size(28.0).strong());
-                if let Some(load_value) = memory_status_view.load_value.as_ref() {
+                ui.add_space(10.0);
+                surface_panel(ui, |ui| {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{} {}",
-                            self.t("内存负载", "load"),
-                            load_value
-                        ))
-                        .text_style(egui::TextStyle::Small)
-                        .color(if memory_status_view.load_warning {
-                            ui.visuals().warn_fg_color
-                        } else {
-                            ui.visuals().weak_text_color()
-                        }),
+                        egui::RichText::new(self.t("一键释放系统内存", "Release System Memory"))
+                            .text_style(egui::TextStyle::Name("title".into())),
                     );
                     ui.add_space(10.0);
-                }
-            }
-            ui.horizontal_wrapped(|ui| {
-                if let Some(process_memory) = memory_status_view.process_working_set_value.as_ref()
-                {
-                    compact_stat_chip(ui, "DirOtter", process_memory);
-                }
-                if let Some(system_free) = memory_status_view.system_free_value.as_ref() {
-                    compact_stat_chip(ui, self.t("系统可用内存", "system free"), system_free);
-                }
-                if let Some(load_value) = memory_status_view.load_value.as_ref() {
-                    compact_stat_chip(ui, self.t("内存负载", "load"), load_value);
-                }
+                    if let Some(system_free) = memory_status_view.system_free_value.as_ref() {
+                        ui.label(egui::RichText::new(system_free).size(28.0).strong());
+                        ui.add_space(8.0);
+                    }
+
+                    if let Some(load_value) = memory_status_view.load_value.as_ref() {
+                        stat_row(
+                            ui,
+                            self.t("内存负载", "load"),
+                            load_value,
+                            "",
+                        );
+                        ui.add_space(6.0);
+                    }
+                    if let Some(process_memory) =
+                        memory_status_view.process_working_set_value.as_ref()
+                    {
+                        stat_row(ui, "DirOtter", process_memory, "");
+                    }
+
+                    if let Some(active_message) = memory_status_view.active_message.as_ref() {
+                        ui.add_space(10.0);
+                        tone_banner(
+                            ui,
+                            self.t("一键释放系统内存", "Release System Memory"),
+                            active_message,
+                        );
+                    }
+
+                    if let Some(delta) = memory_status_view.release_delta_value.as_ref() {
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new(self.t("最近执行", "Last Action"))
+                                .text_style(egui::TextStyle::Small)
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_space(6.0);
+                        stacked_stat_block(
+                            ui,
+                            self.t(
+                                "系统可用内存增加约",
+                                "System free memory increased by about",
+                            ),
+                            delta,
+                            memory_status_view
+                                .release_delta_hint
+                                .as_deref()
+                                .unwrap_or(""),
+                        );
+                    }
+                    if let Some((feedback, success)) = maintenance_feedback_view.as_ref() {
+                        if !success {
+                            ui.add_space(10.0);
+                            tone_banner(ui, &feedback.title, &feedback.message);
+                        }
+                    }
+                });
+                ui.add_space(20.0);
             });
-            if let Some(active_message) = memory_status_view.active_message.as_ref() {
-                ui.add_space(10.0);
-                tone_banner(
-                    ui,
-                    self.t("一键释放系统内存", "Release System Memory"),
-                    active_message,
-                );
-            }
-            if let Some(delta) = memory_status_view.release_delta_value.as_ref() {
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-                stat_row(
-                    ui,
-                    self.t(
-                        "系统可用内存增加约",
-                        "System free memory increased by about",
-                    ),
-                    delta,
-                    memory_status_view
-                        .release_delta_hint
-                        .as_deref()
-                        .unwrap_or(""),
-                );
-            }
-            if let Some((feedback, success)) = maintenance_feedback_view.as_ref() {
-                if !success {
-                    ui.add_space(10.0);
-                    tone_banner(ui, &feedback.title, &feedback.message);
-                }
-            }
-        });
     }
 
     fn ui_delete_confirm_dialog(&mut self, ctx: &egui::Context) {
@@ -4376,6 +4373,20 @@ fn stat_row(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
             }
         });
     });
+}
+
+fn stacked_stat_block(ui: &mut egui::Ui, title: &str, value: &str, subtitle: &str) {
+    ui.label(egui::RichText::new(title).strong());
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(value).size(20.0).strong());
+    if !subtitle.is_empty() {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(subtitle)
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+        );
+    }
 }
 
 fn truncate_middle(input: &str, max_chars: usize) -> String {

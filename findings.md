@@ -308,10 +308,10 @@
 - [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中 `ui_inspector()` 的条件分支已明显收缩，按钮启用条件和反馈文本不再散落在渲染逻辑内部。
 - 这一步的意义在于，Inspector 已从“既做控制流判断又做展示拼接”的混合实现，继续收口为“读取 view-model 后分发动作”的更稳定边界。
 
-## Inspector Workspace Update
-- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 已新增 Workspace Context 展示模型。
-- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中 Inspector 底部的根目录和来源两行也已改为消费 view-model。
-- 这意味着 Inspector 的展示整形已基本从主布局函数中退出，只剩布局和交互分发逻辑还留在 `ui_inspector()`。
+## Inspector Memory Status Update
+- [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 已新增 Inspector 内存状态展示模型，统一整形系统可用内存、内存负载、DirOtter 占用与最近一次释放结果。
+- [lib.rs](E:/DirForge/crates/dirotter-ui/src/lib.rs) 中 Inspector 底部区域已不再显示 `Workspace Context`，而是改成可滚动的系统内存状态卡。
+- 这次重做同时修正了两个交互问题：300px 右栏内横向 chip 容易被裁切，以及释放后新增反馈会把卡片底部信息顶出可视区。
 
 ## Cleanup Details View-Model Update
 - [view_models.rs](E:/DirForge/crates/dirotter-ui/src/view_models.rs) 已新增 cleanup 详情窗对应的 tabs、统计区、按钮态和 item 行展示模型。

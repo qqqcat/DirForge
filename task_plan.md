@@ -546,17 +546,17 @@
    - `cargo build`：通过
    - `dirotter-app`：已重新编译并启动
 
-### Inspector Workspace Context 下沉进展（2026-04-04）
+### Inspector Memory Status 重做（2026-04-04）
 1. 已完成
-   - `view_models.rs` 已新增 Workspace Context 展示模型
-   - 根目录和来源文案已改为由 view-model 统一整形
+   - `Workspace Context` 卡已移除
+   - Inspector 下半区已改为系统内存状态卡
+   - `view_models.rs` 已统一整形系统可用内存、内存负载、DirOtter 占用与最近一次释放结果
 2. 当前收益
-   - `ui_inspector()` 里的 Workspace Context 已不再直接读取和拼装状态字段
-   - Inspector 主函数现在更接近纯布局 + 动作分发，展示整形已基本收口完成
+   - 右栏新增独立纵向滚动，释放后底部信息不再不可达
+   - 原先 300px 窄栏内容易横向裁切的 chip 布局已被移除
+   - 长说明文案已删除，右栏信息密度更接近主流 dashboard 侧栏
 3. 当前验证
-   - `cargo check -p dirotter-ui`：通过
    - `cargo test -p dirotter-ui`：通过
-   - `cargo clippy -p dirotter-ui --all-targets -- -D warnings`：通过
 
 ### Cleanup Details Window 下沉进展（2026-04-04）
 1. 已完成

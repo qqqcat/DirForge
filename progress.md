@@ -283,7 +283,7 @@
 - Inspector 已移除技术性维护动作，只保留普通用户更容易理解的文件操作。
 - `优化 DirOtter 内存占用` 会先保存当前结果快照，再主动释放当前会话内重结果树与相关状态，并在 Windows 上请求收缩工作集。
 - `dirotter-core::NodeStore` 已进一步做 Rust 级瘦身：常驻节点不再重复持有 `name/path String`，而是只保留 intern 后的字符串 ID；结构体体积对比测试显示 `Node` 从旧布局等效的 `128 bytes` 降到 `80 bytes`。
-- 新增 Windows 进程/系统内存采样：状态栏可直接看到 DirOtter 工作集、系统可用内存和内存负载。
+- 新增 Windows 进程/系统内存采样：系统可用内存、内存负载与 DirOtter 工作集现在集中显示在右侧 Inspector 的内存状态卡中。
 - 新增低内存压力自动维护：当应用空闲且系统内存紧张时，会优先把结果树转成磁盘快照并释放内存，结果视图在需要时再自动回载。
 - Diagnostics 新增恢复型维护动作 `清理异常中断的临时删除区`，用于处理上次缓存快清异常中断后遗留的内部待删内容。
 - 法语与西班牙语词典已同步补齐新增的高级工具、维护动作和完成态文案，四语言覆盖测试继续通过。
@@ -573,12 +573,11 @@
   - Inspector 已继续从“状态分支密集区”退成“消费 view-model 的渲染层”
   - 后续如果要继续改 Inspector 的提示策略或交互状态，不需要再在 UI 布局代码里穿插大量条件判断
 
-## 2026-04-04（Inspector Workspace Context 也已下沉）
-- `crates/dirotter-ui/src/view_models.rs` 中已新增 Workspace Context 展示模型。
-- `crates/dirotter-ui/src/lib.rs` 中 Inspector 底部的“根目录 / 来源”两行，当前也改成从 view-model 读取，而不是在 `ui_inspector()` 内直接截断路径和拼来源文本。
-- 当前意义是：
-  - Inspector 区域的主要展示整形已经基本都离开了主布局函数
-  - `ui_inspector()` 现在更接近稳定的渲染壳，而不是继续增长的文案拼装函数
+## 2026-04-04（Inspector Memory Status 卡重做）
+- Inspector 底部原先的 `Workspace Context` 已删除，改成系统内存状态卡。
+- 新卡片只保留真正有用的信息：系统可用内存、内存负载、DirOtter 占用，以及最近一次系统内存释放带来的变化。
+- Inspector 现已补上独立纵向滚动；释放后新增的反馈不会再把卡片底部信息顶出可视区。
+- 原先占空间但无助于决策的长说明文案已移除，300px 窄栏内也不再使用容易横向溢出的 chip 布局。
 
 ## 2026-04-04（Cleanup Details Window 继续下沉）
 - `crates/dirotter-ui/src/view_models.rs` 现在已新增 cleanup 详情窗对应的展示模型，覆盖：

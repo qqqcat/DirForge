@@ -106,7 +106,6 @@ pub(super) struct InspectorMemoryStatusViewModel {
     pub system_free_value: Option<String>,
     pub process_working_set_value: Option<String>,
     pub load_value: Option<String>,
-    pub load_warning: bool,
     pub release_delta_value: Option<String>,
     pub release_delta_hint: Option<String>,
     pub active_message: Option<String>,
@@ -943,7 +942,6 @@ impl DirOtterNativeApp {
             load_value: self
                 .system_memory
                 .map(|memory| format!("{}%", memory.memory_load_percent)),
-            load_warning: self.system_memory_pressure_active(),
             release_delta_value: self
                 .last_system_memory_release
                 .map(|report| format_bytes(report.available_phys_delta())),
