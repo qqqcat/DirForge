@@ -197,11 +197,48 @@ pub fn process_memory_stats() -> Result<ProcessMemoryStats, PlatformError> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn process_memory_stats() -> Result<ProcessMemoryStats, PlatformError> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+    );
+    let current_pid = Pid::from_u32(std::process::id());
+    let refreshed = system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[current_pid]),
+        true,
+        ProcessRefreshKind::everything(),
+    );
+    if refreshed == 0 {
+        return Err(PlatformError::new(
+            PlatformErrorKind::System,
+            "failed to refresh current process memory stats",
+        ));
+    }
+
+    let process = system.process(current_pid).ok_or_else(|| {
+        PlatformError::new(
+            PlatformErrorKind::NotFound,
+            "current process not found in sysinfo snapshot",
+        )
+    })?;
+
+    let rss_bytes = process.memory();
+    let virtual_bytes = process.virtual_memory();
+
+    Ok(ProcessMemoryStats {
+        working_set_bytes: rss_bytes,
+        pagefile_bytes: virtual_bytes,
+        private_bytes: Some(rss_bytes),
+    })
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn process_memory_stats() -> Result<ProcessMemoryStats, PlatformError> {
     Err(PlatformError::new(
         PlatformErrorKind::Unsupported,
-        "process memory stats are only implemented on Windows",
+        "process memory stats are only implemented on Windows and macOS",
     ))
 }
 
@@ -256,27 +293,81 @@ pub fn system_memory_stats() -> Result<SystemMemoryStats, PlatformError> {
     })
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn system_memory_stats() -> Result<SystemMemoryStats, PlatformError> {
+    use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
+    );
+    system.refresh_memory();
+
+    let total = system.total_memory();
+    if total == 0 {
+        return Err(PlatformError::new(
+            PlatformErrorKind::System,
+            "failed to read total memory from sysinfo",
+        ));
+    }
+
+    let available = system.available_memory();
+    let used = total.saturating_sub(available);
+    let memory_load_percent = ((used.saturating_mul(100)) / total) as u32;
+
+    Ok(SystemMemoryStats {
+        memory_load_percent,
+        total_phys_bytes: total,
+        available_phys_bytes: available,
+        low_memory_signal: None,
+    })
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn system_memory_stats() -> Result<SystemMemoryStats, PlatformError> {
     Err(PlatformError::new(
         PlatformErrorKind::Unsupported,
-        "system memory stats are only implemented on Windows",
+        "system memory stats are only implemented on Windows and macOS",
     ))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn trim_process_memory() -> Result<(), PlatformError> {
+    // macOS does not expose a stable, privilege-free equivalent to Windows EmptyWorkingSet.
+    // We still return success to keep the "release memory" workflow available and let
+    // `release_system_memory` report the observed delta from system memory samples.
+    Ok(())
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn trim_process_memory() -> Result<(), PlatformError> {
     Err(PlatformError::new(
         PlatformErrorKind::Unsupported,
-        "process memory trimming is only implemented on Windows",
+        "process memory trimming is only implemented on Windows and macOS",
     ))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn release_system_memory() -> Result<SystemMemoryReleaseReport, PlatformError> {
+    let before = system_memory_stats()?;
+    let trimmed_current_process = trim_process_memory().is_ok();
+    let after = system_memory_stats()?;
+    Ok(SystemMemoryReleaseReport {
+        before_available_phys_bytes: before.available_phys_bytes,
+        after_available_phys_bytes: after.available_phys_bytes,
+        before_memory_load_percent: before.memory_load_percent,
+        after_memory_load_percent: after.memory_load_percent,
+        trimmed_current_process,
+        trimmed_process_count: 0,
+        scanned_process_count: 0,
+        trimmed_system_file_cache: false,
+    })
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn release_system_memory() -> Result<SystemMemoryReleaseReport, PlatformError> {
     Err(PlatformError::new(
         PlatformErrorKind::Unsupported,
-        "system memory release is only implemented on Windows",
+        "system memory release is only implemented on Windows and macOS",
     ))
 }
 

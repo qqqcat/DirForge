@@ -1,6 +1,8 @@
 [workspace]
 members = [
   "crates/dirotter-app",
+  "platforms/dirotter-macos",
+  "platforms/dirotter-linux",
   "crates/dirotter-ui",
   "crates/dirotter-core",
   "crates/dirotter-scan",
