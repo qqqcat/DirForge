@@ -212,6 +212,7 @@ cargo test --workspace
 
 ```bash
 ./scripts/package-linux.sh
+./scripts/package-linux-deb.sh
 ./scripts/package-macos.sh
 ```
 

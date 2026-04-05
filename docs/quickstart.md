@@ -88,5 +88,6 @@ cargo run -p dirotter-linux
 ## 7. 打包
 
 - Linux: `./scripts/package-linux.sh`
+- Linux (.deb): `./scripts/package-linux-deb.sh`
 - macOS: `./scripts/package-macos.sh`
 - 详细步骤见：`docs/release-packaging.md`
