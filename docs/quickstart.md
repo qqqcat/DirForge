@@ -27,6 +27,18 @@ cargo test --workspace
 cargo run -p dirotter-app
 ```
 
+如果在 macOS 上运行独立入口，也可以使用：
+
+```bash
+cargo run -p dirotter-macos
+```
+
+如果在 Linux 上运行独立入口，也可以使用：
+
+```bash
+cargo run -p dirotter-linux
+```
+
 建议按以下路径体验：
 
 1. 更推荐直接点击盘符快捷按钮开始扫描对应卷。
@@ -72,3 +84,10 @@ cargo run -p dirotter-app
 - 无法启动 GUI：确认当前环境支持桌面窗口。
 - 扫描结果偏少：检查目录权限与符号链接策略。
 - 模式选择困难：多数情况下直接用 `快速扫描（推荐）` 即可；其他两档主要用于复杂目录或超大容量磁盘。
+
+## 7. 打包
+
+- Linux: `./scripts/package-linux.sh`
+- Linux (.deb): `./scripts/package-linux-deb.sh`
+- macOS: `./scripts/package-macos.sh`
+- 详细步骤见：`docs/release-packaging.md`

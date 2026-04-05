@@ -1,5 +1,6 @@
 use crate::error::{PlatformError, PlatformErrorKind};
 use std::path::PathBuf;
+#[cfg(target_os = "windows")]
 use std::time::Duration;
 
 pub fn move_to_recycle_bin(path: &str) -> Result<(), PlatformError> {

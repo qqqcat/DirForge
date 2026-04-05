@@ -53,7 +53,16 @@ pub fn select_in_explorer(path: &str) -> Result<(), PlatformError> {
             .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
+        Ok(())
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         let parent = p.parent().unwrap_or_else(|| Path::new("."));
         reveal_in_explorer(&parent.display().to_string())

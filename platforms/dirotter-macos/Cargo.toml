@@ -1,0 +1,10 @@
+[package]
+name = "dirotter-macos"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eframe.workspace = true
+dirotter-ui = { path = "../../crates/dirotter-ui" }
+dirotter-telemetry = { path = "../../crates/dirotter-telemetry" }
+

@@ -165,6 +165,9 @@ crates/
   dirotter-report     # 报告与导出
   dirotter-telemetry  # 观测初始化、运行时指标与 diagnostics 遥测快照
   dirotter-testkit    # 测试夹具、基线与阈值测试
+platforms/
+  dirotter-macos      # macOS 独立入口（复用核心与 UI）
+  dirotter-linux      # Linux 独立入口（复用核心与 UI）
 ```
 
 ## 快速开始
@@ -180,6 +183,24 @@ crates/
 cargo run -p dirotter-app
 ```
 
+macOS 独立入口（新建目录 `platforms/dirotter-macos`）：
+
+```bash
+cargo run -p dirotter-macos
+```
+
+Linux 独立入口（新建目录 `platforms/dirotter-linux`）：
+
+```bash
+cargo run -p dirotter-linux
+```
+
+建议在各自原生平台验证编译：
+
+- macOS 主机：`cargo check -p dirotter-macos`
+- Windows 主机：`cargo check -p dirotter-app`
+- Linux 主机：`cargo check -p dirotter-linux`
+
 ### 质量检查
 
 ```bash
@@ -187,9 +208,20 @@ cargo check --workspace
 cargo test --workspace
 ```
 
+### 打包（Linux / macOS）
+
+```bash
+./scripts/package-linux.sh
+./scripts/package-linux-deb.sh
+./scripts/package-macos.sh
+```
+
 ## 文档导航
 
 - 综合评估：`docs/dirotter-comprehensive-assessment.md`
+- macOS 迁移：`docs/macos-migration.md`
+- Linux 迁移：`docs/linux-migration.md`
+- 打包指南：`docs/release-packaging.md`
 - 系统设计：`docs/dirotter-sdd.md`
 - UI 规格：`docs/dirotter-ui-component-spec.md`
 - 安装与使用：`docs/dirotter-install-usage.md`
