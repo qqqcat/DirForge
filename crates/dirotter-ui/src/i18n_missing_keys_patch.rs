@@ -13,6 +13,14 @@ macro_rules! translation_table {
     };
 }
 
+translation_table!(lookup_fr, {
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Nettoyage rapide\" n'apparaît que lorsque la sélection actuelle correspond aux règles de cache à faible risque. Pour les autres cibles, utilisez Ouvrir l'emplacement, Corbeille ou Suppression permanente.",
+});
+
+translation_table!(lookup_es, {
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Limpieza rápida\" solo aparece cuando la selección actual coincide con las reglas de caché de bajo riesgo. Para otros objetivos, use Abrir ubicación, Papelera de reciclaje o Eliminar permanentemente.",
+});
+
 translation_table!(lookup_ar, {
     "Failure Details" => "تفاصيل الفشل",
     "These items failed to execute. Full paths, failure reasons, and suggestions are listed here." => "فشل تنفيذ هذه العناصر. يتم إدراج المسارات الكاملة وأسباب الفشل والاقتراحات هنا.",
@@ -60,6 +68,7 @@ translation_table!(lookup_ar, {
     "Loading Saved Result Snapshot" => "تحميل لقطة النتيجة المحفوظة",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "يقوم DirOtter بتحميل لقطة النتيجة المحفوظة في الخلفية. سيتم فتح عرض النتائج الخفيف تلقائياً عندما يصبح جاهزاً، من دون فك الضغط أو إعادة بناء شجرة النتائج بالكامل في إطار واجهة المستخدم الحالي.",    "Temporary Session Storage Active" => "تخزين الجلسة المؤقتة نشط",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "تعذر على DirOtter الكتابة إلى دليل الإعدادات المستمرة ورجع إلى تخزين الجلسة المؤقت. سيتم فقدان إعدادات اللغة والموضوع والأداة المتقدمة من هذا التشغيل بعد الخروج.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "يظهر \"التنظيف السريع\" فقط عندما يتطابق التحديد الحالي مع قواعد ذاكرة التخزين المؤقت منخفضة المخاطر. بالنسبة للأهداف الأخرى، استخدم \"فتح موقع الملف\" أو \"سلة المحذوفات\" أو \"الحذف الدائم\".",
 
 });
 
@@ -110,6 +119,7 @@ translation_table!(lookup_de, {
     "Loading Saved Result Snapshot" => "Gespeicherten Ergebnis-Snapshot laden",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter lädt den gespeicherten Ergebnis-Snapshot im Hintergrund. Die leichte Ergebnisansicht wird automatisch geöffnet, sobald sie bereit ist, ohne den gesamten Ergebnisbaum im aktuellen UI-Frame zu entpacken oder neu aufzubauen.",    "Temporary Session Storage Active" => "Temporärer Sitzungsspeicher aktiv",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter konnte nicht in das persistente Einstellungsverzeichnis schreiben und ist auf den temporären Sitzungsspeicher zurückgegriffen. Sprach-, Design- und erweiterte Werkzeugeinstellungen aus dieser Ausführung gehen nach dem Beenden verloren.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "„Schnelle Bereinigung“ wird nur angezeigt, wenn die aktuelle Auswahl den Cache-Regeln für geringes Risiko entspricht. Für andere Ziele verwenden Sie „Dateispeicherort öffnen“, „Papierkorb“ oder „Permanent löschen“.",
 
 });
 
@@ -160,6 +170,7 @@ translation_table!(lookup_he, {
     "Loading Saved Result Snapshot" => "טוען snapshot שמור של תוצאות",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter טוען ברקע את snapshot התוצאות השמור. תצוגת התוצאות הקלה תיפתח אוטומטית כשהיא תהיה מוכנה, בלי לפרוס או לבנות מחדש את כל עץ התוצאות בפריים הנוכחי של ה-UI.",    "Temporary Session Storage Active" => "אחסון הפעלה זמני פעיל",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter לא הצליח לכתוב לספריית ההגדרות הקבועה וחזר לאחסון הפעלה זמני. הגדרות שפה, ערכת נושא וכלי מתקדמות מהרצה זו יאבדו לאחר היציאה.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"ניקוי מהיר\" מופיע רק כאשר הבחירה הנוכחית תואמת את כללי המטמון בסיכון נמוך. עבור יעדים אחרים, השתמש ב'מיקום קובץ פתוח', בסל המיחזור או במחיקה לצמיתות.",
 
 });
 
@@ -210,6 +221,7 @@ translation_table!(lookup_hi, {
     "Loading Saved Result Snapshot" => "सहेजा गया परिणाम स्नैपशॉट लोड हो रहा है",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter पृष्ठभूमि में सहेजा गया परिणाम स्नैपशॉट लोड कर रहा है। हल्का परिणाम दृश्य तैयार होते ही अपने-आप खुलेगा, बिना पूरे परिणाम वृक्ष को मौजूदा UI फ्रेम पर डीकंप्रेस या पुनर्निर्मित किए।",    "Temporary Session Storage Active" => "अस्थायी सत्र संग्रहण सक्रिय",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter लगातार सेटिंग्स निर्देशिका में नहीं लिख सका और अस्थायी सत्र भंडारण पर वापस आ गया है। इस रन से भाषा, थीम और उन्नत टूल सेटिंग्स बाहर निकलने के बाद खो जाएंगी।",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"फास्ट क्लीनअप\" केवल तभी प्रकट होता है जब वर्तमान चयन कम जोखिम वाले कैश नियमों से मेल खाता है। अन्य लक्ष्यों के लिए, ओपन फ़ाइल लोकेशन, रीसायकल बिन, या परमानेंट डिलीट का उपयोग करें।",
 
 });
 
@@ -260,6 +272,7 @@ translation_table!(lookup_id, {
     "Loading Saved Result Snapshot" => "Memuat snapshot hasil tersimpan",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter sedang memuat snapshot hasil yang tersimpan di latar belakang. Tampilan hasil ringan akan terbuka otomatis saat siap, tanpa mendekompresi atau membangun ulang seluruh pohon hasil pada frame UI saat ini.",    "Temporary Session Storage Active" => "Penyimpanan Sesi Sementara Aktif",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter tidak dapat menulis ke direktori pengaturan persisten dan telah kembali ke penyimpanan sesi sementara. Pengaturan bahasa, tema, dan alat lanjutan dari proses ini akan hilang setelah keluar.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Pembersihan Cepat\" hanya muncul bila pilihan saat ini cocok dengan aturan cache berisiko rendah. Untuk target lainnya, gunakan Open File Location, Recycle Bin, atau Permanent Delete.",
 
 });
 
@@ -310,6 +323,7 @@ translation_table!(lookup_it, {
     "Loading Saved Result Snapshot" => "Caricamento snapshot dei risultati salvati",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter sta caricando in background lo snapshot dei risultati salvato. La vista risultati leggera si aprirà automaticamente quando sarà pronta, senza decomprimere o ricostruire l'intero albero dei risultati nel frame UI corrente.",    "Temporary Session Storage Active" => "Archiviazione temporanea della sessione attiva",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter non è riuscito a scrivere nella directory delle impostazioni persistenti ed è tornato all'archiviazione temporanea della sessione. Le impostazioni di lingua, tema e strumenti avanzati di questa esecuzione andranno perse dopo l'uscita.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Pulizia rapida\" viene visualizzata solo quando la selezione corrente corrisponde alle regole della cache a basso rischio. Per altre destinazioni, utilizzare Apri percorso file, Cestino o Eliminazione permanente.",
 
 });
 
@@ -360,6 +374,7 @@ translation_table!(lookup_ja, {
     "Loading Saved Result Snapshot" => "保存済み結果スナップショットを読み込み中",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter は保存済みの結果スナップショットをバックグラウンドで読み込んでいます。軽量結果ビューは準備ができ次第自動的に開き、現在の UI フレーム上で結果ツリー全体を展開したり再構築したりしません。",    "Temporary Session Storage Active" => "一時セッションストレージがアクティブです",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter は永続設定ディレクトリに書き込むことができず、一時セッション ストレージにフォールバックしました。この実行の言語、テーマ、および詳細ツールの設定は、終了後に失われます。",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "「高速クリーンアップ」は、現在の選択内容が低リスク キャッシュ ルールに一致する場合にのみ表示されます。他のターゲットの場合は、「ファイルの場所を開く」、「ごみ箱」、または「完全に削除」を使用します。",
 
 });
 
@@ -410,6 +425,7 @@ translation_table!(lookup_ko, {
     "Loading Saved Result Snapshot" => "저장된 결과 스냅샷을 불러오는 중",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter가 저장된 결과 스냅샷을 백그라운드에서 불러오고 있습니다. 준비가 되면 경량 결과 보기가 자동으로 열리며, 현재 UI 프레임에서 전체 결과 트리를 압축 해제하거나 다시 만들지 않습니다.",    "Temporary Session Storage Active" => "임시 세션 저장소 활성",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter는 영구 설정 디렉터리에 쓸 수 없어 임시 세션 저장소로 대체되었습니다. 종료 후에는 이 실행의 언어, 테마 및 고급 도구 설정이 손실됩니다.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"빠른 정리\"는 현재 선택 항목이 위험도가 낮은 캐시 규칙과 일치하는 경우에만 나타납니다. 다른 대상의 경우 파일 위치 열기, 휴지통 또는 영구 삭제를 사용하십시오.",
 
 });
 
@@ -460,6 +476,7 @@ translation_table!(lookup_nl, {
     "Loading Saved Result Snapshot" => "Opgeslagen resultaatsnapshot laden",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter laadt de opgeslagen resultaatsnapshot op de achtergrond. De lichtgewicht resultaatweergave opent automatisch zodra die klaar is, zonder de volledige resultaatboom in het huidige UI-frame uit te pakken of opnieuw op te bouwen.",    "Temporary Session Storage Active" => "Tijdelijke sessieopslag actief",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter kon niet schrijven naar de directory met persistente instellingen en is teruggevallen op tijdelijke sessieopslag. Taal-, thema- en geavanceerde tool-instellingen van deze run gaan verloren na het afsluiten.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Snelle opschoning\" verschijnt alleen als de huidige selectie overeenkomt met de cacheregels met laag risico. Voor andere doelen gebruikt u Bestandslocatie openen, Prullenbak of Permanent verwijderen.",
 
 });
 
@@ -510,6 +527,7 @@ translation_table!(lookup_pl, {
     "Loading Saved Result Snapshot" => "Ładowanie zapisanej migawki wyników",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter ładuje w tle zapisaną migawkę wyników. Lekki widok wyników otworzy się automatycznie, gdy będzie gotowy, bez rozpakowywania ani przebudowy całego drzewa wyników w bieżącej klatce UI.",    "Temporary Session Storage Active" => "Tymczasowy magazyn sesji aktywny",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter nie mógł zapisać w katalogu ustawień trwałych i powrócił do tymczasowego magazynu sesji. Język, motyw i zaawansowane ustawienia narzędzi z tego uruchomienia zostaną utracone po zamknięciu.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "„Szybkie czyszczenie” pojawia się tylko wtedy, gdy bieżący wybór odpowiada regułom pamięci podręcznej niskiego ryzyka. W przypadku innych celów użyj opcji Otwórz lokalizację pliku, Kosza lub Usuń trwale.",
 
 });
 
@@ -560,6 +578,7 @@ translation_table!(lookup_ru, {
     "Loading Saved Result Snapshot" => "Загрузка сохраненного снимка результатов",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter загружает сохранённый снимок результатов в фоновом режиме. Облегчённый просмотр результатов откроется автоматически, когда будет готов, без распаковки или перестроения всего дерева результатов в текущем кадре UI.",    "Temporary Session Storage Active" => "Временное хранилище сеансов активно",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter не смог выполнить запись в постоянный каталог настроек и вернулся к временному хранилищу сеансов. Язык, тема и дополнительные настройки инструментов из этого запуска будут потеряны после выхода.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "«Быстрая очистка» отображается только в том случае, если текущий выбор соответствует правилам кэширования с низким уровнем риска. Для других целей используйте «Открыть расположение файла», «Корзину» или «Постоянное удаление».",
 
 });
 
@@ -610,6 +629,7 @@ translation_table!(lookup_th, {
     "Loading Saved Result Snapshot" => "กำลังโหลดสแนปช็อตผลลัพธ์ที่บันทึกไว้",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter กำลังโหลดสแนปช็อตผลลัพธ์ที่บันทึกไว้ในเบื้องหลัง มุมมองผลลัพธ์แบบเบาจะเปิดอัตโนมัติเมื่อพร้อม โดยไม่ต้องคลายบีบอัดหรือสร้างต้นไม้ผลลัพธ์ทั้งหมดใหม่ในเฟรม UI ปัจจุบัน",    "Temporary Session Storage Active" => "พื้นที่เก็บข้อมูลเซสชันชั่วคราวใช้งานอยู่",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter ไม่สามารถเขียนไปยังไดเร็กทอรีการตั้งค่าถาวรได้ และได้กลับไปใช้ที่เก็บข้อมูลเซสชันชั่วคราว การตั้งค่าภาษา ธีม และเครื่องมือขั้นสูงจากการรันครั้งนี้จะหายไปหลังจากออก",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"การล้างข้อมูลแบบด่วน\" จะปรากฏขึ้นเฉพาะเมื่อการเลือกปัจจุบันตรงกับกฎแคชที่มีความเสี่ยงต่ำ สำหรับเป้าหมายอื่นๆ ให้ใช้ตำแหน่งเปิดไฟล์ ถังรีไซเคิล หรือการลบถาวร",
 
 });
 
@@ -660,6 +680,7 @@ translation_table!(lookup_tr, {
     "Loading Saved Result Snapshot" => "Kaydedilmiş sonuç anlık görüntüsü yükleniyor",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter kaydedilmiş sonuç anlık görüntüsünü arka planda yüklüyor. Hafif sonuç görünümü hazır olduğunda otomatik olarak açılacak; mevcut UI karesinde tüm sonuç ağacı açılmayacak veya yeniden oluşturulmayacaktır.",    "Temporary Session Storage Active" => "Geçici Oturum Depolama Etkin",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter kalıcı ayarlar dizinine yazamadı ve geçici oturum depolama alanına geri döndü. Bu çalıştırmanın dil, tema ve gelişmiş araç ayarları çıkıştan sonra kaybolacak.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Hızlı Temizleme\" yalnızca mevcut seçim düşük riskli önbellek kurallarıyla eşleştiğinde görünür. Diğer hedefler için Dosya Konumunu Aç, Geri Dönüşüm Kutusu'nu veya Kalıcı Sil'i kullanın.",
 
 });
 
@@ -710,6 +731,7 @@ translation_table!(lookup_uk, {
     "Loading Saved Result Snapshot" => "Завантаження збереженого знімка результатів",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter завантажує збережений знімок результатів у фоновому режимі. Легкий перегляд результатів відкриється автоматично, щойно буде готовий, без розпакування чи перебудови всього дерева результатів у поточному кадрі UI.",    "Temporary Session Storage Active" => "Активне тимчасове сховище сеансу",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter не зміг записати в каталог постійних налаштувань і повернувся до тимчасового сховища сеансів. Мова, тема та розширені параметри інструментів із цього запуску буде втрачено після виходу.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "«Швидке очищення» з’являється лише тоді, коли поточний вибір відповідає правилам кешу з низьким рівнем ризику. Для інших цілей використовуйте «Відкрити розташування файлу», «Кошик» або «Видалити назавжди».",
 
 });
 
@@ -760,11 +782,14 @@ translation_table!(lookup_vi, {
     "Loading Saved Result Snapshot" => "Đang tải snapshot kết quả đã lưu",
     "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter đang tải snapshot kết quả đã lưu ở chế độ nền. Chế độ xem kết quả nhẹ sẽ tự động mở khi sẵn sàng mà không giải nén hoặc dựng lại toàn bộ cây kết quả trên khung UI hiện tại.",    "Temporary Session Storage Active" => "Bộ nhớ phiên tạm thời đang hoạt động",
     "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter không thể ghi vào thư mục cài đặt liên tục và đã quay trở lại bộ lưu trữ phiên tạm thời. Cài đặt ngôn ngữ, chủ đề và công cụ nâng cao từ lần chạy này sẽ bị mất sau khi thoát.",
+    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Dọn dẹp nhanh\" chỉ xuất hiện khi lựa chọn hiện tại phù hợp với quy tắc bộ đệm có rủi ro thấp. Đối với các mục tiêu khác, hãy sử dụng Mở vị trí tệp, Thùng rác hoặc Xóa vĩnh viễn.",
 
 });
 
 pub(crate) fn translate_missing_ui_key(lang: Lang, en: &str) -> Option<&'static str> {
     match lang {
+        Lang::Fr => lookup_fr(en),
+        Lang::Es => lookup_es(en),
         Lang::Ar => lookup_ar(en),
         Lang::De => lookup_de(en),
         Lang::He => lookup_he(en),

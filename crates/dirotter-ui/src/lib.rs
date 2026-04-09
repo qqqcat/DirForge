@@ -2439,16 +2439,17 @@ impl DirOtterNativeApp {
                                 }
                             }
                         }
-                        if ui
-                            .add_enabled_ui(inspector_actions_view.can_fast_cleanup, |ui| {
-                                sized_primary_button(
-                                    ui,
-                                    ui.available_width(),
-                                    &inspector_actions_view.fast_cleanup_label,
-                                )
-                            })
-                            .inner
-                            .clicked()
+                        if inspector_actions_view.show_fast_cleanup
+                            && ui
+                                .add_enabled_ui(inspector_actions_view.can_fast_cleanup, |ui| {
+                                    sized_primary_button(
+                                        ui,
+                                        ui.available_width(),
+                                        &inspector_actions_view.fast_cleanup_label,
+                                    )
+                                })
+                                .inner
+                                .clicked()
                         {
                             if let Some(target) = selected_target.clone() {
                                 self.queue_delete_for_target(target, ExecutionMode::FastPurge);
@@ -5018,6 +5019,39 @@ mod ui_tests {
         assert_eq!(app.selection.selected_node, None);
         assert_eq!(target.path.as_ref(), "c:\\$Recycle.Bin\\S-1-5-18");
         assert_eq!(target.name.as_ref(), "S-1-5-18");
+    }
+
+    #[test]
+    fn inspector_fast_cleanup_only_appears_for_low_risk_cache_targets() {
+        let app = make_test_app();
+        let cache_target = SelectedTarget {
+            node_id: None,
+            name: Arc::from("Cache"),
+            path: Arc::from("c:\\users\\carter\\appdata\\local\\temp\\edge\\cache"),
+            size_bytes: 1024,
+            kind: NodeKind::Dir,
+            file_count: 0,
+            dir_count: 1,
+        };
+        let system_target = SelectedTarget {
+            node_id: None,
+            name: Arc::from("EdgeCore"),
+            path: Arc::from("c:\\program files (x86)\\microsoft\\edgecore"),
+            size_bytes: 1024,
+            kind: NodeKind::Dir,
+            file_count: 0,
+            dir_count: 1,
+        };
+
+        let cache_actions = app.inspector_actions_view_model(Some(&cache_target));
+        assert!(cache_actions.show_fast_cleanup);
+        assert!(cache_actions.can_fast_cleanup);
+        assert!(cache_actions.info_message.is_none());
+
+        let system_actions = app.inspector_actions_view_model(Some(&system_target));
+        assert!(!system_actions.show_fast_cleanup);
+        assert!(!system_actions.can_fast_cleanup);
+        assert!(system_actions.info_message.is_some());
     }
 
     #[test]

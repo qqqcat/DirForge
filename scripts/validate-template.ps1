@@ -138,8 +138,8 @@ Test-ContentContains -RelativePath ".github/memory/progress.md" -Needles @(
 
 if ($errors.Count -gt 0) {
     Write-Host "Template validation failed:" -ForegroundColor Red
-    foreach ($error in $errors) {
-        Write-Host " - $error" -ForegroundColor Red
+    foreach ($validationError in $errors) {
+        Write-Host " - $validationError" -ForegroundColor Red
     }
 
     exit 1

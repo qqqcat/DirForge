@@ -1,27 +1,34 @@
-# DirOtter Quick Start（2026-03-19）
+# DirOtter Quick Start（2026-04-09）
 
-本指南用于 5~10 分钟内完成本地运行、基础验证和结果产物检查。
+本指南用于 5~10 分钟内完成安装、基础验证和结果产物检查。
 
-## 1. 环境准备
+## 1. 最终用户快速启动
+
+1. 从 GitHub Releases 下载 `DirOtter-windows-x64-<version>-portable.zip`
+2. 校验 `.sha256.txt`
+3. 解压后直接运行 `DirOtter.exe`
+4. 如需常驻安装，再执行 `scripts/install-windows-portable.ps1`
+
+## 2. 开发环境准备
 
 - 安装 Rust stable
 - 在 Linux/macOS/Windows 任一桌面环境下运行
 
-## 2. 获取代码
+## 3. 获取代码
 
 ```bash
 git clone <your-repo-url> DirOtter
 cd DirOtter
 ```
 
-## 3. 一次性健康检查
+## 4. 一次性健康检查
 
 ```bash
 cargo check --workspace
 cargo test --workspace
 ```
 
-## 4. 启动桌面应用
+## 5. 启动桌面应用
 
 ```bash
 cargo run -p dirotter-app
@@ -57,13 +64,20 @@ cargo run -p dirotter-app
 22. 如需临时释放系统内存，请直接使用右侧 `Quick Actions` 的 `一键释放系统内存`；该动作会在后台执行，不应让界面锁死，释放结果会显示在右侧 Inspector 的可滚动内存状态卡中。
 23. 如需减少应用自身占用或恢复异常中断的清理现场，请进入 `高级工具 -> Diagnostics` 使用 `优化 DirOtter 内存占用` 或 `清理异常中断的临时删除区`。
 
-## 5. 关键输出文件
+## 6. 发布产物速览
+
+- `DirOtter-windows-x64-<version>-portable.zip`
+- `DirOtter-windows-x64-<version>-portable.zip.sha256.txt`
+- `scripts/install-windows-portable.ps1`
+- `scripts/uninstall-windows-portable.ps1`
+
+## 7. 关键输出文件
 
 - `settings.json`（用户配置文件）
 - `dirotter_report.txt` / `dirotter_summary.json` / `dirotter_duplicates.csv` / `dirotter_errors.csv`
   - 这些属于独立报告模块的可选产物，不再是默认 UI 主路径的自动输出。
 
-## 6. 常见排查
+## 8. 常见排查
 
 - 构建慢：首次依赖编译时间较长，属正常现象。
 - 无法启动 GUI：确认当前环境支持桌面窗口。

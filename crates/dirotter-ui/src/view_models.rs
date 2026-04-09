@@ -56,6 +56,7 @@ pub(super) struct InspectorActionsViewModel {
     pub section_description: String,
     pub open_location_label: String,
     pub fast_cleanup_label: String,
+    pub show_fast_cleanup: bool,
     pub recycle_label: String,
     pub permanent_label: String,
     pub release_memory_label: String,
@@ -757,6 +758,14 @@ impl DirOtterNativeApp {
                 )
                 .to_string(),
             )
+        } else if has_selection && !can_fast_purge_selection {
+            Some(
+                self.t(
+                    "“快速清理缓存”只会在当前选中项命中低风险缓存规则时出现。其他目标请使用打开所在位置、回收站或永久删除。",
+                    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete.",
+                )
+                .to_string(),
+            )
         } else {
             None
         };
@@ -770,6 +779,7 @@ impl DirOtterNativeApp {
                 .to_string(),
             open_location_label: self.t("打开所在位置", "Open File Location").to_string(),
             fast_cleanup_label: self.t("快速清理缓存", "Fast Cleanup").to_string(),
+            show_fast_cleanup: has_selection && can_fast_purge_selection,
             recycle_label: self.t("移到回收站", "Move to Recycle Bin").to_string(),
             permanent_label: self.t("永久删除", "Delete Permanently").to_string(),
             release_memory_label: self

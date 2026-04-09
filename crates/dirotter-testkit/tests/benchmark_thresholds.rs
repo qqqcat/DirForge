@@ -4,6 +4,9 @@ use dirotter_scan::{start_scan, ScanConfig, ScanEvent};
 use serde::Deserialize;
 use std::time::{Duration, Instant};
 
+const SMALL_TREE_EVENT_TIMEOUT: Duration = Duration::from_millis(100);
+const MASSIVE_TREE_EVENT_TIMEOUT: Duration = Duration::from_millis(250);
+
 #[derive(Deserialize)]
 struct PerfBaseline {
     scan_small_tree_ms: u128,
@@ -16,6 +19,16 @@ fn load_baseline() -> PerfBaseline {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/perf/baseline.json");
     let json = std::fs::read_to_string(path).expect("read baseline");
     serde_json::from_str(&json).expect("parse baseline")
+}
+
+fn recv_scan_event(
+    rx: &std::sync::mpsc::Receiver<ScanEvent>,
+    timeout: Duration,
+    context: &str,
+) -> ScanEvent {
+    rx.recv_timeout(timeout).unwrap_or_else(|err| {
+        panic!("{context}: timed out waiting for scan event after {timeout:?}: {err}")
+    })
 }
 
 #[test]
@@ -36,10 +49,7 @@ fn benchmark_scan_threshold_small_tree() {
     );
 
     loop {
-        let event = handle
-            .events
-            .recv_timeout(Duration::from_millis(25))
-            .expect("event");
+        let event = recv_scan_event(&handle.events, SMALL_TREE_EVENT_TIMEOUT, "small tree scan");
         if let ScanEvent::Finished { .. } = event {
             break;
         }
@@ -72,10 +82,11 @@ fn benchmark_scan_threshold_massive_tree() {
     );
 
     loop {
-        let event = handle
-            .events
-            .recv_timeout(Duration::from_millis(50))
-            .expect("event");
+        let event = recv_scan_event(
+            &handle.events,
+            MASSIVE_TREE_EVENT_TIMEOUT,
+            "massive tree scan",
+        );
         if let ScanEvent::Finished { .. } = event {
             break;
         }
@@ -140,10 +151,11 @@ fn benchmark_snapshot_payload_threshold_massive_tree() {
     let mut max_payload_bytes = 0usize;
     let mut saw_snapshot = false;
     loop {
-        let event = handle
-            .events
-            .recv_timeout(Duration::from_millis(25))
-            .expect("event");
+        let event = recv_scan_event(
+            &handle.events,
+            MASSIVE_TREE_EVENT_TIMEOUT,
+            "massive tree snapshot payload",
+        );
         match event {
             ScanEvent::Snapshot { view, .. } => {
                 saw_snapshot = true;

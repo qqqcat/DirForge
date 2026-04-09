@@ -354,6 +354,30 @@
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `target/debug/dirotter-app.exe` 启动 smoke test
 
+### 2026-04-09 Release Gate Update
+
+- Phase 5 中最核心的发布门槛基础设施已落地：
+  - 新增 `.github/workflows/ci.yml`
+  - 新增 `.github/workflows/release-windows.yml`
+  - 新增 `scripts/package-windows.ps1`
+  - 新增 `scripts/sign-windows.ps1`
+  - 新增 `scripts/install-windows-portable.ps1`
+  - 新增 `scripts/uninstall-windows-portable.ps1`
+- 当前 CI 默认执行：
+  - `template validation`
+  - `cargo fmt --all --check`
+  - `cargo check --workspace`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `cargo test --workspace`
+  - `cargo build --release -p dirotter-app`
+- 当前 Windows 发布链路默认生成：
+  - `DirOtter-windows-x64-<version>-portable.zip`
+  - `.sha256.txt`
+  - 可选 Authenticode 签名产物
+- 之前波动的 benchmark 门禁也已一起收口：
+  - massive tree snapshot payload 测试的事件等待改为更稳定的 timeout 常量
+  - 性能阈值断言本身保持不变，避免把真实回归放宽掉
+
 - 扫描链路优化已继续深入到 entry-time 聚合维护：
   - `NodeStore::add_node()` 现在会即时维护祖先 `size_subtree / file_count / dir_count`
   - `Aggregator::make_snapshot_data()` 已移除补账式 `rollup()` 依赖

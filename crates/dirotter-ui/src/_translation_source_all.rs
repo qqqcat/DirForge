@@ -2441,16 +2441,17 @@ impl DirOtterNativeApp {
                                 }
                             }
                         }
-                        if ui
-                            .add_enabled_ui(inspector_actions_view.can_fast_cleanup, |ui| {
-                                sized_primary_button(
-                                    ui,
-                                    ui.available_width(),
-                                    &inspector_actions_view.fast_cleanup_label,
-                                )
-                            })
-                            .inner
-                            .clicked()
+                        if inspector_actions_view.show_fast_cleanup
+                            && ui
+                                .add_enabled_ui(inspector_actions_view.can_fast_cleanup, |ui| {
+                                    sized_primary_button(
+                                        ui,
+                                        ui.available_width(),
+                                        &inspector_actions_view.fast_cleanup_label,
+                                    )
+                                })
+                                .inner
+                                .clicked()
                         {
                             if let Some(target) = selected_target.clone() {
                                 self.queue_delete_for_target(target, ExecutionMode::FastPurge);
@@ -5023,6 +5024,39 @@ mod ui_tests {
     }
 
     #[test]
+    fn inspector_fast_cleanup_only_appears_for_low_risk_cache_targets() {
+        let app = make_test_app();
+        let cache_target = SelectedTarget {
+            node_id: None,
+            name: Arc::from("Cache"),
+            path: Arc::from("c:\\users\\carter\\appdata\\local\\temp\\edge\\cache"),
+            size_bytes: 1024,
+            kind: NodeKind::Dir,
+            file_count: 0,
+            dir_count: 1,
+        };
+        let system_target = SelectedTarget {
+            node_id: None,
+            name: Arc::from("EdgeCore"),
+            path: Arc::from("c:\\program files (x86)\\microsoft\\edgecore"),
+            size_bytes: 1024,
+            kind: NodeKind::Dir,
+            file_count: 0,
+            dir_count: 1,
+        };
+
+        let cache_actions = app.inspector_actions_view_model(Some(&cache_target));
+        assert!(cache_actions.show_fast_cleanup);
+        assert!(cache_actions.can_fast_cleanup);
+        assert!(cache_actions.info_message.is_none());
+
+        let system_actions = app.inspector_actions_view_model(Some(&system_target));
+        assert!(!system_actions.show_fast_cleanup);
+        assert!(!system_actions.can_fast_cleanup);
+        assert!(system_actions.info_message.is_some());
+    }
+
+    #[test]
     fn treemap_entries_only_return_direct_children() {
         let mut store = NodeStore::default();
         let root = store.add_node(None, "d:\\".into(), "d:\\".into(), NodeKind::Dir, 0);
@@ -5649,6 +5683,7 @@ pub(super) struct InspectorActionsViewModel {
     pub section_description: String,
     pub open_location_label: String,
     pub fast_cleanup_label: String,
+    pub show_fast_cleanup: bool,
     pub recycle_label: String,
     pub permanent_label: String,
     pub release_memory_label: String,
@@ -6350,6 +6385,14 @@ impl DirOtterNativeApp {
                 )
                 .to_string(),
             )
+        } else if has_selection && !can_fast_purge_selection {
+            Some(
+                self.t(
+                    "“快速清理缓存”只会在当前选中项命中低风险缓存规则时出现。其他目标请使用打开所在位置、回收站或永久删除。",
+                    "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete.",
+                )
+                .to_string(),
+            )
         } else {
             None
         };
@@ -6363,6 +6406,7 @@ impl DirOtterNativeApp {
                 .to_string(),
             open_location_label: self.t("打开所在位置", "Open File Location").to_string(),
             fast_cleanup_label: self.t("快速清理缓存", "Fast Cleanup").to_string(),
+            show_fast_cleanup: has_selection && can_fast_purge_selection,
             recycle_label: self.t("移到回收站", "Move to Recycle Bin").to_string(),
             permanent_label: self.t("永久删除", "Delete Permanently").to_string(),
             release_memory_label: self

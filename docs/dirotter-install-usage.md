@@ -1,18 +1,38 @@
-# DirOtter 安装与使用指南（2026-03-19）
+# DirOtter 安装与使用指南（2026-04-09）
 
 ## 0. 阶段说明
 
 - 当前：Production Readiness
 - 目标：Production
 
-## 1. 安装
+## 1. 最终用户安装
+
+### 1.1 从 GitHub Releases 安装
+
+1. 下载 `DirOtter-windows-x64-<version>-portable.zip`
+2. 校验同目录下的 `.sha256.txt`
+3. 解压压缩包
+4. 二选一：
+   - 直接运行 `DirOtter.exe`
+   - 执行 `scripts/install-windows-portable.ps1` 安装到 `%LOCALAPPDATA%\Programs\DirOtter`
+
+### 1.2 可选代码签名
+
+- 发布 workflow 会优先尝试对 `DirOtter.exe` 做 Authenticode 签名
+- 需要在 GitHub Actions secrets 中配置：
+  - `WINDOWS_CODESIGN_CERT_BASE64`
+  - `WINDOWS_CODESIGN_PASSWORD`
+  - 可选 `WINDOWS_CODESIGN_TIMESTAMP_URL`
+- 未配置时，发布流程不会失败，但产物会保持未签名状态
+
+## 2. 开发者源码安装
 
 ```bash
 git clone <your-repo-url> DirOtter
 cd DirOtter
 ```
 
-## 2. 构建与测试
+## 3. 构建与测试
 
 ```bash
 cargo fmt --all
@@ -20,13 +40,13 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-## 3. 运行
+## 4. 运行
 
 ```bash
 cargo run -p dirotter-app
 ```
 
-## 4. 推荐使用流程
+## 5. 推荐使用流程
 
 1. 启动后优先使用 Overview 里的盘符快捷按钮，点击即可直接扫描对应卷。
 2. 只有要扫描任意子目录时，再使用盘符区后方的手动目录输入框。
@@ -56,6 +76,7 @@ cargo run -p dirotter-app
    - `Open File Location`
    - `Move to Recycle Bin`
    - `Delete Permanently`
+   - 若当前选中项命中低风险缓存规则，还会额外出现 `快速清理缓存`
    - 选中的是目录时，`Open File Location` 会直接打开该目录
    - 选中的是文件时，`Open File Location` 会在父目录中定位该文件
 12. 永久删除会先弹出确认窗口；点击确认后窗口会立即关闭，并转为顶部横幅、状态栏和 Inspector 中的后台任务提示。
@@ -93,19 +114,37 @@ cargo run -p dirotter-app
 - 启动不再依赖 SQLite 数据库；设置会写入轻量配置文件，扫描结果默认只保留在当前会话内。
 - 默认扫描完成后不会自动写历史、快照或错误 CSV；结果关闭应用即丢弃，需要时只用当前会话临时快照做恢复。
 
-## 5. 性能阈值测试
+## 6. CI 与发布链路
+
+- 持续集成：`.github/workflows/ci.yml`
+  - `template validation`
+  - `cargo fmt --all --check`
+  - `cargo check --workspace`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `cargo test --workspace`
+  - `cargo build --release -p dirotter-app`
+- Windows 发布：`.github/workflows/release-windows.yml`
+  - 触发方式：`v*` tag 或手动 `workflow_dispatch`
+  - 产物：便携 zip、SHA-256 校验文件
+  - 可选步骤：Windows 代码签名
+
+## 7. 性能阈值测试
 
 ```bash
 cargo test -p dirotter-testkit --test benchmark_thresholds
 ```
 
-## 6. 可选产物说明
+说明：
+
+- `benchmark_snapshot_payload_threshold_massive_tree` 现已改为更稳定的事件等待窗口，仍保留 payload 阈值校验，但不再依赖 25ms 调度时机。
+
+## 8. 可选产物说明
 
 - `settings.json`
 - `dirotter_report.txt` / `dirotter_summary.json` / `dirotter_duplicates.csv` / `dirotter_errors.csv`
   - 这些属于独立报告模块可生成的文件，不再是默认 UI 主路径的落盘结果。
 
-## 7. 注意事项
+## 9. 注意事项
 
 - 永久删除是高敏感动作，当前建议优先使用“移到回收站”。
 - 大体量目录扫描时，首次运行可能出现较高 CPU/内存占用。
