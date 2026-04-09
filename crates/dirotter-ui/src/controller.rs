@@ -25,6 +25,10 @@ pub(crate) struct ResultStoreLoadSession {
     pub(crate) relay: Arc<Mutex<ResultStoreLoadRelayState>>,
 }
 
+pub(crate) struct DuplicateScanSession {
+    pub(crate) relay: Arc<Mutex<DuplicateScanRelayState>>,
+}
+
 pub(crate) struct DeleteRelayState {
     pub(crate) started_at: Instant,
     pub(crate) label: String,
@@ -91,6 +95,24 @@ pub(crate) struct ResultStoreLoadRelayState {
     pub(crate) finished: Option<ResultStoreLoadPayload>,
 }
 
+pub(crate) struct DuplicateScanPayload {
+    pub(crate) groups: Vec<dirotter_dup::DuplicateGroup>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DuplicateScanState {
+    pub(crate) candidate_groups_total: usize,
+    pub(crate) candidate_groups_processed: usize,
+    pub(crate) groups_found: usize,
+    pub(crate) groups: Vec<dirotter_dup::DuplicateGroup>,
+}
+
+#[derive(Default)]
+pub(crate) struct DuplicateScanRelayState {
+    pub(crate) finished: Option<DuplicateScanPayload>,
+    pub(crate) snapshot: DuplicateScanState,
+}
+
 pub(crate) struct QueuedDeleteRequest {
     pub(crate) request: DeleteRequestScope,
     pub(crate) mode: ExecutionMode,
@@ -140,6 +162,13 @@ impl DeleteFinalizeSession {
             succeeded_count: snapshot.succeeded_count,
             failed_count: snapshot.failed_count,
         })
+    }
+}
+
+impl DuplicateScanSession {
+    pub(crate) fn snapshot(&self) -> DuplicateScanState {
+        let relay = self.relay.lock().expect("duplicate scan relay lock");
+        relay.snapshot.clone()
     }
 }
 
@@ -370,6 +399,61 @@ pub(crate) fn take_finished_result_store_load(
     session: &ResultStoreLoadSession,
 ) -> Option<ResultStoreLoadPayload> {
     let mut relay = session.relay.lock().expect("result store load relay lock");
+    relay.finished.take()
+}
+
+pub(crate) fn start_duplicate_scan_session(
+    ctx: egui::Context,
+    store: NodeStore,
+) -> DuplicateScanSession {
+    let relay = Arc::new(Mutex::new(DuplicateScanRelayState::default()));
+    let relay_state = Arc::clone(&relay);
+    std::thread::spawn(move || {
+        let groups = dirotter_dup::resolve_duplicates_with_progress(
+            dirotter_dup::collect_size_candidates(&store),
+            dirotter_dup::DupConfig::default(),
+            |progress| {
+                let mut state = relay_state.lock().expect("duplicate scan relay lock");
+                state.snapshot = DuplicateScanState {
+                    candidate_groups_total: progress.candidate_groups_total,
+                    candidate_groups_processed: progress.candidate_groups_processed,
+                    groups_found: progress.groups_found,
+                    groups: {
+                        let mut groups = state.snapshot.groups.clone();
+                        groups.extend(progress.latest_groups);
+                        groups.sort_by(|a, b| {
+                            b.total_waste
+                                .cmp(&a.total_waste)
+                                .then_with(|| b.size.cmp(&a.size))
+                                .then_with(|| a.id.cmp(&b.id))
+                        });
+                        groups
+                    },
+                };
+                drop(state);
+                ctx.request_repaint();
+            },
+        );
+
+        let mut state = relay_state.lock().expect("duplicate scan relay lock");
+        state.finished = Some(DuplicateScanPayload {
+            groups: groups.clone(),
+        });
+        state.snapshot.groups = groups;
+        state.snapshot.groups_found = state.snapshot.groups.len();
+        if state.snapshot.candidate_groups_total > 0 {
+            state.snapshot.candidate_groups_processed = state.snapshot.candidate_groups_total;
+        }
+        drop(state);
+        ctx.request_repaint();
+    });
+    DuplicateScanSession { relay }
+}
+
+pub(crate) fn take_finished_duplicate_scan(
+    session: &DuplicateScanSession,
+) -> Option<DuplicateScanPayload> {
+    let mut relay = session.relay.lock().expect("duplicate scan relay lock");
     relay.finished.take()
 }
 

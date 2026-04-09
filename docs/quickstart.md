@@ -1,85 +1,63 @@
 # DirOtter Quick Start（2026-04-09）
 
-本指南用于 5~10 分钟内完成安装、基础验证和结果产物检查。
+本指南用于 5 到 10 分钟内确认：项目能构建、能启动、主路径能走通。
 
-## 1. 最终用户快速启动
-
-1. 从 GitHub Releases 下载 `DirOtter-windows-x64-<version>-portable.zip`
-2. 校验 `.sha256.txt`
-3. 解压后直接运行 `DirOtter.exe`
-4. 如需常驻安装，再执行 `scripts/install-windows-portable.ps1`
-
-## 2. 开发环境准备
-
-- 安装 Rust stable
-- 在 Linux/macOS/Windows 任一桌面环境下运行
-
-## 3. 获取代码
+## 1. 获取与验证代码
 
 ```bash
 git clone <your-repo-url> DirOtter
 cd DirOtter
-```
-
-## 4. 一次性健康检查
-
-```bash
 cargo check --workspace
 cargo test --workspace
 ```
 
-## 5. 启动桌面应用
+如需完整门禁，再执行：
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo build --workspace
+```
+
+## 2. 启动应用
 
 ```bash
 cargo run -p dirotter-app
 ```
 
-建议按以下路径体验：
+## 3. 建议的 10 分钟体验路径
 
-1. 更推荐直接点击盘符快捷按钮开始扫描对应卷。
-2. 只有要改成任意子目录时，再使用盘符区后面的可选手动目录输入框。
-3. 在扫描页先选择扫描模式：
-   - `快速扫描（推荐）`
-   - `深度扫描`
-   - `超大硬盘模式`
-4. 在扫描页观察进度、排行榜与最近发现列表；扫描中如需终止，请使用 `Stop Scan`。
-5. 点击 `Stop Scan` 后应看到 `Stopping` 态，并在短时间内安全返回，不应出现界面卡死或崩溃。
-6. 如果页面内容超出当前窗口高度，请直接在主内容区滚动。
-7. 扫描结束后先看 Overview 顶部 Hero 区，先确认“现在最值得做什么”。
-8. 再看 Overview 中部 KPI 指标条和全宽 `扫描设置` 卡，最后再下钻到最大文件夹和最大文件。
-9. 如果界面语言切换为 `Français / Español`，首页结构和按钮顺序应保持一致，不应把卡片撑乱或挤重叠。
-10. 直接尝试 `一键清理缓存（推荐）`，它只会处理安全缓存项，并应立即表现为“已移出、后台继续释放空间”。
-11. 如需人工复核，打开 `查看详情`，确认绿色/黄色/红色三类标签。
-12. 打开 Result View，只查看当前目录的直接子项，并按需逐层进入下一层。
-13. Result View 底部的目录结果区会吃满剩余高度；条目较多时直接在该区域内部滚动。
-13. 选中文件夹后，右侧“最大文件”榜单会切换为该目录内部的大文件。
-14. 选中一个文件或文件夹，在右侧 Inspector 中直接执行“移到回收站”或“永久删除”。
-15. 永久删除会先出现确认层；点击确认后窗口会立即关闭，并转为顶部横幅、状态栏和 Inspector 的后台任务提示。
-16. 确认删除后榜单、概览统计、清理建议与结果视图已即时刷新。
-17. 在 Settings 中切换 `中文 / English / Français / Español`，确认导航、状态胶囊和主要操作文本会即时更新。
-18. 反复对同一路径扫描后，应用不应因为缺少数据库文件而影响启动；设置应继续正常保留，扫描结果则只属于当前会话。
-19. 若上次快速缓存清理在后台删除完成前异常退出，本次启动后应自动继续清理内部临时删除区遗留项。
-20. `高级工具 -> Diagnostics` 现在只展示当前会话诊断信息，不再要求手动导出快照、摘要或错误 CSV。
-21. 首页应优先出现单一推荐动作 `一键提速（推荐）`，并根据当前状态自动变成“开始提速扫描 / 一键提速（推荐） / 查看提速建议”。
-22. 如需临时释放系统内存，请直接使用右侧 `Quick Actions` 的 `一键释放系统内存`；该动作会在后台执行，不应让界面锁死，释放结果会显示在右侧 Inspector 的可滚动内存状态卡中。
-23. 如需减少应用自身占用或恢复异常中断的清理现场，请进入 `高级工具 -> Diagnostics` 使用 `优化 DirOtter 内存占用` 或 `清理异常中断的临时删除区`。
+1. 在 Overview 直接点击盘符按钮开始扫描。
+2. 保持默认 `快速扫描（推荐）`，除非你明确在测复杂目录或超大磁盘。
+3. 切到 `Live Scan`，确认进度、排行榜和最近扫描文件都在更新。
+4. 点击一次 `Stop Scan`，确认按钮进入 `Stopping` 并能安全退出。
+5. 重新开始一次扫描并等待完成。
+6. 回到 Overview，先确认首页主动作和清理建议摘要是否合理。
+7. 打开 `查看详情`，检查绿色/黄色/红色风险分级。
+8. 尝试 `一键提速（推荐）` 或 `Fast Cleanup`，确认反馈转为后台任务而不是卡住窗口。
+9. 打开 `Result View`，确认它只展示当前目录的直接子项，并支持逐层下钻。
+10. 在 Inspector 尝试 `Open File Location` 与 `Move to Recycle Bin`。
+11. 在 Settings 切换语言或主题，确认界面即时生效。
+12. 如需维护动作，再进入 `高级工具 -> Diagnostics`。
 
-## 6. 发布产物速览
+## 4. 预期结果
+
+- 扫描、停止扫描和完成态切换不会卡死 UI。
+- 删除完成后的结果同步会在后台进行。
+- Result View 进入时不会在当前 UI 帧同步解压或重建结果树。
+- 设置可持久化；若设置目录不可写，Settings 会明确显示临时会话存储提示。
+
+## 5. 发布产物速查
+
+默认发布产物位于 `dist/`：
 
 - `DirOtter-windows-x64-<version>-portable.zip`
 - `DirOtter-windows-x64-<version>-portable.zip.sha256.txt`
-- `scripts/install-windows-portable.ps1`
-- `scripts/uninstall-windows-portable.ps1`
+- `DirOtter-windows-x64-<version>-portable/BUILD-INFO.json`
 
-## 7. 关键输出文件
+## 6. 常见排查
 
-- `settings.json`（用户配置文件）
-- `dirotter_report.txt` / `dirotter_summary.json` / `dirotter_duplicates.csv` / `dirotter_errors.csv`
-  - 这些属于独立报告模块的可选产物，不再是默认 UI 主路径的自动输出。
-
-## 8. 常见排查
-
-- 构建慢：首次依赖编译时间较长，属正常现象。
-- 无法启动 GUI：确认当前环境支持桌面窗口。
-- 扫描结果偏少：检查目录权限与符号链接策略。
-- 模式选择困难：多数情况下直接用 `快速扫描（推荐）` 即可；其他两档主要用于复杂目录或超大容量磁盘。
+- GUI 无法启动：确认当前环境支持桌面窗口。
+- 中文或多语言出现方框：确认系统具备相应字体，DirOtter 会优先加载系统 fallback。
+- 设置未保留：检查 Settings 页面是否提示当前正在使用临时会话存储。
+- 发布包未签名：这是当前默认行为，需配置 signing secrets 后才会变为签名产物。

@@ -14,7 +14,7 @@ function Get-WorkspaceVersion {
     param([string]$ManifestPath)
 
     $manifest = Get-Content -Raw -Path $ManifestPath
-    if ($manifest -match '(?m)^version = "(?<version>[^"]+)"$') {
+    if ($manifest -match '(?m)^\s*version\s*=\s*"(?<version>[^"]+)"\s*$') {
         return $Matches.version
     }
 

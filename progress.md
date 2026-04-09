@@ -1,5 +1,40 @@
 # Progress Log
 
+## 2026-04-09（项目复评与文档全面同步）
+- 基于当前仓库实际状态完成一轮重新复验，不再只沿用 4 月初的结论。
+- 已重新执行并确认：
+  - `cargo fmt --all -- --check`
+  - `cargo check --workspace`
+  - `cargo test --workspace`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `cargo build --workspace`
+- 已核对正式工程与发布门槛：
+  - `.github/workflows/ci.yml`
+  - `.github/workflows/release-windows.yml`
+  - `scripts/package-windows.ps1`
+  - `scripts/install-windows-portable.ps1`
+  - `scripts/uninstall-windows-portable.ps1`
+- 已核对本地发布产物：
+  - `dist/DirOtter-windows-x64-0.1.0-portable.zip`
+  - `dist/DirOtter-windows-x64-0.1.0-portable.zip.sha256.txt`
+  - `BUILD-INFO.json` 已更新为当前重打包结果，签名状态为 `NotSigned`
+- 已同步更新核心文档：
+  - `README.md`
+  - `findings.md`
+  - `task_plan.md`
+  - `docs/dirotter-comprehensive-assessment.md`
+  - `docs/dirotter-sdd.md`
+  - `docs/dirotter-ui-component-spec.md`
+  - `docs/dirotter-install-usage.md`
+  - `docs/quickstart.md`
+  - `docs/engineering-improvement-plan-2026-04.md`
+- 已顺手修复本地打包版本解析：
+  - `scripts/package-windows.ps1` 现在可直接从根 `Cargo.toml` 解析 workspace 版本
+  - `.github/workflows/release-windows.yml` 的同类版本解析正则已同步收口
+- 本轮结论已明确：
+  - 主产品路径和工程门槛已经稳定
+  - 当前主要短板转为视觉回归、跨平台删除边界和签名发布成熟度
+
 ## 2026-04-04（确认窗完整列表与失败详情卡片）
 - `一键提速` / cleanup 确认窗已改为可滚动列表，全部待处理路径都会以完整路径展示，不再只预览前几项或使用截断路径。
 - Inspector `最近执行` 在存在失败项时已新增可点击详情入口，完整失败路径、失败原因和处理建议统一收口到详情卡片。

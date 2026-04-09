@@ -1,5 +1,51 @@
 # Task Plan
 
+## 2026-04-09 Status Refresh
+
+### Current Judgment
+- 当前工程主线已经从“先把主链路做出来”切换到“把发布成熟度和回归保护补齐”。
+- `fmt / check / test / clippy / build` 当前全部通过，说明代码基线处于可继续收口的稳定状态。
+- UI 拆分、扫描增量化、共享路径化和轻量存储模型都已进入已落地状态，不再只是计划项。
+
+### Phase Status
+- Phase 0：完成
+- Phase 1：主体完成
+  - `cleanup.rs`
+  - `controller.rs`
+  - `dashboard.rs`
+  - `dashboard_impl.rs`
+  - `result_pages.rs`
+  - `settings_pages.rs`
+  - `advanced_pages.rs`
+  - `view_models.rs`
+- Phase 2：主体完成
+  - dirty 祖先传播
+  - dirty-only rollup
+  - entry-time 聚合维护
+  - 固定容量 top-k
+  - snapshot payload / generation threshold guard
+- Phase 3：主体完成
+  - `walker -> aggregator -> publisher` 共享 `Arc<str>`
+  - live/full snapshot 分层
+  - UI 排行、选择态和结果视图逐步改为共享路径或 `NodeId`
+- Phase 4：部分完成
+  - 默认无数据库
+  - `settings.json` + 当前会话快照
+  - 原子写入
+  - 持久设置目录不可写时回退临时会话存储
+  - 临时 session 目录退出清理与陈旧目录回收
+- Phase 5：基础完成
+  - `ci.yml`
+  - `release-windows.yml`
+  - 便携打包 / 安装 / 卸载脚本
+  - 可选签名入口
+
+### Current Next Steps
+1. 为 Overview / Result View / Settings 补最小视觉回归或截图对比。
+2. 扩展真实删除链路的跨平台和异常场景覆盖，尤其是权限不足、锁占用和系统目录边界。
+3. 在正式对外发布前配置 Windows 签名 secrets，并把签名验收纳入发布检查表。
+4. 继续压缩 `dirotter-ui` 协调层剩余体量，但不再以“大拆文件”为目标，而是以稳定职责边界为目标。
+
 ## Goal
 基于 2026-04-03 的整体代码评估结果，推动 DirOtter 从“中上质量、局部已有技术债”的状态，进入“高质量 Rust 工程实现”的下一阶段。
 

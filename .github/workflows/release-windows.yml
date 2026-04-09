@@ -42,7 +42,7 @@ jobs:
             $version = '${{ github.ref_name }}'.TrimStart('v')
           } else {
             $manifest = Get-Content -Raw -Path 'Cargo.toml'
-            if ($manifest -match '(?m)^version = "(?<version>[^"]+)"$') {
+            if ($manifest -match '(?m)^\s*version\s*=\s*"(?<version>[^"]+)"\s*$') {
               $version = $Matches.version
             } else {
               throw 'Unable to resolve workspace version from Cargo.toml.'

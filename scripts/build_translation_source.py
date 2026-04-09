@@ -6,6 +6,7 @@ FILES = [
     "view_models.rs",
     "dashboard_impl.rs",
     "advanced_pages.rs",
+    "duplicates_pages.rs",
     "result_pages.rs",
     "settings_pages.rs",
     "cleanup.rs",

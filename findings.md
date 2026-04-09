@@ -1,5 +1,38 @@
 # Findings
 
+## 2026-04-09 Comprehensive Reassessment
+
+## Verification
+- 已完成一次基于当前仓库状态的重新复验与文档同步。
+- `cargo fmt --all -- --check`：通过
+- `cargo check --workspace`：通过
+- `cargo test --workspace`：通过
+- `cargo clippy --workspace --all-targets -- -D warnings`：通过
+- `cargo build --workspace`：通过
+- 已核对 `.github/workflows/ci.yml` 与 `.github/workflows/release-windows.yml`
+- 已核对本地发布产物：
+  - `dist/DirOtter-windows-x64-0.1.0-portable.zip`
+  - `dist/DirOtter-windows-x64-0.1.0-portable.zip.sha256.txt`
+  - `dist/DirOtter-windows-x64-0.1.0-portable/BUILD-INFO.json`
+
+## Key Findings
+- 当前项目的主风险已经不再是“功能主链路是否成立”，而是“发布成熟度和体验回归保护是否足够”。
+- UI 模块拆分已经越过“计划阶段”，当前 `dirotter-ui` 更接近协调层 + 页面层 + view-model 的结构，而不是单纯的 God File。
+- 扫描快照链路的增量化、共享路径化和 payload 守门已经基本形成体系，继续优化时更应关注回归守卫，而不是重复做同类微调。
+- 轻量存储模型已经稳定：默认无数据库、`settings.json` 持久化、当前会话临时快照恢复、设置目录不可写时回退临时会话存储，逻辑闭环已经形成。
+- 仓库已具备正式 CI、Windows 打包、SHA-256 校验和可选签名入口；当前剩余发布短板主要是签名 secrets 尚未配置、跨平台分发尚未补齐。
+
+## Document Drift Fixed
+- 已更新 `README.md`，把项目现状、验证结果和发布状态同步到 2026-04-09。
+- 已更新 `docs/dirotter-comprehensive-assessment.md`、`docs/dirotter-sdd.md`、`docs/dirotter-ui-component-spec.md`，清理早期仍把 UI 拆分和快照优化写成“待完成”的表述。
+- 已更新 `docs/dirotter-install-usage.md` 与 `docs/quickstart.md`，统一当前安装、验证和使用路径。
+- 已更新 `task_plan.md` 与 `progress.md`，补齐本轮复验结论和后续优先级。
+
+## Current Risks
+- 当前仍缺自动化视觉回归，首页栅格、结果页高度、多语言撑开等问题仍主要依赖人工检查。
+- 真实删除链路的跨平台边界覆盖仍有限，当前最成熟的仍是 Windows 路径。
+- 当前本地发布包处于 `NotSigned` 状态；若进入正式外部分发，必须先补齐签名证书与发布验签流程。
+
 ## 2026-04-03 Engineering Assessment Follow-up
 
 ## Verification

@@ -95,12 +95,16 @@ pub fn build_duplicate_report(groups: &[dirotter_dup::DuplicateGroup]) -> Duplic
         .par_iter()
         .enumerate()
         .flat_map_iter(|(group_idx, group)| {
-            group.members.iter().map(move |member| DuplicateRow {
-                group: group_idx,
-                size: group.size,
-                path: member.path.clone(),
-                keeper: member.keeper,
-            })
+            group
+                .files
+                .iter()
+                .enumerate()
+                .map(move |(file_idx, file)| DuplicateRow {
+                    group: group_idx,
+                    size: group.size,
+                    path: file.path.clone(),
+                    keeper: file_idx == group.recommended_keep_index,
+                })
         })
         .collect();
 
@@ -217,7 +221,7 @@ pub fn export_text_report(store: &NodeStore, output: impl AsRef<Path>) -> io::Re
 mod tests {
     use super::*;
     use dirotter_core::{NodeKind, NodeStore, RiskLevel};
-    use dirotter_dup::{DuplicateGroup, DuplicateMember};
+    use dirotter_dup::{DuplicateFileEntry, DuplicateGroup, DuplicateLocation};
 
     #[test]
     fn export_report_smoke() {
@@ -252,21 +256,31 @@ mod tests {
         export_errors_csv(&errors, &err_out).expect("errors csv");
 
         let groups = vec![DuplicateGroup {
+            id: 1,
             size: 10,
-            members: vec![
-                DuplicateMember {
+            files: vec![
+                DuplicateFileEntry {
                     path: "/tmp/a".into(),
                     size: 10,
-                    keeper: true,
+                    modified_unix_secs: None,
+                    location: DuplicateLocation::Other,
+                    hidden: false,
+                    system: false,
+                    keep_score: 10,
                 },
-                DuplicateMember {
+                DuplicateFileEntry {
                     path: "/tmp/b".into(),
                     size: 10,
-                    keeper: false,
+                    modified_unix_secs: None,
+                    location: DuplicateLocation::Other,
+                    hidden: false,
+                    system: false,
+                    keep_score: 0,
                 },
             ],
-            reclaimable_bytes: 10,
+            total_waste: 10,
             risk: RiskLevel::Low,
+            recommended_keep_index: 0,
         }];
         export_duplicates_csv(&groups, &dup_out).expect("dups csv");
 

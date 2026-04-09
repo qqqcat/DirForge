@@ -2,6 +2,7 @@ mod advanced_pages;
 mod cleanup;
 mod controller;
 mod dashboard;
+mod duplicates_pages;
 mod i18n;
 mod result_pages;
 mod settings_pages;
@@ -26,9 +27,7 @@ use i18n::{
 };
 #[cfg(test)]
 use i18n::{translate_es, translate_fr};
-#[cfg(test)]
-use std::collections::HashMap;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{
@@ -39,11 +38,11 @@ use std::time::{Duration, Instant};
 
 use cleanup::{CleanupAnalysis, CleanupCandidate, CleanupCategory};
 use controller::{
-    start_delete_finalize_session, start_delete_session, start_memory_release_session,
-    start_result_store_load_session, take_finished_delete, take_finished_delete_finalize,
-    take_finished_memory_release, take_finished_result_store_load, DeleteFinalizeInput,
-    DeleteFinalizeSession, DeleteSession, MemoryReleaseSession, QueuedDeleteRequest,
-    ResultStoreLoadSession,
+    start_delete_finalize_session, start_delete_session, start_duplicate_scan_session,
+    start_memory_release_session, start_result_store_load_session, take_finished_delete,
+    take_finished_delete_finalize, take_finished_duplicate_scan, take_finished_memory_release,
+    take_finished_result_store_load, DeleteFinalizeInput, DeleteFinalizeSession, DeleteSession,
+    DuplicateScanSession, MemoryReleaseSession, QueuedDeleteRequest, ResultStoreLoadSession,
 };
 
 const MAX_PENDING_BATCH_EVENTS: usize = 32;
@@ -75,6 +74,7 @@ const NAV_ITEM_HEIGHT: f32 = 36.0;
 const STATUS_BADGE_HEIGHT: f32 = 32.0;
 const CONTROL_MIN_WIDTH: f32 = 56.0;
 const PAGE_MAX_WIDTH: f32 = 1360.0;
+const DUPLICATES_PAGE_MAX_WIDTH: f32 = 1480.0;
 const DASHBOARD_PAGE_MAX_WIDTH: f32 = 1160.0;
 const SETTINGS_PAGE_MAX_WIDTH: f32 = 1040.0;
 const PAGE_SIDE_GUTTER: f32 = 64.0;
@@ -84,6 +84,7 @@ enum Page {
     Dashboard,
     CurrentScan,
     Treemap,
+    Duplicates,
     Errors,
     Diagnostics,
     Settings,
@@ -128,6 +129,7 @@ enum AppStatus {
 enum SelectionSource {
     Table,
     Treemap,
+    Duplicate,
     Error,
 }
 
@@ -227,6 +229,7 @@ struct TreemapEntry {
 pub(crate) struct DeleteRequestScope {
     label: String,
     targets: Vec<SelectedTarget>,
+    selection_origin: SelectionOrigin,
 }
 
 #[derive(Clone)]
@@ -243,6 +246,37 @@ struct CleanupPanelState {
     detail_category: Option<CleanupCategory>,
     selected_paths: HashSet<Arc<str>>,
     pending_delete: Option<CleanupDeleteRequest>,
+}
+
+#[derive(Clone)]
+struct DuplicateGroupSelection {
+    keep_path: Arc<str>,
+    enabled: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DuplicateSort {
+    Waste,
+    Size,
+}
+
+#[derive(Clone)]
+struct DuplicateDeleteRequest {
+    label: String,
+    targets: Vec<SelectedTarget>,
+    estimated_bytes: u64,
+    group_count: usize,
+}
+
+#[derive(Default)]
+struct DuplicatePanelState {
+    groups: Vec<dirotter_dup::DuplicateGroup>,
+    visible_groups: usize,
+    expanded_group_ids: HashSet<u64>,
+    selections: HashMap<u64, DuplicateGroupSelection>,
+    pending_delete: Option<DuplicateDeleteRequest>,
+    sort: Option<DuplicateSort>,
+    show_large_only: bool,
 }
 
 #[derive(Clone)]
@@ -273,6 +307,12 @@ enum CleanupDeleteConfirmAction {
     Close,
 }
 
+enum DuplicateDeleteConfirmAction {
+    RecycleBin,
+    Permanent,
+    Close,
+}
+
 impl Default for ScanRelayState {
     fn default() -> Self {
         Self {
@@ -300,6 +340,7 @@ pub struct DirOtterNativeApp {
     scan_finalize_session: Option<ScanFinalizeSession>,
     delete_session: Option<DeleteSession>,
     delete_finalize_session: Option<DeleteFinalizeSession>,
+    duplicate_scan_session: Option<DuplicateScanSession>,
     result_store_load_session: Option<ResultStoreLoadSession>,
     memory_release_session: Option<MemoryReleaseSession>,
     scan_mode: ScanMode,
@@ -320,6 +361,7 @@ pub struct DirOtterNativeApp {
     completed_top_dirs: Vec<dirotter_scan::RankedPath>,
     last_coalesce_commit: Instant,
     cleanup: CleanupPanelState,
+    duplicates: DuplicatePanelState,
 
     execution_report: Option<ExecutionReport>,
     pending_delete_confirmation: Option<PendingDeleteConfirmation>,
@@ -394,6 +436,7 @@ impl DirOtterNativeApp {
             scan_finalize_session: None,
             delete_session: None,
             delete_finalize_session: None,
+            duplicate_scan_session: None,
             result_store_load_session: None,
             memory_release_session: None,
             scan_mode,
@@ -413,6 +456,10 @@ impl DirOtterNativeApp {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             cleanup: CleanupPanelState::default(),
+            duplicates: DuplicatePanelState {
+                sort: Some(DuplicateSort::Waste),
+                ..DuplicatePanelState::default()
+            },
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -687,10 +734,14 @@ impl DirOtterNativeApp {
         }
     }
 
-    fn delete_request_for_target(target: SelectedTarget) -> DeleteRequestScope {
+    fn delete_request_for_target(
+        target: SelectedTarget,
+        selection_origin: SelectionOrigin,
+    ) -> DeleteRequestScope {
         DeleteRequestScope {
             label: target.path.to_string(),
             targets: vec![target],
+            selection_origin,
         }
     }
 
@@ -934,6 +985,331 @@ impl DirOtterNativeApp {
         });
     }
 
+    fn reset_duplicate_review(&mut self) {
+        self.duplicate_scan_session = None;
+        self.duplicates = DuplicatePanelState {
+            sort: Some(DuplicateSort::Waste),
+            ..DuplicatePanelState::default()
+        };
+    }
+
+    fn start_duplicate_scan_if_needed(&mut self) {
+        if self.scan_active()
+            || self.delete_active()
+            || self.duplicate_scan_session.is_some()
+            || !self.duplicates.groups.is_empty()
+        {
+            return;
+        }
+        let Some(store) = self.store.as_ref().cloned() else {
+            return;
+        };
+        self.duplicate_scan_session =
+            Some(start_duplicate_scan_session(self.egui_ctx.clone(), store));
+    }
+
+    fn process_duplicate_scan_events(&mut self) {
+        if self.duplicate_scan_session.is_none() {
+            return;
+        }
+        let snapshot = {
+            let session = self
+                .duplicate_scan_session
+                .as_ref()
+                .expect("duplicate scan session");
+            session.snapshot()
+        };
+        if !snapshot.groups.is_empty() {
+            self.duplicates.groups = snapshot.groups;
+            self.sort_duplicate_groups();
+            if self.duplicates.visible_groups == 0 {
+                self.duplicates.visible_groups = self.duplicates.groups.len().min(20);
+            }
+            if self.duplicates.selections.is_empty() {
+                self.reset_duplicate_selection_to_recommended();
+            }
+        }
+        let finished = {
+            let session = self
+                .duplicate_scan_session
+                .as_ref()
+                .expect("duplicate scan session");
+            take_finished_duplicate_scan(session)
+        };
+        if let Some(payload) = finished {
+            self.apply_duplicate_groups(payload.groups);
+            self.duplicate_scan_session = None;
+        }
+    }
+
+    fn apply_duplicate_groups(&mut self, groups: Vec<dirotter_dup::DuplicateGroup>) {
+        self.duplicates.groups = groups;
+        self.sort_duplicate_groups();
+        self.duplicates.visible_groups = self.duplicates.groups.len().min(20);
+        self.duplicates.pending_delete = None;
+        self.reset_duplicate_selection_to_recommended();
+    }
+
+    fn sort_duplicate_groups(&mut self) {
+        match self.duplicates.sort.unwrap_or(DuplicateSort::Waste) {
+            DuplicateSort::Waste => self.duplicates.groups.sort_by(|a, b| {
+                b.total_waste
+                    .cmp(&a.total_waste)
+                    .then_with(|| b.size.cmp(&a.size))
+                    .then_with(|| a.id.cmp(&b.id))
+            }),
+            DuplicateSort::Size => self.duplicates.groups.sort_by(|a, b| {
+                b.size
+                    .cmp(&a.size)
+                    .then_with(|| b.total_waste.cmp(&a.total_waste))
+                    .then_with(|| a.id.cmp(&b.id))
+            }),
+        }
+    }
+
+    fn reset_duplicate_selection_to_recommended(&mut self) {
+        self.duplicates.selections = self
+            .duplicates
+            .groups
+            .iter()
+            .filter_map(|group| {
+                group
+                    .files
+                    .get(group.recommended_keep_index)
+                    .map(|recommended| {
+                        (
+                            group.id,
+                            DuplicateGroupSelection {
+                                keep_path: Arc::<str>::from(recommended.path.clone()),
+                                enabled: group.risk != RiskLevel::High,
+                            },
+                        )
+                    })
+            })
+            .collect();
+    }
+
+    fn clear_duplicate_selection(&mut self) {
+        let fallback: Vec<_> = self
+            .duplicates
+            .groups
+            .iter()
+            .filter_map(|group| {
+                group
+                    .files
+                    .get(group.recommended_keep_index)
+                    .map(|recommended| (group.id, Arc::<str>::from(recommended.path.clone())))
+            })
+            .collect();
+        for (group_id, keep_path) in fallback {
+            self.duplicates.selections.insert(
+                group_id,
+                DuplicateGroupSelection {
+                    keep_path,
+                    enabled: false,
+                },
+            );
+        }
+    }
+
+    fn duplicate_group_selection(
+        &self,
+        group: &dirotter_dup::DuplicateGroup,
+    ) -> DuplicateGroupSelection {
+        self.duplicates
+            .selections
+            .get(&group.id)
+            .cloned()
+            .or_else(|| {
+                group
+                    .files
+                    .get(group.recommended_keep_index)
+                    .map(|recommended| DuplicateGroupSelection {
+                        keep_path: Arc::<str>::from(recommended.path.clone()),
+                        enabled: group.risk != RiskLevel::High,
+                    })
+            })
+            .unwrap_or_else(|| DuplicateGroupSelection {
+                keep_path: Arc::<str>::from(""),
+                enabled: false,
+            })
+    }
+
+    fn set_duplicate_group_enabled(&mut self, group_id: u64, enabled: bool) {
+        let Some(group) = self
+            .duplicates
+            .groups
+            .iter()
+            .find(|group| group.id == group_id)
+        else {
+            return;
+        };
+        let current = self.duplicate_group_selection(group);
+        self.duplicates.selections.insert(
+            group_id,
+            DuplicateGroupSelection {
+                keep_path: current.keep_path,
+                enabled,
+            },
+        );
+    }
+
+    fn set_duplicate_group_keep_path(&mut self, group_id: u64, keep_path: Arc<str>) {
+        let Some(group) = self
+            .duplicates
+            .groups
+            .iter()
+            .find(|group| group.id == group_id)
+        else {
+            return;
+        };
+        let current = self.duplicate_group_selection(group);
+        self.duplicates.selections.insert(
+            group_id,
+            DuplicateGroupSelection {
+                keep_path,
+                enabled: current.enabled,
+            },
+        );
+    }
+
+    fn duplicate_delete_totals(&self) -> (usize, usize, u64) {
+        self.duplicates.groups.iter().fold(
+            (0usize, 0usize, 0u64),
+            |(groups, files, bytes), group| {
+                let selection = self.duplicate_group_selection(group);
+                if !selection.enabled {
+                    return (groups, files, bytes);
+                }
+                let delete_count = group
+                    .files
+                    .iter()
+                    .filter(|file| file.path != selection.keep_path.as_ref())
+                    .count();
+                if delete_count == 0 {
+                    return (groups, files, bytes);
+                }
+                (
+                    groups + 1,
+                    files + delete_count,
+                    bytes.saturating_add(group.size.saturating_mul(delete_count as u64)),
+                )
+            },
+        )
+    }
+
+    fn duplicate_target_from_path(&self, path: &str, size: u64) -> SelectedTarget {
+        if let Some(store) = self.store.as_ref() {
+            if let Some(node_id) = store.path_index.get(path).copied() {
+                if let Some(target) = self.target_from_node_id(node_id) {
+                    return target;
+                }
+            }
+        }
+        let name = PathBuf::from(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(Arc::<str>::from)
+            .unwrap_or_else(|| Arc::<str>::from(path));
+        SelectedTarget {
+            node_id: None,
+            name,
+            path: Arc::<str>::from(path),
+            size_bytes: size,
+            kind: NodeKind::File,
+            file_count: 1,
+            dir_count: 0,
+        }
+    }
+
+    fn queue_duplicate_delete_review(&mut self) {
+        let mut targets = Vec::new();
+        let mut group_count = 0usize;
+        for group in &self.duplicates.groups {
+            let selection = self.duplicate_group_selection(group);
+            if !selection.enabled {
+                continue;
+            }
+            let mut any_selected = false;
+            for file in &group.files {
+                if file.path == selection.keep_path.as_ref() {
+                    continue;
+                }
+                any_selected = true;
+                targets.push(self.duplicate_target_from_path(&file.path, file.size));
+            }
+            if any_selected {
+                group_count += 1;
+            }
+        }
+        if targets.is_empty() {
+            return;
+        }
+        let estimated_bytes = targets.iter().map(|target| target.size_bytes).sum();
+        self.duplicates.pending_delete = Some(DuplicateDeleteRequest {
+            label: self
+                .t("本次将处理的项目", "Items In This Cleanup")
+                .to_string(),
+            targets,
+            estimated_bytes,
+            group_count,
+        });
+    }
+
+    fn handle_duplicate_delete_confirm_action(&mut self, action: DuplicateDeleteConfirmAction) {
+        let Some(request) = self.duplicates.pending_delete.clone() else {
+            return;
+        };
+        match action {
+            DuplicateDeleteConfirmAction::RecycleBin => {
+                self.queue_delete_request(
+                    DeleteRequestScope {
+                        label: request.label,
+                        targets: request.targets,
+                        selection_origin: SelectionOrigin::Duplicates,
+                    },
+                    ExecutionMode::RecycleBin,
+                );
+            }
+            DuplicateDeleteConfirmAction::Permanent => {
+                self.queue_delete_request(
+                    DeleteRequestScope {
+                        label: request.label,
+                        targets: request.targets,
+                        selection_origin: SelectionOrigin::Duplicates,
+                    },
+                    ExecutionMode::Permanent,
+                );
+            }
+            DuplicateDeleteConfirmAction::Close => {}
+        }
+    }
+
+    fn open_duplicate_file_location(&mut self, path: &str) {
+        match dirotter_platform::select_in_explorer(path) {
+            Ok(_) => {
+                self.explorer_feedback = Some((
+                    self.t(
+                        "已在系统文件管理器中打开目标位置。",
+                        "Opened the target location in the system file manager.",
+                    )
+                    .to_string(),
+                    true,
+                ));
+            }
+            Err(err) => {
+                self.explorer_feedback = Some((
+                    format!(
+                        "{}: {}",
+                        self.t("打开位置失败", "Failed to open location"),
+                        err.message
+                    ),
+                    false,
+                ));
+            }
+        }
+    }
+
     fn treemap_entries(&self, scope_path: &str, limit: usize) -> Vec<TreemapEntry> {
         let Some(store) = self.store.as_ref() else {
             return Vec::new();
@@ -1010,6 +1386,7 @@ impl DirOtterNativeApp {
     fn selection_origin(&self) -> SelectionOrigin {
         match self.selection.source {
             Some(SelectionSource::Table | SelectionSource::Treemap) => SelectionOrigin::TopFiles,
+            Some(SelectionSource::Duplicate) => SelectionOrigin::Duplicates,
             Some(SelectionSource::Error) | None => SelectionOrigin::Manual,
         }
     }
@@ -1311,7 +1688,8 @@ impl DirOtterNativeApp {
     }
 
     fn queue_delete_for_target(&mut self, target: SelectedTarget, mode: ExecutionMode) {
-        self.queue_delete_request(Self::delete_request_for_target(target), mode);
+        let origin = self.selection_origin();
+        self.queue_delete_request(Self::delete_request_for_target(target, origin), mode);
     }
 
     fn queue_delete_request(&mut self, request: DeleteRequestScope, mode: ExecutionMode) {
@@ -1344,7 +1722,7 @@ impl DirOtterNativeApp {
                     )
                 })
                 .collect(),
-            self.selection_origin(),
+            request.selection_origin,
         );
         self.pending_delete_confirmation = None;
         self.execution_report = None;
@@ -1451,6 +1829,7 @@ impl DirOtterNativeApp {
         self.missing_result_store_root = None;
         self.summary = payload.summary;
         self.apply_cleanup_analysis(payload.cleanup_analysis);
+        self.reset_duplicate_review();
         self.selection = SelectionState::default();
         self.status = if payload.report.succeeded > 0 {
             AppStatus::DeleteExecuted
@@ -1522,6 +1901,7 @@ impl DirOtterNativeApp {
         self.completed_top_dirs = self.live_top_dirs.clone();
         self.execution_report = None;
         self.cleanup = CleanupPanelState::default();
+        self.reset_duplicate_review();
         self.refresh_diagnostics();
         self.scan_session = None;
         self.scan_finalize_session = None;
@@ -1548,6 +1928,7 @@ impl DirOtterNativeApp {
         self.errors = payload.errors;
         self.sync_rankings_from_store();
         self.apply_cleanup_analysis(Some(payload.cleanup_analysis));
+        self.reset_duplicate_review();
         self.status = AppStatus::Completed;
         self.scan_current_path = None;
         self.scan_last_event_at = None;
@@ -1656,6 +2037,7 @@ impl DirOtterNativeApp {
         self.missing_result_store_root = None;
         self.selection = SelectionState::default();
         self.treemap_focus_path = None;
+        self.reset_duplicate_review();
         true
     }
 
@@ -1672,6 +2054,7 @@ impl DirOtterNativeApp {
                 if self.cleanup.analysis.is_none() {
                     self.refresh_cleanup_analysis();
                 }
+                self.reset_duplicate_review();
                 self.refresh_memory_status();
                 true
             }
@@ -1731,6 +2114,7 @@ impl DirOtterNativeApp {
             self.live_top_dirs = payload.top_dirs.clone();
             self.completed_top_dirs = payload.top_dirs;
             self.apply_cleanup_analysis(payload.cleanup_analysis);
+            self.reset_duplicate_review();
             self.refresh_memory_status();
             self.missing_result_store_root = None;
         } else {
@@ -1832,6 +2216,7 @@ impl DirOtterNativeApp {
         self.scan_last_event_at = None;
         self.status = AppStatus::Idle;
         self.treemap_focus_path = None;
+        self.reset_duplicate_review();
         let trimmed = dirotter_platform::trim_process_memory();
         self.refresh_memory_status();
         self.refresh_diagnostics();
@@ -1929,6 +2314,7 @@ impl DirOtterNativeApp {
         self.result_store_load_session = None;
         self.missing_result_store_root = None;
         self.cleanup = CleanupPanelState::default();
+        self.reset_duplicate_review();
         self.delete_session = None;
         self.delete_finalize_session = None;
         self.queued_delete = None;
@@ -2151,6 +2537,7 @@ impl DirOtterNativeApp {
             (Page::Dashboard, "概览", "Overview"),
             (Page::CurrentScan, "扫描进行中", "Live Scan"),
             (Page::Treemap, "结果视图", "Result View"),
+            (Page::Duplicates, "重复文件", "Duplicate Files"),
             (Page::Settings, "偏好设置", "Settings"),
         ] {
             let selected = self.page == p;
@@ -2207,6 +2594,10 @@ impl DirOtterNativeApp {
 
     fn ui_treemap(&mut self, ui: &mut egui::Ui) {
         result_pages::ui_treemap(self, ui);
+    }
+
+    fn ui_duplicates(&mut self, ui: &mut egui::Ui) {
+        duplicates_pages::ui_duplicates(self, ui);
     }
 
     fn ui_errors(&mut self, ui: &mut egui::Ui) {
@@ -2479,7 +2870,10 @@ impl DirOtterNativeApp {
                         {
                             if let Some(target) = selected_target.clone() {
                                 self.pending_delete_confirmation = Some(PendingDeleteConfirmation {
-                                    request: Self::delete_request_for_target(target.clone()),
+                                    request: Self::delete_request_for_target(
+                                        target.clone(),
+                                        self.selection_origin(),
+                                    ),
                                     risk: self.risk_for_path(target.path.as_ref()),
                                 });
                             }
@@ -2936,6 +3330,7 @@ impl DirOtterNativeApp {
                     DeleteRequestScope {
                         label: request.label,
                         targets: request.targets,
+                        selection_origin: SelectionOrigin::Manual,
                     },
                     request.mode,
                 );
@@ -3082,6 +3477,95 @@ impl DirOtterNativeApp {
         }
         if !keep_open {
             self.cleanup.pending_delete = None;
+        }
+    }
+
+    fn ui_duplicate_delete_confirm_dialog(&mut self, ctx: &egui::Context) {
+        let Some(request) = self.duplicates.pending_delete.clone() else {
+            return;
+        };
+
+        let mut keep_open = true;
+        let mut actions = Vec::new();
+        egui::Window::new(self.t("一键清理确认", "Confirm Cleanup"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.set_min_width(460.0);
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "建议：日常清理优先移到回收站。只有在你非常确定时才使用永久删除。",
+                        "Recommendation: prefer recycle-bin deletion for routine cleanup. Use permanent delete only when you are certain.",
+                    ))
+                    .strong(),
+                );
+                ui.add_space(10.0);
+                stat_row(
+                    ui,
+                    self.t("项目数", "Items"),
+                    &format_count(request.targets.len() as u64),
+                    "",
+                );
+                stat_row(
+                    ui,
+                    self.t("任务", "Task"),
+                    &format_count(request.group_count as u64),
+                    "",
+                );
+                stat_row(
+                    ui,
+                    self.t("预计释放", "Estimated Reclaim"),
+                    &format_bytes(request.estimated_bytes),
+                    self.t(
+                        "建议：日常清理优先移到回收站。只有在你非常确定时才使用永久删除。",
+                        "Recommendation: prefer recycle-bin deletion for routine cleanup. Use permanent delete only when you are certain.",
+                    ),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(self.t(
+                        "建议：日常清理优先移到回收站。只有在你非常确定时才使用永久删除。",
+                        "Recommendation: prefer recycle-bin deletion for routine cleanup. Use permanent delete only when you are certain.",
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let permanent =
+                        egui::Button::new(self.t("永久删除", "Delete Permanently")).fill(danger_red());
+                    if ui.add_enabled(!self.delete_active(), permanent).clicked() {
+                        actions.push(DuplicateDeleteConfirmAction::Permanent);
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.delete_active(),
+                            egui::Button::new(self.t("移到回收站", "Move to Recycle Bin")),
+                        )
+                        .clicked()
+                    {
+                        actions.push(DuplicateDeleteConfirmAction::RecycleBin);
+                    }
+                    if ui.button(self.t("取消", "Cancel")).clicked() {
+                        actions.push(DuplicateDeleteConfirmAction::Close);
+                    }
+                });
+            });
+
+        for action in actions {
+            if matches!(
+                action,
+                DuplicateDeleteConfirmAction::Close
+                    | DuplicateDeleteConfirmAction::RecycleBin
+                    | DuplicateDeleteConfirmAction::Permanent
+            ) {
+                keep_open = false;
+            }
+            self.handle_duplicate_delete_confirm_action(action);
+        }
+        if !keep_open {
+            self.duplicates.pending_delete = None;
         }
     }
 
@@ -3383,6 +3867,7 @@ impl eframe::App for DirOtterNativeApp {
         self.process_scan_finalize_events();
         self.process_delete_events();
         self.process_delete_finalize_events();
+        self.process_duplicate_scan_events();
         self.process_result_store_load_events();
         self.process_memory_release_events();
         self.process_queued_delete();
@@ -3397,7 +3882,11 @@ impl eframe::App for DirOtterNativeApp {
             "DirOtter {}",
             self.status_text()
         )));
-        if self.scan_active() || delete_active || self.system_memory_release_active() {
+        if self.scan_active()
+            || delete_active
+            || self.system_memory_release_active()
+            || self.duplicate_scan_session.is_some()
+        {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
 
@@ -3453,6 +3942,11 @@ impl eframe::App for DirOtterNativeApp {
                     Page::Treemap => {
                         with_page_width_fill_height(ui, PAGE_MAX_WIDTH, |ui| self.ui_treemap(ui))
                     }
+                    Page::Duplicates => {
+                        with_page_width_fill_height(ui, DUPLICATES_PAGE_MAX_WIDTH, |ui| {
+                            self.ui_duplicates(ui)
+                        })
+                    }
                     Page::Errors => with_page_width_fill_height(ui, PAGE_MAX_WIDTH + 20.0, |ui| {
                         self.ui_errors(ui)
                     }),
@@ -3472,6 +3966,7 @@ impl eframe::App for DirOtterNativeApp {
         self.ui_cleanup_details_window(ctx);
         self.ui_execution_failure_details_dialog(ctx);
         self.ui_cleanup_delete_confirm_dialog(ctx);
+        self.ui_duplicate_delete_confirm_dialog(ctx);
         self.ui_delete_confirm_dialog(ctx);
     }
 }
@@ -4447,6 +4942,7 @@ mod ui_tests {
             scan_finalize_session: None,
             delete_session: None,
             delete_finalize_session: None,
+            duplicate_scan_session: None,
             result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
@@ -4466,6 +4962,10 @@ mod ui_tests {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             cleanup: CleanupPanelState::default(),
+            duplicates: DuplicatePanelState {
+                sort: Some(DuplicateSort::Waste),
+                ..DuplicatePanelState::default()
+            },
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -4880,6 +5380,7 @@ mod ui_tests {
             scan_finalize_session: None,
             delete_session: None,
             delete_finalize_session: None,
+            duplicate_scan_session: None,
             result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
@@ -4899,6 +5400,10 @@ mod ui_tests {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             cleanup: CleanupPanelState::default(),
+            duplicates: DuplicatePanelState {
+                sort: Some(DuplicateSort::Waste),
+                ..DuplicatePanelState::default()
+            },
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -4966,6 +5471,7 @@ mod ui_tests {
             scan_finalize_session: None,
             delete_session: None,
             delete_finalize_session: None,
+            duplicate_scan_session: None,
             result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
@@ -4985,6 +5491,10 @@ mod ui_tests {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             cleanup: CleanupPanelState::default(),
+            duplicates: DuplicatePanelState {
+                sort: Some(DuplicateSort::Waste),
+                ..DuplicatePanelState::default()
+            },
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5093,6 +5603,7 @@ mod ui_tests {
             scan_finalize_session: None,
             delete_session: None,
             delete_finalize_session: None,
+            duplicate_scan_session: None,
             result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
@@ -5112,6 +5623,10 @@ mod ui_tests {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             cleanup: CleanupPanelState::default(),
+            duplicates: DuplicatePanelState {
+                sort: Some(DuplicateSort::Waste),
+                ..DuplicatePanelState::default()
+            },
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5173,6 +5688,7 @@ mod ui_tests {
             scan_finalize_session: None,
             delete_session: None,
             delete_finalize_session: None,
+            duplicate_scan_session: None,
             result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
@@ -5192,6 +5708,10 @@ mod ui_tests {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             cleanup: CleanupPanelState::default(),
+            duplicates: DuplicatePanelState {
+                sort: Some(DuplicateSort::Waste),
+                ..DuplicatePanelState::default()
+            },
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5248,6 +5768,7 @@ mod ui_tests {
             scan_finalize_session: None,
             delete_session: None,
             delete_finalize_session: None,
+            duplicate_scan_session: None,
             result_store_load_session: None,
             memory_release_session: None,
             scan_mode: ScanMode::Quick,
@@ -5267,6 +5788,10 @@ mod ui_tests {
             completed_top_dirs: Vec::new(),
             last_coalesce_commit: Instant::now(),
             cleanup: CleanupPanelState::default(),
+            duplicates: DuplicatePanelState {
+                sort: Some(DuplicateSort::Waste),
+                ..DuplicatePanelState::default()
+            },
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
