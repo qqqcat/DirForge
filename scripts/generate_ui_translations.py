@@ -17,6 +17,12 @@ SEPARATOR_PATTERN = re.compile(r"<\s*1234567890\s*>")
 TRANSLATION_URL = "https://translate.googleapis.com/translate_a/single"
 MYMEMORY_URL = "https://api.mymemory.translated.net/get"
 BATCH_SIZE = 25
+INVISIBLE_CHARACTERS = {
+    "\u200b",
+    "\u200c",
+    "\u200d",
+    "\ufeff",
+}
 
 LANGS = [
     ("fr", "fr", "French"),
@@ -47,6 +53,10 @@ def rust_escape(value: str) -> str:
         .replace("\n", "\\n")
         .replace("\t", "\\t")
     )
+
+
+def sanitize_translation_text(value: str) -> str:
+    return "".join(ch for ch in value if ch not in INVISIBLE_CHARACTERS).strip()
 
 
 def extract_english_translation_keys(source: str) -> list[str]:
@@ -196,7 +206,7 @@ def fetch_translations(target_lang: str, keys: list[str]) -> list[str]:
 
 
 def split_translated_values(translated: str) -> list[str]:
-    return [segment.strip() for segment in SEPARATOR_PATTERN.split(translated)]
+    return [sanitize_translation_text(segment) for segment in SEPARATOR_PATTERN.split(translated)]
 
 
 def render_table(lang_code: str, lang_name: str, keys: list[str], values: list[str]) -> str:
@@ -205,7 +215,9 @@ def render_table(lang_code: str, lang_name: str, keys: list[str], values: list[s
         f"translation_table!(lookup_{fn_suffix}, {{",
     ]
     for key, value in zip(keys, values):
-        lines.append(f'    "{rust_escape(key)}" => "{rust_escape(value)}",')
+        lines.append(
+            f'    "{rust_escape(key)}" => "{rust_escape(sanitize_translation_text(value))}",'
+        )
     lines.append("});")
     lines.append("")
     lines.append(f"pub(crate) fn translate_{fn_suffix}(en: &str) -> &str {{")

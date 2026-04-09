@@ -132,6 +132,17 @@ pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &
         ),
     );
     ui.add_space(10.0);
+    if app.cache.uses_ephemeral_settings() {
+        tone_banner(
+            ui,
+            app.t("当前为临时会话存储", "Temporary Session Storage Active"),
+            app.t(
+                "DirOtter 当前无法写入持久设置目录，已退回到临时会话存储。本次运行中的语言、主题和高级工具设置会在退出后丢失。",
+                "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit.",
+            ),
+        );
+        ui.add_space(14.0);
+    }
     tone_banner(
             ui,
             app.t("舒适优先的工作台", "A Comfort-First Workspace"),

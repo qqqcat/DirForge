@@ -263,7 +263,7 @@
 
 - 已将本计划文档落地。
 - 已对当前已确认的静态检查问题和低成本实现问题做修复。
-- 已准备重新执行构建、测试和 clippy 校验，并把结果同步到相关文档。
+- 已完成 `fmt / build / test / clippy` 校验，并将结果同步到相关文档。
 
 ## 6. 阶段进展
 
@@ -337,6 +337,22 @@
   - 针对 snapshot 节奏的更明确性能基准
 
 ### 2026-04-03 Next Layer Update 2
+
+### 2026-04-09 Validation Update
+
+- 默认无数据库的轻量存储模型已继续收口：
+  - 启动阶段会优先使用持久 `settings.json`
+  - 若持久目录不可写，则回退到临时会话存储并在设置页明确提示
+  - 会话快照临时目录增加退出清理与陈旧目录回收
+- 翻译生成链路已补充两项防漂移措施：
+  - `scripts/generate_ui_translations.py` 会清洗零宽字符，避免生成文件再次触发 `clippy::invisible_characters`
+  - `scripts/build_translation_source.py` 用于重建 `crates/dirotter-ui/src/_translation_source_all.rs`
+- 当前验证结果：
+  - `cargo fmt --all --check`
+  - `cargo build -p dirotter-app`
+  - `cargo test --workspace`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `target/debug/dirotter-app.exe` 启动 smoke test
 
 - 扫描链路优化已继续深入到 entry-time 聚合维护：
   - `NodeStore::add_node()` 现在会即时维护祖先 `size_subtree / file_count / dir_count`

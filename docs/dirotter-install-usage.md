@@ -56,6 +56,8 @@ cargo run -p dirotter-app
    - `Open File Location`
    - `Move to Recycle Bin`
    - `Delete Permanently`
+   - 选中的是目录时，`Open File Location` 会直接打开该目录
+   - 选中的是文件时，`Open File Location` 会在父目录中定位该文件
 12. 永久删除会先弹出确认窗口；点击确认后窗口会立即关闭，并转为顶部横幅、状态栏和 Inspector 中的后台任务提示。
 13. 回收站删除成功后会提示可从系统回收站恢复；Windows 下还会做系统回收站二次校验。
 14. 删除成功后，排行榜、概览统计、清理建议和结果视图会立即局部刷新。

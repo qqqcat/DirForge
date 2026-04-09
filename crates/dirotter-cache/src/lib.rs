@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SETTINGS_SCHEMA_VERSION: u32 = 1;
 use std::sync::atomic::{AtomicU64, Ordering};
+const TRANSIENT_STORAGE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 static TEST_SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,22 +59,25 @@ impl Default for SettingsDocument {
 pub struct CacheStore {
     settings_path: PathBuf,
     session_root: PathBuf,
+    ephemeral_settings: bool,
 }
 
 impl CacheStore {
     pub fn open_default() -> Result<Self, StorageError> {
+        let _ = purge_stale_transient_storage_roots();
         let settings_dir = default_settings_dir();
         let session_root = default_session_root();
-        Self::from_paths(settings_dir.join("settings.json"), session_root)
+        Self::from_paths_internal(settings_dir.join("settings.json"), session_root, false)
     }
 
     pub fn open_ephemeral() -> Result<Self, StorageError> {
+        let _ = purge_stale_transient_storage_roots();
         let root = std::env::temp_dir().join(format!(
             "dirotter-ephemeral-{}-{}",
             std::process::id(),
             now_unix_ms()
         ));
-        Self::from_paths(root.join("settings.json"), root.join("session"))
+        Self::from_paths_internal(root.join("settings.json"), root.join("session"), true)
     }
 
     pub fn for_tests() -> Result<Self, StorageError> {
@@ -83,12 +87,20 @@ impl CacheStore {
             std::process::id(),
             nonce
         ));
-        Self::from_paths(root.join("settings.json"), root.join("session"))
+        Self::from_paths_internal(root.join("settings.json"), root.join("session"), true)
     }
 
     pub fn from_paths(
         settings_path: impl AsRef<Path>,
         session_root: impl AsRef<Path>,
+    ) -> Result<Self, StorageError> {
+        Self::from_paths_internal(settings_path, session_root, false)
+    }
+
+    fn from_paths_internal(
+        settings_path: impl AsRef<Path>,
+        session_root: impl AsRef<Path>,
+        ephemeral_settings: bool,
     ) -> Result<Self, StorageError> {
         let settings_path = settings_path.as_ref().to_path_buf();
         let session_root = session_root.as_ref().to_path_buf();
@@ -101,6 +113,7 @@ impl CacheStore {
         Ok(Self {
             settings_path,
             session_root,
+            ephemeral_settings,
         })
     }
 
@@ -110,6 +123,10 @@ impl CacheStore {
 
     pub fn session_root(&self) -> &Path {
         &self.session_root
+    }
+
+    pub fn uses_ephemeral_settings(&self) -> bool {
+        self.ephemeral_settings
     }
 
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, StorageError> {
@@ -124,8 +141,8 @@ impl CacheStore {
     }
 
     pub fn save_snapshot(&self, root: &str, store: &NodeStore) -> Result<(), StorageError> {
-        let encoded =
-            bincode::serialize(store).map_err(|err| StorageError::new(StorageErrorKind::Encode, err.to_string()))?;
+        let encoded = bincode::serialize(store)
+            .map_err(|err| StorageError::new(StorageErrorKind::Encode, err.to_string()))?;
         let compressed = zstd::stream::encode_all(encoded.as_slice(), 3)
             .map_err(|err| StorageError::new(StorageErrorKind::Encode, err.to_string()))?;
         self.write_file_atomically(&snapshot_path_for(&self.session_root, root), &compressed)
@@ -189,6 +206,19 @@ impl CacheStore {
     }
 }
 
+impl Drop for CacheStore {
+    fn drop(&mut self) {
+        if is_transient_storage_root(&self.session_root) {
+            let _ = fs::remove_dir_all(&self.session_root);
+            if self.ephemeral_settings {
+                if let Some(parent) = self.settings_path.parent() {
+                    let _ = fs::remove_dir_all(parent);
+                }
+            }
+        }
+    }
+}
+
 fn io_err(err: std::io::Error) -> StorageError {
     StorageError::new(StorageErrorKind::Io, err.to_string())
 }
@@ -238,6 +268,41 @@ fn default_session_root() -> PathBuf {
         std::process::id(),
         now_unix_ms()
     ))
+}
+
+fn purge_stale_transient_storage_roots() -> Result<(), StorageError> {
+    let temp_dir = std::env::temp_dir();
+    let now = SystemTime::now();
+    let entries = fs::read_dir(&temp_dir).map_err(io_err)?;
+
+    for entry in entries {
+        let entry = entry.map_err(io_err)?;
+        let path = entry.path();
+        if !path.is_dir() || !is_transient_storage_root(&path) {
+            continue;
+        }
+
+        let modified = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .unwrap_or(UNIX_EPOCH);
+        let age = now.duration_since(modified).unwrap_or_default();
+        if age >= TRANSIENT_STORAGE_MAX_AGE {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn is_transient_storage_root(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.starts_with("dirotter-session-")
+        || name.starts_with("dirotter-ephemeral-")
+        || name.starts_with("dirotter-test-storage-")
 }
 
 fn now_unix_ms() -> u128 {

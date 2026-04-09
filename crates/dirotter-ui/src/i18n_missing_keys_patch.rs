@@ -58,7 +58,9 @@ translation_table!(lookup_ar, {
     "Result View Is Waiting For Cleanup Sync" => "عرض النتائج ينتظر انتهاء مزامنة التنظيف",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "لا يزال الحذف في الخلفية أو مزامنة النتائج جارياً. سيستأنف DirOtter عرض النتائج بعد الانتهاء حتى لا يؤدي تحميل اللقطة وإعادة بناء النتائج إلى حظر خيط واجهة المستخدم.",
     "Loading Saved Result Snapshot" => "تحميل لقطة النتيجة المحفوظة",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "يقوم DirOtter بتحميل لقطة النتيجة المحفوظة في الخلفية. سيتم فتح عرض النتائج الخفيف تلقائياً عندما يصبح جاهزاً، من دون فك الضغط أو إعادة بناء شجرة النتائج بالكامل في إطار واجهة المستخدم الحالي.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "يقوم DirOtter بتحميل لقطة النتيجة المحفوظة في الخلفية. سيتم فتح عرض النتائج الخفيف تلقائياً عندما يصبح جاهزاً، من دون فك الضغط أو إعادة بناء شجرة النتائج بالكامل في إطار واجهة المستخدم الحالي.",    "Temporary Session Storage Active" => "تخزين الجلسة المؤقتة نشط",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "تعذر على DirOtter الكتابة إلى دليل الإعدادات المستمرة ورجع إلى تخزين الجلسة المؤقت. سيتم فقدان إعدادات اللغة والموضوع والأداة المتقدمة من هذا التشغيل بعد الخروج.",
+
 });
 
 translation_table!(lookup_de, {
@@ -106,7 +108,9 @@ translation_table!(lookup_de, {
     "Result View Is Waiting For Cleanup Sync" => "Die Ergebnisansicht wartet auf die Bereinigungssynchronisierung",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Die Hintergrundlöschung oder Ergebnissynchronisierung läuft noch. DirOtter setzt die Ergebnisansicht fort, sobald sie abgeschlossen ist, damit Snapshot-Laden und Ergebnisneubau den UI-Thread nicht blockieren.",
     "Loading Saved Result Snapshot" => "Gespeicherten Ergebnis-Snapshot laden",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter lädt den gespeicherten Ergebnis-Snapshot im Hintergrund. Die leichte Ergebnisansicht wird automatisch geöffnet, sobald sie bereit ist, ohne den gesamten Ergebnisbaum im aktuellen UI-Frame zu entpacken oder neu aufzubauen.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter lädt den gespeicherten Ergebnis-Snapshot im Hintergrund. Die leichte Ergebnisansicht wird automatisch geöffnet, sobald sie bereit ist, ohne den gesamten Ergebnisbaum im aktuellen UI-Frame zu entpacken oder neu aufzubauen.",    "Temporary Session Storage Active" => "Temporärer Sitzungsspeicher aktiv",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter konnte nicht in das persistente Einstellungsverzeichnis schreiben und ist auf den temporären Sitzungsspeicher zurückgegriffen. Sprach-, Design- und erweiterte Werkzeugeinstellungen aus dieser Ausführung gehen nach dem Beenden verloren.",
+
 });
 
 translation_table!(lookup_he, {
@@ -154,7 +158,9 @@ translation_table!(lookup_he, {
     "Result View Is Waiting For Cleanup Sync" => "תצוגת התוצאות ממתינה לסיום סנכרון הניקוי",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "המחיקה ברקע או סנכרון התוצאות עדיין פועלים. DirOtter יחזיר את תצוגת התוצאות לאחר הסיום כדי שטעינת snapshot ובניית התוצאות מחדש לא יחסמו את חוט ה-UI.",
     "Loading Saved Result Snapshot" => "טוען snapshot שמור של תוצאות",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter טוען ברקע את snapshot התוצאות השמור. תצוגת התוצאות הקלה תיפתח אוטומטית כשהיא תהיה מוכנה, בלי לפרוס או לבנות מחדש את כל עץ התוצאות בפריים הנוכחי של ה-UI.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter טוען ברקע את snapshot התוצאות השמור. תצוגת התוצאות הקלה תיפתח אוטומטית כשהיא תהיה מוכנה, בלי לפרוס או לבנות מחדש את כל עץ התוצאות בפריים הנוכחי של ה-UI.",    "Temporary Session Storage Active" => "אחסון הפעלה זמני פעיל",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter לא הצליח לכתוב לספריית ההגדרות הקבועה וחזר לאחסון הפעלה זמני. הגדרות שפה, ערכת נושא וכלי מתקדמות מהרצה זו יאבדו לאחר היציאה.",
+
 });
 
 translation_table!(lookup_hi, {
@@ -202,7 +208,9 @@ translation_table!(lookup_hi, {
     "Result View Is Waiting For Cleanup Sync" => "परिणाम दृश्य सफाई सिंक की प्रतीक्षा कर रहा है",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "पृष्ठभूमि हटाना या परिणाम सिंक अभी भी चल रहा है। DirOtter इसके पूरा होने के बाद परिणाम दृश्य फिर से खोलेगा ताकि स्नैपशॉट लोडिंग और परिणाम पुनर्निर्माण UI थ्रेड को ब्लॉक न करें।",
     "Loading Saved Result Snapshot" => "सहेजा गया परिणाम स्नैपशॉट लोड हो रहा है",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter पृष्ठभूमि में सहेजा गया परिणाम स्नैपशॉट लोड कर रहा है। हल्का परिणाम दृश्य तैयार होते ही अपने-आप खुलेगा, बिना पूरे परिणाम वृक्ष को मौजूदा UI फ्रेम पर डीकंप्रेस या पुनर्निर्मित किए।",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter पृष्ठभूमि में सहेजा गया परिणाम स्नैपशॉट लोड कर रहा है। हल्का परिणाम दृश्य तैयार होते ही अपने-आप खुलेगा, बिना पूरे परिणाम वृक्ष को मौजूदा UI फ्रेम पर डीकंप्रेस या पुनर्निर्मित किए।",    "Temporary Session Storage Active" => "अस्थायी सत्र संग्रहण सक्रिय",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter लगातार सेटिंग्स निर्देशिका में नहीं लिख सका और अस्थायी सत्र भंडारण पर वापस आ गया है। इस रन से भाषा, थीम और उन्नत टूल सेटिंग्स बाहर निकलने के बाद खो जाएंगी।",
+
 });
 
 translation_table!(lookup_id, {
@@ -250,7 +258,9 @@ translation_table!(lookup_id, {
     "Result View Is Waiting For Cleanup Sync" => "Tampilan hasil menunggu sinkronisasi pembersihan selesai",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Penghapusan latar belakang atau sinkronisasi hasil masih berjalan. DirOtter akan melanjutkan tampilan hasil setelah selesai agar pemuatan snapshot dan pembangunan ulang hasil tidak memblokir thread UI.",
     "Loading Saved Result Snapshot" => "Memuat snapshot hasil tersimpan",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter sedang memuat snapshot hasil yang tersimpan di latar belakang. Tampilan hasil ringan akan terbuka otomatis saat siap, tanpa mendekompresi atau membangun ulang seluruh pohon hasil pada frame UI saat ini.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter sedang memuat snapshot hasil yang tersimpan di latar belakang. Tampilan hasil ringan akan terbuka otomatis saat siap, tanpa mendekompresi atau membangun ulang seluruh pohon hasil pada frame UI saat ini.",    "Temporary Session Storage Active" => "Penyimpanan Sesi Sementara Aktif",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter tidak dapat menulis ke direktori pengaturan persisten dan telah kembali ke penyimpanan sesi sementara. Pengaturan bahasa, tema, dan alat lanjutan dari proses ini akan hilang setelah keluar.",
+
 });
 
 translation_table!(lookup_it, {
@@ -298,7 +308,9 @@ translation_table!(lookup_it, {
     "Result View Is Waiting For Cleanup Sync" => "La vista risultati attende la sincronizzazione della pulizia",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "L'eliminazione in background o la sincronizzazione dei risultati è ancora in corso. DirOtter riprenderà la vista risultati al termine, così il caricamento dello snapshot e la ricostruzione dei risultati non bloccheranno il thread UI.",
     "Loading Saved Result Snapshot" => "Caricamento snapshot dei risultati salvati",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter sta caricando in background lo snapshot dei risultati salvato. La vista risultati leggera si aprirà automaticamente quando sarà pronta, senza decomprimere o ricostruire l'intero albero dei risultati nel frame UI corrente.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter sta caricando in background lo snapshot dei risultati salvato. La vista risultati leggera si aprirà automaticamente quando sarà pronta, senza decomprimere o ricostruire l'intero albero dei risultati nel frame UI corrente.",    "Temporary Session Storage Active" => "Archiviazione temporanea della sessione attiva",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter non è riuscito a scrivere nella directory delle impostazioni persistenti ed è tornato all'archiviazione temporanea della sessione. Le impostazioni di lingua, tema e strumenti avanzati di questa esecuzione andranno perse dopo l'uscita.",
+
 });
 
 translation_table!(lookup_ja, {
@@ -346,7 +358,9 @@ translation_table!(lookup_ja, {
     "Result View Is Waiting For Cleanup Sync" => "結果ビューはクリーンアップ同期の完了を待っています",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "バックグラウンド削除または結果同期がまだ実行中です。Snapshot の読み込みや結果の再構築で UI スレッドを塞がないよう、完了後に DirOtter が結果ビューを再開します。",
     "Loading Saved Result Snapshot" => "保存済み結果スナップショットを読み込み中",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter は保存済みの結果スナップショットをバックグラウンドで読み込んでいます。軽量結果ビューは準備ができ次第自動的に開き、現在の UI フレーム上で結果ツリー全体を展開したり再構築したりしません。",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter は保存済みの結果スナップショットをバックグラウンドで読み込んでいます。軽量結果ビューは準備ができ次第自動的に開き、現在の UI フレーム上で結果ツリー全体を展開したり再構築したりしません。",    "Temporary Session Storage Active" => "一時セッションストレージがアクティブです",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter は永続設定ディレクトリに書き込むことができず、一時セッション ストレージにフォールバックしました。この実行の言語、テーマ、および詳細ツールの設定は、終了後に失われます。",
+
 });
 
 translation_table!(lookup_ko, {
@@ -394,7 +408,9 @@ translation_table!(lookup_ko, {
     "Result View Is Waiting For Cleanup Sync" => "결과 보기가 정리 동기화를 기다리고 있습니다",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "백그라운드 삭제 또는 결과 동기화가 아직 진행 중입니다. 스냅샷 로드와 결과 재구성이 UI 스레드를 막지 않도록, 완료되면 DirOtter가 결과 보기를 다시 엽니다.",
     "Loading Saved Result Snapshot" => "저장된 결과 스냅샷을 불러오는 중",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter가 저장된 결과 스냅샷을 백그라운드에서 불러오고 있습니다. 준비가 되면 경량 결과 보기가 자동으로 열리며, 현재 UI 프레임에서 전체 결과 트리를 압축 해제하거나 다시 만들지 않습니다.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter가 저장된 결과 스냅샷을 백그라운드에서 불러오고 있습니다. 준비가 되면 경량 결과 보기가 자동으로 열리며, 현재 UI 프레임에서 전체 결과 트리를 압축 해제하거나 다시 만들지 않습니다.",    "Temporary Session Storage Active" => "임시 세션 저장소 활성",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter는 영구 설정 디렉터리에 쓸 수 없어 임시 세션 저장소로 대체되었습니다. 종료 후에는 이 실행의 언어, 테마 및 고급 도구 설정이 손실됩니다.",
+
 });
 
 translation_table!(lookup_nl, {
@@ -402,8 +418,8 @@ translation_table!(lookup_nl, {
     "These items failed to execute. Full paths, failure reasons, and suggestions are listed here." => "Deze items konden niet worden uitgevoerd. Volledige paden, foutredenen en suggesties worden hier vermeld.",
     "Close the details and return to the inspector summary." => "Sluit de details en keer terug naar het inspecteursamenvatting.",
     "Progress" => "Voortgang",
-    "Current Item" => "Huidig ​​artikel",
-    "Current item" => "Huidig ​​artikel",
+    "Current Item" => "Huidig artikel",
+    "Current item" => "Huidig artikel",
     "Items In This Cleanup" => "Items in deze opruiming",
     "Delete action failed. Review the failure reason and retry after checking the target state." => "Verwijderactie mislukt. Bekijk de reden van de fout en probeer het opnieuw nadat u de doelstatus hebt gecontroleerd.",
     "Permission Denied" => "Toestemming geweigerd",
@@ -442,7 +458,9 @@ translation_table!(lookup_nl, {
     "Result View Is Waiting For Cleanup Sync" => "De resultaatweergave wacht op de opschoonsynchronisatie",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Achtergrondverwijdering of resultaatsynchronisatie loopt nog. DirOtter hervat de resultaatweergave zodra dit klaar is, zodat het laden van snapshots en het opnieuw opbouwen van resultaten de UI-thread niet blokkeren.",
     "Loading Saved Result Snapshot" => "Opgeslagen resultaatsnapshot laden",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter laadt de opgeslagen resultaatsnapshot op de achtergrond. De lichtgewicht resultaatweergave opent automatisch zodra die klaar is, zonder de volledige resultaatboom in het huidige UI-frame uit te pakken of opnieuw op te bouwen.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter laadt de opgeslagen resultaatsnapshot op de achtergrond. De lichtgewicht resultaatweergave opent automatisch zodra die klaar is, zonder de volledige resultaatboom in het huidige UI-frame uit te pakken of opnieuw op te bouwen.",    "Temporary Session Storage Active" => "Tijdelijke sessieopslag actief",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter kon niet schrijven naar de directory met persistente instellingen en is teruggevallen op tijdelijke sessieopslag. Taal-, thema- en geavanceerde tool-instellingen van deze run gaan verloren na het afsluiten.",
+
 });
 
 translation_table!(lookup_pl, {
@@ -490,7 +508,9 @@ translation_table!(lookup_pl, {
     "Result View Is Waiting For Cleanup Sync" => "Widok wyników czeka na zakończenie synchronizacji czyszczenia",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Usuwanie w tle lub synchronizacja wyników nadal trwa. DirOtter przywróci widok wyników po zakończeniu, aby ładowanie migawki i przebudowa wyników nie blokowały wątku UI.",
     "Loading Saved Result Snapshot" => "Ładowanie zapisanej migawki wyników",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter ładuje w tle zapisaną migawkę wyników. Lekki widok wyników otworzy się automatycznie, gdy będzie gotowy, bez rozpakowywania ani przebudowy całego drzewa wyników w bieżącej klatce UI.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter ładuje w tle zapisaną migawkę wyników. Lekki widok wyników otworzy się automatycznie, gdy będzie gotowy, bez rozpakowywania ani przebudowy całego drzewa wyników w bieżącej klatce UI.",    "Temporary Session Storage Active" => "Tymczasowy magazyn sesji aktywny",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter nie mógł zapisać w katalogu ustawień trwałych i powrócił do tymczasowego magazynu sesji. Język, motyw i zaawansowane ustawienia narzędzi z tego uruchomienia zostaną utracone po zamknięciu.",
+
 });
 
 translation_table!(lookup_ru, {
@@ -538,7 +558,9 @@ translation_table!(lookup_ru, {
     "Result View Is Waiting For Cleanup Sync" => "Просмотр результатов ожидает завершения синхронизации очистки",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Фоновое удаление или синхронизация результатов всё ещё выполняются. DirOtter вернёт просмотр результатов после завершения, чтобы загрузка снимка и перестроение результатов не блокировали поток UI.",
     "Loading Saved Result Snapshot" => "Загрузка сохраненного снимка результатов",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter загружает сохранённый снимок результатов в фоновом режиме. Облегчённый просмотр результатов откроется автоматически, когда будет готов, без распаковки или перестроения всего дерева результатов в текущем кадре UI.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter загружает сохранённый снимок результатов в фоновом режиме. Облегчённый просмотр результатов откроется автоматически, когда будет готов, без распаковки или перестроения всего дерева результатов в текущем кадре UI.",    "Temporary Session Storage Active" => "Временное хранилище сеансов активно",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter не смог выполнить запись в постоянный каталог настроек и вернулся к временному хранилищу сеансов. Язык, тема и дополнительные настройки инструментов из этого запуска будут потеряны после выхода.",
+
 });
 
 translation_table!(lookup_th, {
@@ -586,7 +608,9 @@ translation_table!(lookup_th, {
     "Result View Is Waiting For Cleanup Sync" => "มุมมองผลลัพธ์กำลังรอให้การซิงก์การล้างเสร็จสิ้น",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "การลบเบื้องหลังหรือการซิงก์ผลลัพธ์ยังคงทำงานอยู่ DirOtter จะกลับมาเปิดมุมมองผลลัพธ์หลังจากเสร็จสิ้น เพื่อไม่ให้การโหลดสแนปช็อตและการสร้างผลลัพธ์ใหม่ไปบล็อกเธรด UI",
     "Loading Saved Result Snapshot" => "กำลังโหลดสแนปช็อตผลลัพธ์ที่บันทึกไว้",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter กำลังโหลดสแนปช็อตผลลัพธ์ที่บันทึกไว้ในเบื้องหลัง มุมมองผลลัพธ์แบบเบาจะเปิดอัตโนมัติเมื่อพร้อม โดยไม่ต้องคลายบีบอัดหรือสร้างต้นไม้ผลลัพธ์ทั้งหมดใหม่ในเฟรม UI ปัจจุบัน",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter กำลังโหลดสแนปช็อตผลลัพธ์ที่บันทึกไว้ในเบื้องหลัง มุมมองผลลัพธ์แบบเบาจะเปิดอัตโนมัติเมื่อพร้อม โดยไม่ต้องคลายบีบอัดหรือสร้างต้นไม้ผลลัพธ์ทั้งหมดใหม่ในเฟรม UI ปัจจุบัน",    "Temporary Session Storage Active" => "พื้นที่เก็บข้อมูลเซสชันชั่วคราวใช้งานอยู่",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter ไม่สามารถเขียนไปยังไดเร็กทอรีการตั้งค่าถาวรได้ และได้กลับไปใช้ที่เก็บข้อมูลเซสชันชั่วคราว การตั้งค่าภาษา ธีม และเครื่องมือขั้นสูงจากการรันครั้งนี้จะหายไปหลังจากออก",
+
 });
 
 translation_table!(lookup_tr, {
@@ -634,7 +658,9 @@ translation_table!(lookup_tr, {
     "Result View Is Waiting For Cleanup Sync" => "Sonuç görünümü temizlik eşitlemesini bekliyor",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Arka plan silme veya sonuç eşitlemesi hâlâ sürüyor. Snapshot yükleme ve sonuçları yeniden oluşturma UI iş parçacığını engellemesin diye, DirOtter tamamlandıktan sonra sonuç görünümünü yeniden açacaktır.",
     "Loading Saved Result Snapshot" => "Kaydedilmiş sonuç anlık görüntüsü yükleniyor",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter kaydedilmiş sonuç anlık görüntüsünü arka planda yüklüyor. Hafif sonuç görünümü hazır olduğunda otomatik olarak açılacak; mevcut UI karesinde tüm sonuç ağacı açılmayacak veya yeniden oluşturulmayacaktır.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter kaydedilmiş sonuç anlık görüntüsünü arka planda yüklüyor. Hafif sonuç görünümü hazır olduğunda otomatik olarak açılacak; mevcut UI karesinde tüm sonuç ağacı açılmayacak veya yeniden oluşturulmayacaktır.",    "Temporary Session Storage Active" => "Geçici Oturum Depolama Etkin",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter kalıcı ayarlar dizinine yazamadı ve geçici oturum depolama alanına geri döndü. Bu çalıştırmanın dil, tema ve gelişmiş araç ayarları çıkıştan sonra kaybolacak.",
+
 });
 
 translation_table!(lookup_uk, {
@@ -682,7 +708,9 @@ translation_table!(lookup_uk, {
     "Result View Is Waiting For Cleanup Sync" => "Перегляд результатів очікує завершення синхронізації очищення",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Фонове видалення або синхронізація результатів ще тривають. DirOtter відновить перегляд результатів після завершення, щоб завантаження знімка й перебудова результатів не блокували потік UI.",
     "Loading Saved Result Snapshot" => "Завантаження збереженого знімка результатів",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter завантажує збережений знімок результатів у фоновому режимі. Легкий перегляд результатів відкриється автоматично, щойно буде готовий, без розпакування чи перебудови всього дерева результатів у поточному кадрі UI.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter завантажує збережений знімок результатів у фоновому режимі. Легкий перегляд результатів відкриється автоматично, щойно буде готовий, без розпакування чи перебудови всього дерева результатів у поточному кадрі UI.",    "Temporary Session Storage Active" => "Активне тимчасове сховище сеансу",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter не зміг записати в каталог постійних налаштувань і повернувся до тимчасового сховища сеансів. Мова, тема та розширені параметри інструментів із цього запуску буде втрачено після виходу.",
+
 });
 
 translation_table!(lookup_vi, {
@@ -730,7 +758,9 @@ translation_table!(lookup_vi, {
     "Result View Is Waiting For Cleanup Sync" => "Chế độ xem kết quả đang chờ đồng bộ dọn dẹp hoàn tất",
     "Background deletion or result synchronization is still running. DirOtter will resume the result view after it finishes so snapshot loading and result rebuilding do not block the UI thread." => "Việc xóa nền hoặc đồng bộ kết quả vẫn đang chạy. DirOtter sẽ mở lại chế độ xem kết quả sau khi hoàn tất để việc tải snapshot và dựng lại kết quả không chặn luồng UI.",
     "Loading Saved Result Snapshot" => "Đang tải snapshot kết quả đã lưu",
-    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter đang tải snapshot kết quả đã lưu ở chế độ nền. Chế độ xem kết quả nhẹ sẽ tự động mở khi sẵn sàng mà không giải nén hoặc dựng lại toàn bộ cây kết quả trên khung UI hiện tại.",
+    "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame." => "DirOtter đang tải snapshot kết quả đã lưu ở chế độ nền. Chế độ xem kết quả nhẹ sẽ tự động mở khi sẵn sàng mà không giải nén hoặc dựng lại toàn bộ cây kết quả trên khung UI hiện tại.",    "Temporary Session Storage Active" => "Bộ nhớ phiên tạm thời đang hoạt động",
+    "DirOtter could not write to the persistent settings directory and has fallen back to temporary session storage. Language, theme, and advanced tool settings from this run will be lost after exit." => "DirOtter không thể ghi vào thư mục cài đặt liên tục và đã quay trở lại bộ lưu trữ phiên tạm thời. Cài đặt ngôn ngữ, chủ đề và công cụ nâng cao từ lần chạy này sẽ bị mất sau khi thoát.",
+
 });
 
 pub(crate) fn translate_missing_ui_key(lang: Lang, en: &str) -> Option<&'static str> {

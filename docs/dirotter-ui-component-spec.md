@@ -165,6 +165,7 @@
 - `Release System Memory`
 - `Clean Interrupted Cleanup Area`
 - `Cleanup Suggestions` 触发的批量清理也必须复用同一条删除执行链路
+- `Open File Location` 对目录必须直接打开该目录；对文件必须在父目录中定位该文件，不能把目录目标也一律走“选中项”语义
 
 要求补充：
 

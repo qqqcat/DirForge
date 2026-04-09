@@ -226,7 +226,7 @@ translation_table!(lookup_ja, {
     "Working set reclaimed about" => "ワーキング セットが再利用されました 説明",
     "A disk snapshot was saved first, so the result can be reloaded later." => "ディスクのスナップショットが最初に保存されたため、結果を後で再ロードできます。",
     "Cleared current results, but Windows working-set trimming failed" => "現在の結果をクリアしましたが、Windows ワーキングセットのトリミングに失敗しました",
-    "Cleaned leftover items from the interrupted cleanup area." => "中断された清掃エリアから残ったアイテムを清掃しまし​​た。",
+    "Cleaned leftover items from the interrupted cleanup area." => "中断された清掃エリアから残ったアイテムを清掃しました。",
     "Failed to clean the interrupted cleanup area" => "中断されたクリーンアップ領域のクリーニングに失敗しました",
     "Finalizing final results..." => "最終結果を仕上げ中...",
     "Storage Intelligence" => "ストレージインテリジェンス",

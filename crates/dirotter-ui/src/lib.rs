@@ -1579,6 +1579,7 @@ impl DirOtterNativeApp {
         self.diagnostics_json = serde_json::to_string_pretty(&serde_json::json!({
             "bundle_structure_version": 2,
             "settings_path": self.cache.settings_path().display().to_string(),
+            "ephemeral_settings_fallback": self.cache.uses_ephemeral_settings(),
             "session_snapshot_root": self.cache.session_root().display().to_string(),
             "telemetry_snapshot": telemetry_snapshot,
             "system_snapshot": system_snapshot,
@@ -4716,6 +4717,21 @@ mod ui_tests {
         keys
     }
 
+    fn assert_translations_cover_source(source: &str, label: &str) {
+        let keys = extract_english_translation_keys(source);
+        for &lang in supported_languages() {
+            let missing: Vec<_> = keys
+                .iter()
+                .filter(|key| !has_translation(lang, key))
+                .cloned()
+                .collect();
+            assert!(
+                missing.is_empty(),
+                "missing {label} translations for {lang:?}: {missing:?}"
+            );
+        }
+    }
+
     #[test]
     fn shipped_translations_cover_all_current_ui_english_keys() {
         let source = include_str!("lib.rs");
@@ -4723,52 +4739,22 @@ mod ui_tests {
             .split("mod ui_tests")
             .next()
             .expect("source before tests");
-        let keys = extract_english_translation_keys(source);
-        for &lang in supported_languages() {
-            let missing: Vec<_> = keys
-                .iter()
-                .filter(|key| !has_translation(lang, key))
-                .cloned()
-                .collect();
-            assert!(
-                missing.is_empty(),
-                "missing translations for {lang:?}: {missing:?}"
-            );
-        }
+        assert_translations_cover_source(source, "lib");
     }
 
     #[test]
     fn all_supported_languages_cover_view_models_failure_detail_keys() {
-        let source = include_str!("view_models.rs");
-        let keys = extract_english_translation_keys(source);
-        for &lang in supported_languages() {
-            let missing: Vec<_> = keys
-                .iter()
-                .filter(|key| !has_translation(lang, key))
-                .cloned()
-                .collect();
-            assert!(
-                missing.is_empty(),
-                "missing view-model translations for {lang:?}: {missing:?}"
-            );
-        }
+        assert_translations_cover_source(include_str!("view_models.rs"), "view-model");
     }
 
     #[test]
     fn all_supported_languages_cover_result_pages_keys() {
-        let source = include_str!("result_pages.rs");
-        let keys = extract_english_translation_keys(source);
-        for &lang in supported_languages() {
-            let missing: Vec<_> = keys
-                .iter()
-                .filter(|key| !has_translation(lang, key))
-                .cloned()
-                .collect();
-            assert!(
-                missing.is_empty(),
-                "missing result-page translations for {lang:?}: {missing:?}"
-            );
-        }
+        assert_translations_cover_source(include_str!("result_pages.rs"), "result-page");
+    }
+
+    #[test]
+    fn all_supported_languages_cover_settings_pages_keys() {
+        assert_translations_cover_source(include_str!("settings_pages.rs"), "settings-page");
     }
 
     #[test]
