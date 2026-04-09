@@ -1,0 +1,152 @@
+# DirOtter 安装与使用指南（2026-04-09）
+
+## 0. 阶段说明
+
+- 当前：Production Readiness
+- 目标：Production
+
+## 1. 最终用户安装
+
+### 1.1 从 GitHub Releases 安装
+
+1. 下载 `DirOtter-windows-x64-<version>-portable.zip`
+2. 校验同目录下的 `.sha256.txt`
+3. 解压压缩包
+4. 二选一：
+   - 直接运行 `DirOtter.exe`
+   - 执行 `scripts/install-windows-portable.ps1` 安装到 `%LOCALAPPDATA%\Programs\DirOtter`
+
+### 1.2 可选代码签名
+
+- 发布 workflow 会优先尝试对 `DirOtter.exe` 做 Authenticode 签名
+- 需要在 GitHub Actions secrets 中配置：
+  - `WINDOWS_CODESIGN_CERT_BASE64`
+  - `WINDOWS_CODESIGN_PASSWORD`
+  - 可选 `WINDOWS_CODESIGN_TIMESTAMP_URL`
+- 未配置时，发布流程不会失败，但产物会保持未签名状态
+
+## 2. 开发者源码安装
+
+```bash
+git clone <your-repo-url> DirOtter
+cd DirOtter
+```
+
+## 3. 构建与测试
+
+```bash
+cargo fmt --all
+cargo check --workspace
+cargo test --workspace
+```
+
+## 4. 运行
+
+```bash
+cargo run -p dirotter-app
+```
+
+## 5. 推荐使用流程
+
+1. 启动后优先使用 Overview 里的盘符快捷按钮，点击即可直接扫描对应卷。
+2. 只有要扫描任意子目录时，再使用盘符区后方的手动目录输入框。
+3. 选择扫描模式，而不是手动调技术参数：
+   - `快速扫描（推荐）`：适合日常整理和大多数本地磁盘
+   - `深度扫描`：适合首次全面排查或目录层级复杂的场景
+   - `超大硬盘模式`：适合超大容量磁盘、外置盘和文件数极多的目录
+4. 扫描进行中，在工具栏使用 `Stop Scan` 停止扫描，而不是重复点击 `Start Scan`。
+5. 点击 `Stop Scan` 后，按钮会进入 `Stopping` 状态；此时等待后台线程安全退出，不需要再次反复点击。
+6. 如果某个页面内容超过当前窗口高度，请直接在主内容区内向下滚动；主要页面现在由页面整体滚动承载。
+7. 在 Live Scan 页面观察实时进度、热点文件/目录与最近扫描列表。
+8. 扫描完成后查看：
+   - Overview 顶部 Hero 区里的可释放空间结论和快捷动作
+   - Overview 中部 KPI 指标条
+   - Overview 中段全宽 `扫描设置`
+   - Overview 底部 `最大文件夹 / 最大文件`
+   - Result View（只看当前目录直接子项的轻量结果视图）
+   - 如确实需要维护信息，再到 Settings 中开启 `高级工具`
+9. 在 `清理建议` 卡中优先看“你可以释放多少空间”，再决定是否进入详情。
+10. `一键清理缓存（推荐）` 只会处理安全缓存项，但不再先走系统回收站；它会先快速移出当前目录，再在后台继续释放空间。
+11. 点击 `查看详情` 后，可在分类详情窗中：
+   - 查看风险标签
+   - 勾选绿色项
+   - 复核黄色项
+   - 让红色项保持锁定
+11. 在右侧 Inspector 查看当前选中文件/目录详情，并直接执行：
+   - `Open File Location`
+   - `Move to Recycle Bin`
+   - `Delete Permanently`
+   - 若当前选中项命中低风险缓存规则，还会额外出现 `快速清理缓存`
+   - 选中的是目录时，`Open File Location` 会直接打开该目录
+   - 选中的是文件时，`Open File Location` 会在父目录中定位该文件
+12. 永久删除会先弹出确认窗口；点击确认后窗口会立即关闭，并转为顶部横幅、状态栏和 Inspector 中的后台任务提示。
+13. 回收站删除成功后会提示可从系统回收站恢复；Windows 下还会做系统回收站二次校验。
+14. 删除成功后，排行榜、概览统计、清理建议和结果视图会立即局部刷新。
+15. 选中文件夹后，“最大文件”榜单会切换为该目录内部的大文件。
+16. Result View 只在扫描完成后可用；它不会参与实时扫描刷新。
+17. Result View 的目录结果区会吃满页面剩余高度；如果条目很多，请直接在该区域内部滚动。
+18. 在 Settings 中切换 `中文 / English / Français / Español` 或深浅主题；标题旁状态胶囊也会跟随语言切换。
+19. `高级工具 -> Diagnostics` 现在只显示当前会话的结构化诊断信息，不再要求用户手动保存快照、扫描摘要或错误 CSV。
+20. 首页会优先给出单一动作 `一键提速（推荐）`：
+   - 如果还没有扫描结果，它会变成 `开始提速扫描`
+   - 如果已经找到安全缓存，它会直接执行缓存快清
+21. 执行 `一键提速` 或分类清理前，确认窗口会以可滚动列表完整列出本次要处理的全部路径；请滚动复核后再确认。
+22. 如果右侧 `最近执行` 显示存在失败项，可直接点击失败统计打开详情卡片，查看完整失败路径、失败原因和处理建议。
+   - 如果存在需要你确认的候选，它会变成 `查看提速建议`
+21. 如需释放系统内存，请使用右侧 `Quick Actions` 中的：
+   - `一键释放系统内存`
+22. 如需执行诊断或恢复动作，请进入 `高级工具 -> Diagnostics`：
+   - `优化 DirOtter 内存占用`
+   - `清理异常中断的临时删除区`
+
+说明：
+
+- `Scanned Size` 表示本次扫描实际遍历到的文件总大小。
+- `磁盘已用 / 磁盘可用` 属于卷级空间信息，已经并入首页 KPI 和扫描卡，不再单独重复成一张卷摘要大卡。
+- 三种扫描模式都会完整扫描当前范围，差异只在扫描节奏和界面刷新方式。
+- 首次启动会优先根据系统语言环境在 `zh / en / ar / nl / fr / de / he / hi / id / it / ja / ko / pl / ru / es / th / tr / uk / vi` 之间自动选择；Settings 中的手动选择优先级更高。
+- `清理建议` 是规则驱动的分析层，不等于“自动删除”；真正执行前仍会经过确认。
+- 快速缓存清理为了追求即时反馈，会先把目标移入应用内部临时删除区，再后台继续清除。
+- 当前后台删除任务表达的是阶段性状态，不是字节级进度条。
+- `一键释放系统内存` 会在后台尝试收缩当前会话中的高占用进程，并在权限允许时裁剪系统文件缓存。反馈现在集中显示在右侧 Inspector 的可滚动内存状态卡里，不再依赖底部状态栏承载细节；它会反馈释放前后的系统可用内存变化，但不保证长期持续提速。
+- `优化 DirOtter 内存占用` 只负责应用自身工作集和结果树，不承诺提升整个系统所有进程的性能；它会在低内存压力下把重结果树转成当前会话的临时快照后按需回载。
+- “清理异常中断的临时删除区” 只用于处理上次缓存快清异常中断后遗留的内部待删内容，属于恢复工具，不是普通用户的主路径动作。
+- 启动不再依赖 SQLite 数据库；设置会写入轻量配置文件，扫描结果默认只保留在当前会话内。
+- 默认扫描完成后不会自动写历史、快照或错误 CSV；结果关闭应用即丢弃，需要时只用当前会话临时快照做恢复。
+
+## 6. CI 与发布链路
+
+- 持续集成：`.github/workflows/ci.yml`
+  - `template validation`
+  - `cargo fmt --all --check`
+  - `cargo check --workspace`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `cargo test --workspace`
+  - `cargo build --release -p dirotter-app`
+- Windows 发布：`.github/workflows/release-windows.yml`
+  - 触发方式：`v*` tag 或手动 `workflow_dispatch`
+  - 产物：便携 zip、SHA-256 校验文件
+  - 可选步骤：Windows 代码签名
+
+## 7. 性能阈值测试
+
+```bash
+cargo test -p dirotter-testkit --test benchmark_thresholds
+```
+
+说明：
+
+- `benchmark_snapshot_payload_threshold_massive_tree` 现已改为更稳定的事件等待窗口，仍保留 payload 阈值校验，但不再依赖 25ms 调度时机。
+
+## 8. 可选产物说明
+
+- `settings.json`
+- `dirotter_report.txt` / `dirotter_summary.json` / `dirotter_duplicates.csv` / `dirotter_errors.csv`
+  - 这些属于独立报告模块可生成的文件，不再是默认 UI 主路径的落盘结果。
+
+## 9. 注意事项
+
+- 永久删除是高敏感动作，当前建议优先使用“移到回收站”。
+- 大体量目录扫描时，首次运行可能出现较高 CPU/内存占用。
+- 若 GUI 无法启动，请确认运行环境具备桌面窗口支持。
+- 若中文显示为方框或乱码，请确认系统存在可用 CJK 字体。

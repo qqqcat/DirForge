@@ -1,0 +1,10 @@
+{
+    "artifact":  "DirOtter-windows-x64-0.1.0-portable",
+    "version":  "0.1.0",
+    "configuration":  "release",
+    "packaged_at_utc":  "2026-04-09T14:05:14.1823793Z",
+    "commit":  "97ecd0d532909dc643db7bde324c898fa1d0111d",
+    "source_binary":  "E:\\DirForge\\target\\release\\dirotter-app.exe",
+    "signed":  false,
+    "signature_status":  "NotSigned"
+}
