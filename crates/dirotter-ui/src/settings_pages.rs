@@ -4,18 +4,14 @@ pub(super) fn ui_diagnostics(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     page_header(
         ui,
         app.t("DirOtter 工作台", "DirOtter Workspace"),
-        app.t("诊断导出", "Diagnostics"),
+        app.t("诊断信息", "Diagnostics"),
         app.t(
-            "保留结构化 JSON，但给导出动作更明确的位置和说明。",
-            "Keep the structured JSON, but surface export actions and explanation more clearly.",
+            "只保留当前会话的结构化诊断信息，不再要求额外导出或持久化。",
+            "Keep diagnostics as a structured view of the current session without requiring export or persistence.",
         ),
     );
     ui.add_space(8.0);
     let mut refresh_diag = false;
-    let mut export_bundle = false;
-    let mut save_snapshot = false;
-    let mut record_history = false;
-    let mut export_error_csv = false;
     let mut optimize_app_memory = false;
     let mut clean_interrupted_cleanup_area = false;
     ui.horizontal_wrapped(|ui| {
@@ -25,48 +21,14 @@ pub(super) fn ui_diagnostics(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
         {
             refresh_diag = true;
         }
-        if ui
-            .button(app.t("导出诊断包", "Export diagnostics bundle"))
-            .clicked()
-        {
-            export_bundle = true;
-        }
-        if ui
-            .add_enabled_ui(app.store.is_some(), |ui| {
-                sized_button(
-                    ui,
-                    170.0,
-                    app.t("手动保存当前快照", "Save Current Snapshot"),
-                )
-            })
-            .inner
-            .clicked()
-        {
-            save_snapshot = true;
-        }
-        if ui
-            .add_enabled_ui(app.summary.bytes_observed > 0, |ui| {
-                sized_button(ui, 188.0, app.t("手动记录扫描摘要", "Record Scan Summary"))
-            })
-            .inner
-            .clicked()
-        {
-            record_history = true;
-        }
-        if ui
-            .button(app.t("手动导出错误 CSV", "Export Errors CSV"))
-            .clicked()
-        {
-            export_error_csv = true;
-        }
     });
     ui.add_space(10.0);
     settings_section(
             ui,
             app.t("高级维护", "Advanced Maintenance"),
             app.t(
-                "这些动作主要用于诊断和恢复，不属于普通用户的一键提速主路径。",
-                "These actions are mainly for diagnostics and recovery. They are not part of the normal one-tap speed path for everyday users.",
+                "这些动作只影响当前会话的内存与恢复状态，不再写入扫描历史或导出诊断包。",
+                "These actions only affect the current session's memory and recovery state. They no longer write scan history or export diagnostic bundles.",
             ),
             |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -125,34 +87,6 @@ pub(super) fn ui_diagnostics(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     }
     if refresh_diag {
         app.refresh_diagnostics();
-    }
-    if export_bundle {
-        let mut manifest = default_manifest();
-        manifest.diagnostics_payload_file = "dirotter_diagnostics.json".to_string();
-        manifest.summary_report_file = "dirotter_summary.json".to_string();
-        manifest.duplicate_report_file = "dirotter_duplicates.csv".to_string();
-        manifest.error_report_file = "dirotter_errors.csv".to_string();
-        let _ = export_diagnostics_bundle(
-            &app.diagnostics_json,
-            "dirotter_diagnostics.json",
-            &manifest,
-        );
-        let _ =
-            export_diagnostics_archive(&app.diagnostics_json, "diagnostics", "dirotter", &manifest);
-        app.set_maintenance_feedback(
-            app.t("已导出诊断包。", "Exported the diagnostics bundle.")
-                .to_string(),
-            true,
-        );
-    }
-    if save_snapshot {
-        app.save_current_snapshot_manually();
-    }
-    if record_history {
-        app.record_current_history_manually();
-    }
-    if export_error_csv {
-        app.export_errors_csv_manually();
     }
     if optimize_app_memory {
         app.release_dir_otter_memory();
@@ -301,8 +235,8 @@ pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &
                     ui,
                     app.t("高级工具", "Advanced Tools"),
                     app.t(
-                        "把历史、错误和诊断页面收进二级入口。普通清理流程默认不需要它们。",
-                        "Keeps history, errors, and diagnostics behind a secondary entry. Most cleanup flows do not need them by default.",
+                        "把错误与诊断页面收进二级入口。普通清理流程默认不需要它们。",
+                        "Keeps errors and diagnostics behind a secondary entry. Most cleanup flows do not need them by default.",
                     ),
                     |ui| {
                         let button_width = 168.0;

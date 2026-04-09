@@ -14,6 +14,5 @@ dirotter-actions = { path = "../dirotter-actions" }
 dirotter-platform = { path = "../dirotter-platform" }
 dirotter-report = { path = "../dirotter-report" }
 dirotter-telemetry = { path = "../dirotter-telemetry" }
-rusqlite.workspace = true
 serde_json.workspace = true
 rayon.workspace = true

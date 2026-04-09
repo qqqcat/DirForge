@@ -50,21 +50,18 @@ cargo run -p dirotter-app
 15. 永久删除会先出现确认层；点击确认后窗口会立即关闭，并转为顶部横幅、状态栏和 Inspector 的后台任务提示。
 16. 确认删除后榜单、概览统计、清理建议与结果视图已即时刷新。
 17. 在 Settings 中切换 `中文 / English / Français / Español`，确认导航、状态胶囊和主要操作文本会即时更新。
-18. 反复对同一路径扫描后，检查 `dirotter.db` / `dirotter.db-wal` 不应继续按扫描次数线性变大。
+18. 反复对同一路径扫描后，应用不应因为缺少数据库文件而影响启动；设置应继续正常保留，扫描结果则只属于当前会话。
 19. 若上次快速缓存清理在后台删除完成前异常退出，本次启动后应自动继续清理内部临时删除区遗留项。
-20. 如果需要保留扫描资产，再进入 `高级工具 -> Diagnostics` 手动保存快照、摘要或错误 CSV。
+20. `高级工具 -> Diagnostics` 现在只展示当前会话诊断信息，不再要求手动导出快照、摘要或错误 CSV。
 21. 首页应优先出现单一推荐动作 `一键提速（推荐）`，并根据当前状态自动变成“开始提速扫描 / 一键提速（推荐） / 查看提速建议”。
 22. 如需临时释放系统内存，请直接使用右侧 `Quick Actions` 的 `一键释放系统内存`；该动作会在后台执行，不应让界面锁死，释放结果会显示在右侧 Inspector 的可滚动内存状态卡中。
 23. 如需减少应用自身占用或恢复异常中断的清理现场，请进入 `高级工具 -> Diagnostics` 使用 `优化 DirOtter 内存占用` 或 `清理异常中断的临时删除区`。
 
 ## 5. 关键输出文件
 
-- `dirotter.db`
-- `dirotter_report.txt`
-- `dirotter_summary.json`
-- `dirotter_duplicates.csv`
-- `dirotter_errors.csv`
-- `dirotter_diagnostics.json`
+- `settings.json`（用户配置文件）
+- `dirotter_report.txt` / `dirotter_summary.json` / `dirotter_duplicates.csv` / `dirotter_errors.csv`
+  - 这些属于独立报告模块的可选产物，不再是默认 UI 主路径的自动输出。
 
 ## 6. 常见排查
 

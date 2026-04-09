@@ -2,7 +2,6 @@ use crate::{cleanup, CleanupAnalysis, DeleteRequestScope, SelectedTarget};
 use dirotter_actions::{
     execute_plan_with_progress, DeletionPlan, ExecutionMode, ExecutionProgress, ExecutionReport,
 };
-use dirotter_cache::CacheStore;
 use dirotter_core::{NodeId, NodeStore, ScanErrorRecord, ScanSummary};
 use dirotter_scan::RankedPath;
 use eframe::egui;
@@ -320,13 +319,14 @@ pub(crate) fn take_finished_delete_finalize(
 
 pub(crate) fn start_result_store_load_session(
     ctx: egui::Context,
-    db_path: PathBuf,
+    session_root: PathBuf,
     root: String,
 ) -> ResultStoreLoadSession {
     let relay = Arc::new(Mutex::new(ResultStoreLoadRelayState::default()));
     let relay_state = Arc::clone(&relay);
     std::thread::spawn(move || {
-        let loaded = CacheStore::new(&db_path).and_then(|cache| cache.load_latest_snapshot(&root));
+        let loaded =
+            dirotter_cache::CacheStore::load_snapshot_from_session_root(&session_root, &root);
         let payload = match loaded {
             Ok(Some(store)) => {
                 let summary = summarize_store(Some(&store));

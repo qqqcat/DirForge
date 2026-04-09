@@ -11,12 +11,9 @@ use dirotter_actions::{
     build_deletion_plan_with_origin, ActionFailureKind, ExecutionMode, ExecutionReport,
     SelectionOrigin,
 };
-use dirotter_cache::{CacheStore, HistoryRecord};
+use dirotter_cache::CacheStore;
 use dirotter_core::{
     ErrorKind, NodeId, NodeKind, NodeStore, RiskLevel, ScanErrorRecord, ScanSummary, SnapshotDelta,
-};
-use dirotter_report::{
-    default_manifest, export_diagnostics_archive, export_diagnostics_bundle, export_errors_csv,
 };
 use dirotter_scan::{start_scan, BatchEntry, ScanConfig, ScanEvent, ScanMode};
 use dirotter_telemetry as telemetry;
@@ -87,7 +84,6 @@ enum Page {
     Dashboard,
     CurrentScan,
     Treemap,
-    History,
     Errors,
     Diagnostics,
     Settings,
@@ -132,7 +128,6 @@ enum AppStatus {
 enum SelectionSource {
     Table,
     Treemap,
-    History,
     Error,
 }
 
@@ -338,10 +333,7 @@ pub struct DirOtterNativeApp {
     last_user_activity: Instant,
     last_auto_memory_release_at: Option<Instant>,
 
-    history: Vec<HistoryRecord>,
     errors: Vec<ScanErrorRecord>,
-    selected_history_id: Option<i64>,
-
     language: Lang,
     theme_dark: bool,
     advanced_tools_enabled: bool,
@@ -357,7 +349,9 @@ pub struct DirOtterNativeApp {
 impl DirOtterNativeApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         configure_fonts(&cc.egui_ctx);
-        let cache = CacheStore::new("dirotter.db").expect("open sqlite cache");
+        let cache = CacheStore::open_default()
+            .or_else(|_| CacheStore::open_ephemeral())
+            .expect("open settings and session storage");
         let language = cache
             .get_setting("language")
             .ok()
@@ -430,9 +424,7 @@ impl DirOtterNativeApp {
             last_memory_status_refresh: None,
             last_user_activity: Instant::now(),
             last_auto_memory_release_at: None,
-            history: Vec::new(),
             errors: Vec::new(),
-            selected_history_id: None,
             language,
             theme_dark,
             advanced_tools_enabled,
@@ -445,7 +437,6 @@ impl DirOtterNativeApp {
         };
 
         if app.advanced_tools_enabled {
-            let _ = app.reload_history();
             if let Ok(Some(snapshot)) = app.cache.load_latest_snapshot(&app.root_input) {
                 app.store = Some(snapshot);
                 app.sync_summary_from_store();
@@ -496,15 +487,9 @@ impl DirOtterNativeApp {
         let _ = self
             .cache
             .set_setting("advanced_tools", if enabled { "true" } else { "false" });
-        if enabled {
-            let _ = self.reload_history();
-            self.refresh_diagnostics();
-        } else {
-            self.history.clear();
-            self.errors.clear();
-            if matches!(self.page, Page::History | Page::Errors | Page::Diagnostics) {
-                self.page = Page::Dashboard;
-            }
+        self.refresh_diagnostics();
+        if !enabled && matches!(self.page, Page::Errors | Page::Diagnostics) {
+            self.page = Page::Dashboard;
         }
     }
 
@@ -1025,9 +1010,7 @@ impl DirOtterNativeApp {
     fn selection_origin(&self) -> SelectionOrigin {
         match self.selection.source {
             Some(SelectionSource::Table | SelectionSource::Treemap) => SelectionOrigin::TopFiles,
-            Some(SelectionSource::History | SelectionSource::Error) | None => {
-                SelectionOrigin::Manual
-            }
+            Some(SelectionSource::Error) | None => SelectionOrigin::Manual,
         }
     }
 
@@ -1399,16 +1382,6 @@ impl DirOtterNativeApp {
         };
 
         let report = payload.report;
-        let audit_payload = serde_json::json!({
-            "label": payload.request.label,
-            "targets": payload.request.targets.len(),
-            "mode": format!("{:?}", report.mode),
-            "attempted": report.attempted,
-            "succeeded": report.succeeded,
-            "failed": report.failed,
-        })
-        .to_string();
-        let _ = self.cache.add_audit_event("delete_execute", &audit_payload);
         if report.succeeded > 0 {
             let mut succeeded_targets: Vec<_> = payload
                 .request
@@ -1587,14 +1560,9 @@ impl DirOtterNativeApp {
 
     fn refresh_diagnostics(&mut self) {
         self.refresh_memory_status();
-        let cache_payload = self
-            .cache
-            .export_diagnostics_json()
-            .unwrap_or_else(|_| "{}".to_string());
         let telemetry_snapshot = telemetry::snapshot();
         let system_snapshot = telemetry::system_snapshot();
         let metrics = telemetry::metric_descriptors();
-        let audit = telemetry::action_audit_tail(32);
         let path_access = dirotter_platform::assess_path_access(&self.root_input)
             .map(|a| {
                 serde_json::json!({
@@ -1608,12 +1576,10 @@ impl DirOtterNativeApp {
                 |e| serde_json::json!({"error": format!("{:?}: {}", e.kind, e.message)}),
             );
 
-        let cache_json = serde_json::from_str::<serde_json::Value>(&cache_payload)
-            .unwrap_or_else(|_| serde_json::json!({"raw": cache_payload}));
-
         self.diagnostics_json = serde_json::to_string_pretty(&serde_json::json!({
             "bundle_structure_version": 2,
-            "cache": cache_json,
+            "settings_path": self.cache.settings_path().display().to_string(),
+            "session_snapshot_root": self.cache.session_root().display().to_string(),
             "telemetry_snapshot": telemetry_snapshot,
             "system_snapshot": system_snapshot,
             "process_memory": self.process_memory,
@@ -1621,15 +1587,10 @@ impl DirOtterNativeApp {
             "last_system_memory_release": self.last_system_memory_release,
             "result_store_resident": self.store.is_some(),
             "metrics": metrics,
-            "action_audit_tail": audit,
+            "current_errors": self.errors.len(),
             "path_access": path_access,
         }))
         .unwrap_or_else(|_| "{}".to_string());
-    }
-
-    fn reload_history(&mut self) -> rusqlite::Result<()> {
-        self.history = self.cache.list_history(200)?;
-        Ok(())
     }
 
     fn set_maintenance_feedback(&mut self, message: String, success: bool) {
@@ -1671,12 +1632,8 @@ impl DirOtterNativeApp {
         self.live_top_dirs.shrink_to_fit();
         self.diagnostics_json.clear();
         self.diagnostics_json.shrink_to_fit();
-        if !self.advanced_tools_enabled {
-            self.history.clear();
-            self.history.shrink_to_fit();
-            self.errors.clear();
-            self.errors.shrink_to_fit();
-        }
+        self.errors.clear();
+        self.errors.shrink_to_fit();
     }
 
     fn save_snapshot_before_memory_release(&mut self) -> bool {
@@ -1745,7 +1702,7 @@ impl DirOtterNativeApp {
 
         self.result_store_load_session = Some(start_result_store_load_session(
             self.egui_ctx.clone(),
-            self.cache.path().to_path_buf(),
+            self.cache.session_root().to_path_buf(),
             self.root_input.clone(),
         ));
         self.egui_ctx.request_repaint();
@@ -1854,88 +1811,6 @@ impl DirOtterNativeApp {
         }
     }
 
-    fn save_current_snapshot_manually(&mut self) {
-        let Some(store) = self.store.as_ref() else {
-            self.set_maintenance_feedback(
-                self.t(
-                    "当前没有可保存的扫描结果。",
-                    "There is no scan result to save yet.",
-                )
-                .to_string(),
-                false,
-            );
-            return;
-        };
-        match self.cache.save_snapshot(&self.root_input, store) {
-            Ok(()) => self.set_maintenance_feedback(
-                self.t(
-                    "已手动保存当前快照。",
-                    "Saved the current snapshot manually.",
-                )
-                .to_string(),
-                true,
-            ),
-            Err(err) => self.set_maintenance_feedback(
-                format!(
-                    "{}: {}",
-                    self.t("保存快照失败", "Failed to save snapshot"),
-                    err
-                ),
-                false,
-            ),
-        }
-    }
-
-    fn record_current_history_manually(&mut self) {
-        match self.cache.record_scan_history(
-            &self.root_input,
-            self.summary.scanned_files,
-            self.summary.scanned_dirs,
-            self.summary.bytes_observed,
-            self.summary.error_count,
-            &self.errors,
-        ) {
-            Ok(id) => {
-                let _ = self.reload_history();
-                self.selected_history_id = Some(id);
-                self.set_maintenance_feedback(
-                    self.t(
-                        "已手动记录当前扫描摘要。",
-                        "Recorded the current scan summary manually.",
-                    )
-                    .to_string(),
-                    true,
-                );
-            }
-            Err(err) => self.set_maintenance_feedback(
-                format!(
-                    "{}: {}",
-                    self.t("记录扫描历史失败", "Failed to record scan history"),
-                    err
-                ),
-                false,
-            ),
-        }
-    }
-
-    fn export_errors_csv_manually(&mut self) {
-        match export_errors_csv(&self.errors, "dirotter_errors.csv") {
-            Ok(()) => self.set_maintenance_feedback(
-                self.t("已导出错误 CSV。", "Exported the errors CSV.")
-                    .to_string(),
-                true,
-            ),
-            Err(err) => self.set_maintenance_feedback(
-                format!(
-                    "{}: {}",
-                    self.t("导出错误 CSV 失败", "Failed to export errors CSV"),
-                    err
-                ),
-                false,
-            ),
-        }
-    }
-
     fn release_dir_otter_memory(&mut self) {
         let before_process = dirotter_platform::process_memory_stats().ok();
         self.trim_transient_runtime_memory();
@@ -1947,11 +1822,8 @@ impl DirOtterNativeApp {
         self.execution_report = None;
         self.explorer_feedback = None;
         self.selection = SelectionState::default();
-        self.history.clear();
-        self.history.shrink_to_fit();
         self.errors.clear();
         self.errors.shrink_to_fit();
-        self.selected_history_id = None;
         let snapshot_saved = self.save_snapshot_before_memory_release();
         self.store = None;
         self.summary = ScanSummary::default();
@@ -1991,7 +1863,7 @@ impl DirOtterNativeApp {
                 if snapshot_saved {
                     message.push(' ');
                     message.push_str(self.t(
-                        "已先写入磁盘快照，可在需要时重新载入结果。",
+                        "已先写入当前会话的临时快照，可在需要时重新载入结果。",
                         "A disk snapshot was saved first, so the result can be reloaded later.",
                     ));
                 }
@@ -2304,9 +2176,8 @@ impl DirOtterNativeApp {
             );
             ui.add_space(6.0);
             for (p, label_zh, label_en) in [
-                (Page::History, "历史记录", "History"),
                 (Page::Errors, "错误中心", "Errors"),
-                (Page::Diagnostics, "诊断导出", "Diagnostics"),
+                (Page::Diagnostics, "诊断信息", "Diagnostics"),
             ] {
                 let selected = self.page == p;
                 let text = egui::RichText::new(self.t(label_zh, label_en))
@@ -2319,9 +2190,6 @@ impl DirOtterNativeApp {
                     )
                     .clicked()
                 {
-                    if matches!(p, Page::History) {
-                        let _ = self.reload_history();
-                    }
                     self.page = p;
                 }
             }
@@ -2338,10 +2206,6 @@ impl DirOtterNativeApp {
 
     fn ui_treemap(&mut self, ui: &mut egui::Ui) {
         result_pages::ui_treemap(self, ui);
-    }
-
-    fn ui_history(&mut self, ui: &mut egui::Ui) {
-        advanced_pages::ui_history(self, ui);
     }
 
     fn ui_errors(&mut self, ui: &mut egui::Ui) {
@@ -3522,9 +3386,7 @@ impl eframe::App for DirOtterNativeApp {
         self.process_queued_delete();
         self.maybe_refresh_memory_status();
         self.maybe_auto_release_memory();
-        if !self.advanced_tools_enabled
-            && matches!(self.page, Page::History | Page::Errors | Page::Diagnostics)
-        {
+        if !self.advanced_tools_enabled && matches!(self.page, Page::Errors | Page::Diagnostics) {
             self.page = Page::Dashboard;
         }
         self.apply_theme(ctx);
@@ -3589,9 +3451,6 @@ impl eframe::App for DirOtterNativeApp {
                     Page::Treemap => {
                         with_page_width_fill_height(ui, PAGE_MAX_WIDTH, |ui| self.ui_treemap(ui))
                     }
-                    Page::History => with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| {
-                        self.ui_history(ui)
-                    }),
                     Page::Errors => with_page_width_fill_height(ui, PAGE_MAX_WIDTH + 20.0, |ui| {
                         self.ui_errors(ui)
                     }),
@@ -4616,13 +4475,11 @@ mod ui_tests {
             last_memory_status_refresh: None,
             last_user_activity: Instant::now(),
             last_auto_memory_release_at: None,
-            history: Vec::new(),
             errors: Vec::new(),
-            selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
             advanced_tools_enabled: false,
-            cache: CacheStore::new(":memory:").expect("cache"),
+            cache: CacheStore::for_tests().expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
@@ -5066,13 +4923,11 @@ mod ui_tests {
             last_memory_status_refresh: None,
             last_user_activity: Instant::now(),
             last_auto_memory_release_at: None,
-            history: Vec::new(),
             errors: Vec::new(),
-            selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
             advanced_tools_enabled: false,
-            cache: CacheStore::new(":memory:").expect("cache"),
+            cache: CacheStore::for_tests().expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
             selection: SelectionState {
@@ -5154,13 +5009,11 @@ mod ui_tests {
             last_memory_status_refresh: None,
             last_user_activity: Instant::now(),
             last_auto_memory_release_at: None,
-            history: Vec::new(),
             errors: Vec::new(),
-            selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
             advanced_tools_enabled: false,
-            cache: CacheStore::new(":memory:").expect("cache"),
+            cache: CacheStore::for_tests().expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
             selection: SelectionState {
@@ -5250,13 +5103,11 @@ mod ui_tests {
             last_memory_status_refresh: None,
             last_user_activity: Instant::now(),
             last_auto_memory_release_at: None,
-            history: Vec::new(),
             errors: Vec::new(),
-            selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
             advanced_tools_enabled: false,
-            cache: CacheStore::new(":memory:").expect("cache"),
+            cache: CacheStore::for_tests().expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
@@ -5332,13 +5183,11 @@ mod ui_tests {
             last_memory_status_refresh: None,
             last_user_activity: Instant::now(),
             last_auto_memory_release_at: None,
-            history: Vec::new(),
             errors: Vec::new(),
-            selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
             advanced_tools_enabled: false,
-            cache: CacheStore::new(":memory:").expect("cache"),
+            cache: CacheStore::for_tests().expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
             selection: SelectionState {
@@ -5409,13 +5258,11 @@ mod ui_tests {
             last_memory_status_refresh: None,
             last_user_activity: Instant::now(),
             last_auto_memory_release_at: None,
-            history: Vec::new(),
             errors: Vec::new(),
-            selected_history_id: None,
             language: Lang::En,
             theme_dark: true,
             advanced_tools_enabled: false,
-            cache: CacheStore::new(":memory:").expect("cache"),
+            cache: CacheStore::for_tests().expect("cache"),
             perf: PerfMetrics::default(),
             diagnostics_json: String::new(),
             selection: SelectionState::default(),
