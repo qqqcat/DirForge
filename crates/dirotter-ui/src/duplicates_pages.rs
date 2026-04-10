@@ -15,14 +15,46 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     if app.scan_active() {
+        let (scanned_files, candidate_groups, candidate_files) = app.duplicate_prep_snapshot();
         tone_banner(
             ui,
-            app.t("扫描完成后再审阅重复文件", "Review Duplicates After Scan Completion"),
-            app.t(
-                "重复文件审阅依赖最终结果快照。请先完成扫描，避免在实时增量阶段做删除决策。",
-                "Duplicate review relies on the completed snapshot. Finish the scan first so deletion decisions are not made from live incremental results.",
+            app.t("扫描中已开始预建重复候选", "Duplicate Candidates Are Being Prepared During Scan"),
+            &format!(
+                "{} {}  |  {} {}  |  {} {}",
+                app.t(
+                    "当前仍等待最终快照后再开放稳定审阅，但按大小分组的候选已经在扫描过程中同步累计。",
+                    "Stable review still waits for the final snapshot, but size-based duplicate candidates are already being accumulated during the scan.",
+                ),
+                app.t(
+                    "这样扫描结束后无需再把整份结果按大小重扫一遍。",
+                    "This avoids re-scanning the whole result by size after the scan completes.",
+                ),
+                format_count(scanned_files as u64),
+                app.t("个文件已纳入预处理", "files pre-indexed"),
+                format_count(candidate_groups as u64),
+                app.t("个候选组", "candidate groups"),
             ),
         );
+        ui.add_space(10.0);
+        surface_panel(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                compact_stat_chip(
+                    ui,
+                    app.t("预处理文件", "Pre-indexed Files"),
+                    &format_count(scanned_files as u64),
+                );
+                compact_stat_chip(
+                    ui,
+                    app.t("候选组", "Candidate Groups"),
+                    &format_count(candidate_groups as u64),
+                );
+                compact_stat_chip(
+                    ui,
+                    app.t("候选文件", "Candidate Files"),
+                    &format_count(candidate_files as u64),
+                );
+            });
+        });
         return;
     }
 
@@ -68,8 +100,13 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
 
     app.start_duplicate_scan_if_needed();
 
-    if let Some(session) = app.duplicate_scan_session.as_ref() {
-        let snapshot = session.snapshot();
+    let duplicate_scan_snapshot = app
+        .duplicate_scan_session
+        .as_ref()
+        .map(|session| session.snapshot());
+    let duplicate_scan_running = duplicate_scan_snapshot.is_some();
+
+    if let Some(snapshot) = duplicate_scan_snapshot.as_ref() {
         let progress = if snapshot.candidate_groups_total == 0 {
             app.t("正在整理候选分组…", "Preparing candidate groups...")
                 .to_string()
@@ -98,18 +135,31 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     }
 
     let (selected_groups, selected_files, selected_bytes) = app.duplicate_delete_totals();
-    let total_duplicate_files: usize = app
-        .duplicates
-        .groups
-        .iter()
-        .map(|group| group.files.len())
-        .sum();
-    let total_waste: u64 = app
-        .duplicates
-        .groups
-        .iter()
-        .map(|group| group.total_waste)
-        .sum();
+    let total_duplicate_files: usize = if duplicate_scan_running && app.duplicates.groups.is_empty()
+    {
+        duplicate_scan_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.duplicate_files_found)
+            .unwrap_or(0)
+    } else {
+        app.duplicates.total_duplicate_files
+    };
+    let total_waste: u64 = if duplicate_scan_running && app.duplicates.groups.is_empty() {
+        duplicate_scan_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.reclaimable_bytes_found)
+            .unwrap_or(0)
+    } else {
+        app.duplicates.total_reclaimable_bytes
+    };
+    let total_group_count: usize = if duplicate_scan_running && app.duplicates.groups.is_empty() {
+        duplicate_scan_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.groups_found)
+            .unwrap_or(0)
+    } else {
+        app.duplicates.groups.len()
+    };
 
     surface_panel(ui, |ui| {
         ui.columns(3, |columns| {
@@ -131,7 +181,7 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             compact_metric_block(
                 &mut columns[2],
                 app.t("重复组数", "Duplicate Groups"),
-                &format_count(app.duplicates.groups.len() as u64),
+                &format_count(total_group_count as u64),
                 app.t(
                     "按组决策，而不是逐个文件决策",
                     "Operate on groups, not isolated files",
@@ -156,6 +206,7 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     let selected_groups_label = app.t("组已加入删除计划", "groups selected");
     let selected_files_label = app.t("个文件待删除", "files to delete");
     let estimated_reclaim_label = app.t("预计释放", "estimated reclaim");
+    let interaction_enabled = !app.delete_active() && !duplicate_scan_running;
     surface_panel(ui, |ui| {
         dashboard_split(
             ui,
@@ -164,14 +215,14 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             |ui| {
                 ui.horizontal_wrapped(|ui| {
                     if ui
-                        .add_enabled(!app.delete_active(), egui::Button::new(auto_select_label))
+                        .add_enabled(interaction_enabled, egui::Button::new(auto_select_label))
                         .clicked()
                     {
                         app.reset_duplicate_selection_to_recommended();
                     }
                     if ui
                         .add_enabled(
-                            !app.delete_active(),
+                            interaction_enabled,
                             egui::Button::new(clear_selection_label),
                         )
                         .clicked()
@@ -180,7 +231,7 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                     }
                     if ui
                         .add_enabled(
-                            selected_files > 0 && !app.delete_active(),
+                            selected_files > 0 && interaction_enabled,
                             egui::Button::new(delete_selected_label),
                         )
                         .clicked()
@@ -191,51 +242,70 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
 
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
-                    ui.checkbox(&mut app.duplicates.show_large_only, large_only_label);
+                    ui.add_enabled_ui(interaction_enabled, |ui| {
+                        ui.checkbox(&mut app.duplicates.show_large_only, large_only_label);
+                    });
 
                     let combo_width = 240.0_f32.min(ui.available_width().max(160.0));
                     ui.allocate_ui_with_layout(
                         egui::vec2(combo_width, 0.0),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
-                            egui::ComboBox::from_label(sort_label)
-                                .width((combo_width - 24.0).max(120.0))
-                                .selected_text(
-                                    match app.duplicates.sort.unwrap_or(DuplicateSort::Waste) {
-                                        DuplicateSort::Waste => sort_waste_label,
-                                        DuplicateSort::Size => sort_size_label,
-                                    },
-                                )
-                                .show_ui(ui, |ui| {
-                                    let mut changed = false;
-                                    let sort =
-                                        app.duplicates.sort.get_or_insert(DuplicateSort::Waste);
-                                    changed |= ui
-                                        .selectable_value(
-                                            sort,
-                                            DuplicateSort::Waste,
-                                            sort_waste_label,
-                                        )
-                                        .clicked();
-                                    changed |= ui
-                                        .selectable_value(
-                                            sort,
-                                            DuplicateSort::Size,
-                                            sort_size_label,
-                                        )
-                                        .clicked();
-                                    if changed {
-                                        app.sort_duplicate_groups();
-                                    }
-                                });
+                            ui.add_enabled_ui(interaction_enabled, |ui| {
+                                egui::ComboBox::from_label(sort_label)
+                                    .width((combo_width - 24.0).max(120.0))
+                                    .selected_text(
+                                        match app.duplicates.sort.unwrap_or(DuplicateSort::Waste) {
+                                            DuplicateSort::Waste => sort_waste_label,
+                                            DuplicateSort::Size => sort_size_label,
+                                        },
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        let mut changed = false;
+                                        let sort =
+                                            app.duplicates.sort.get_or_insert(DuplicateSort::Waste);
+                                        changed |= ui
+                                            .selectable_value(
+                                                sort,
+                                                DuplicateSort::Waste,
+                                                sort_waste_label,
+                                            )
+                                            .clicked();
+                                        changed |= ui
+                                            .selectable_value(
+                                                sort,
+                                                DuplicateSort::Size,
+                                                sort_size_label,
+                                            )
+                                            .clicked();
+                                        if changed {
+                                            app.sort_duplicate_groups();
+                                        }
+                                    });
+                            });
                         },
                     );
 
-                    if ui.button(expand_all_label).clicked() {
+                    if ui
+                        .add_enabled(interaction_enabled, egui::Button::new(expand_all_label))
+                        .clicked()
+                    {
                         app.duplicates.expanded_group_ids =
                             app.duplicates.groups.iter().map(|group| group.id).collect();
                     }
                 });
+
+                if duplicate_scan_running {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(app.t(
+                            "后台校验进行中，分组和自动选择会在校验完成后一次性稳定下来。",
+                            "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.",
+                        ))
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                    );
+                }
             },
             |ui| {
                 ui.label(
@@ -279,13 +349,13 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     });
 
     ui.add_space(12.0);
-    let groups: Vec<_> = app
+    let show_large_only = app.duplicates.show_large_only;
+    let filtered_group_count = app
         .duplicates
         .groups
         .iter()
-        .filter(|group| !app.duplicates.show_large_only || group.size >= 256 * 1024 * 1024)
-        .cloned()
-        .collect();
+        .filter(|group| !show_large_only || group.size >= 256 * 1024 * 1024)
+        .count();
 
     let list_height = ui.available_height().max(220.0);
     ui.allocate_ui_with_layout(
@@ -293,7 +363,18 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
             ui.set_min_height(list_height);
-            if groups.is_empty() {
+            if duplicate_scan_running && app.duplicates.groups.is_empty() {
+                empty_state_panel(
+                    ui,
+                    app.t("后台正在建立重复文件分组", "Building Duplicate Groups in Background"),
+                    app.t(
+                        "当前只更新轻量进度统计。等后台哈希校验完成后，再一次性加载完整分组，避免界面卡顿或假死。",
+                        "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.",
+                    ),
+                );
+                return;
+            }
+            if filtered_group_count == 0 {
                 empty_state_panel(
                     ui,
                     app.t("没有重复文件组", "No Duplicate Groups"),
@@ -305,25 +386,39 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                 return;
             }
 
-            let visible_count = app.duplicates.visible_groups.min(groups.len()).max(1);
+            let visible_count = app
+                .duplicates
+                .visible_groups
+                .min(filtered_group_count)
+                .max(1);
+            let visible_group_indices: Vec<usize> = app
+                .duplicates
+                .groups
+                .iter()
+                .enumerate()
+                .filter(|(_, group)| !show_large_only || group.size >= 256 * 1024 * 1024)
+                .map(|(index, _)| index)
+                .take(visible_count)
+                .collect();
             let mut load_more = false;
             egui::ScrollArea::vertical()
                 .max_height(list_height)
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    for (index, group) in groups.iter().take(visible_count).enumerate() {
+                    for (index, group_index) in visible_group_indices.iter().enumerate() {
+                        let group = app.duplicates.groups[*group_index].clone();
                         render_duplicate_group_card(app, ui, group);
                         ui.add_space(10.0);
 
-                        if index + 1 == visible_count && visible_count < groups.len() {
+                        if index + 1 == visible_count && visible_count < filtered_group_count {
                             load_more = true;
                         }
                     }
                 });
 
-            if load_more && app.duplicates.visible_groups < groups.len() {
+            if load_more && app.duplicates.visible_groups < filtered_group_count {
                 app.duplicates.visible_groups =
-                    (app.duplicates.visible_groups + 20).min(groups.len());
+                    (app.duplicates.visible_groups + 20).min(filtered_group_count);
                 app.egui_ctx.request_repaint();
             }
         },
@@ -333,9 +428,9 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
 fn render_duplicate_group_card(
     app: &mut DirOtterNativeApp,
     ui: &mut egui::Ui,
-    group: &dirotter_dup::DuplicateGroup,
+    group: dirotter_dup::DuplicateGroup,
 ) {
-    let selection = app.duplicate_group_selection(group);
+    let selection = app.duplicate_group_selection(&group);
     let expanded = app.duplicates.expanded_group_ids.contains(&group.id);
     let recommended = group.files.get(group.recommended_keep_index).cloned();
     let group_title = format!(

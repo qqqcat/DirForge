@@ -76,6 +76,7 @@ const NAV_ITEM_HEIGHT: f32 = 36.0;
 const STATUS_BADGE_HEIGHT: f32 = 32.0;
 const CONTROL_MIN_WIDTH: f32 = 56.0;
 const PAGE_MAX_WIDTH: f32 = 1360.0;
+const DUPLICATES_PAGE_MAX_WIDTH: f32 = 1480.0;
 const DASHBOARD_PAGE_MAX_WIDTH: f32 = 1160.0;
 const SETTINGS_PAGE_MAX_WIDTH: f32 = 1040.0;
 const PAGE_SIDE_GUTTER: f32 = 64.0;
@@ -278,6 +279,21 @@ struct DuplicatePanelState {
     pending_delete: Option<DuplicateDeleteRequest>,
     sort: Option<DuplicateSort>,
     show_large_only: bool,
+    follow_recommended_selection: bool,
+    total_duplicate_files: usize,
+    total_reclaimable_bytes: u64,
+    selected_groups_cache: usize,
+    selected_files_cache: usize,
+    selected_bytes_cache: u64,
+    selection_totals_dirty: bool,
+}
+
+#[derive(Default)]
+struct DuplicatePrepState {
+    by_size: HashMap<u64, Vec<Arc<str>>>,
+    scanned_files: usize,
+    candidate_groups: usize,
+    candidate_files: usize,
 }
 
 #[derive(Clone)]
@@ -363,6 +379,7 @@ pub struct DirOtterNativeApp {
     last_coalesce_commit: Instant,
     cleanup: CleanupPanelState,
     duplicates: DuplicatePanelState,
+    duplicate_prep: DuplicatePrepState,
 
     execution_report: Option<ExecutionReport>,
     pending_delete_confirmation: Option<PendingDeleteConfirmation>,
@@ -459,8 +476,10 @@ impl DirOtterNativeApp {
             cleanup: CleanupPanelState::default(),
             duplicates: DuplicatePanelState {
                 sort: Some(DuplicateSort::Waste),
+                follow_recommended_selection: true,
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -990,8 +1009,72 @@ impl DirOtterNativeApp {
         self.duplicate_scan_session = None;
         self.duplicates = DuplicatePanelState {
             sort: Some(DuplicateSort::Waste),
+            follow_recommended_selection: true,
+            selection_totals_dirty: true,
             ..DuplicatePanelState::default()
         };
+    }
+
+    fn reset_duplicate_prep(&mut self) {
+        self.duplicate_prep = DuplicatePrepState::default();
+    }
+
+    fn absorb_duplicate_prep_batch(&mut self, batch: &[BatchEntry]) {
+        for item in batch {
+            if item.is_dir {
+                continue;
+            }
+
+            self.duplicate_prep.scanned_files = self.duplicate_prep.scanned_files.saturating_add(1);
+            if item.size == 0 {
+                continue;
+            }
+
+            let bucket = self.duplicate_prep.by_size.entry(item.size).or_default();
+            match bucket.len() {
+                0 => {}
+                1 => {
+                    self.duplicate_prep.candidate_groups =
+                        self.duplicate_prep.candidate_groups.saturating_add(1);
+                    self.duplicate_prep.candidate_files =
+                        self.duplicate_prep.candidate_files.saturating_add(2);
+                }
+                _ => {
+                    self.duplicate_prep.candidate_files =
+                        self.duplicate_prep.candidate_files.saturating_add(1);
+                }
+            }
+            bucket.push(item.path.clone());
+        }
+    }
+
+    fn take_prebuilt_duplicate_candidates(
+        &mut self,
+    ) -> Option<Vec<dirotter_dup::DuplicateSizeCandidate>> {
+        if self.duplicate_prep.by_size.is_empty() {
+            return None;
+        }
+
+        let by_size = std::mem::take(&mut self.duplicate_prep.by_size);
+        let mut candidates: Vec<_> = by_size
+            .into_iter()
+            .filter_map(|(size, paths)| {
+                (paths.len() >= 2).then_some(dirotter_dup::DuplicateSizeCandidate {
+                    size,
+                    paths: paths.into_iter().map(|path| path.to_string()).collect(),
+                })
+            })
+            .collect();
+        dirotter_dup::sort_size_candidates(&mut candidates);
+        Some(candidates)
+    }
+
+    fn duplicate_prep_snapshot(&self) -> (usize, usize, usize) {
+        (
+            self.duplicate_prep.scanned_files,
+            self.duplicate_prep.candidate_groups,
+            self.duplicate_prep.candidate_files,
+        )
     }
 
     fn start_duplicate_scan_if_needed(&mut self) {
@@ -1005,30 +1088,17 @@ impl DirOtterNativeApp {
         let Some(store) = self.store.as_ref().cloned() else {
             return;
         };
-        self.duplicate_scan_session =
-            Some(start_duplicate_scan_session(self.egui_ctx.clone(), store));
+        let prebuilt_candidates = self.take_prebuilt_duplicate_candidates();
+        self.duplicate_scan_session = Some(start_duplicate_scan_session(
+            self.egui_ctx.clone(),
+            store,
+            prebuilt_candidates,
+        ));
     }
 
     fn process_duplicate_scan_events(&mut self) {
         if self.duplicate_scan_session.is_none() {
             return;
-        }
-        let snapshot = {
-            let session = self
-                .duplicate_scan_session
-                .as_ref()
-                .expect("duplicate scan session");
-            session.snapshot()
-        };
-        if !snapshot.groups.is_empty() {
-            self.duplicates.groups = snapshot.groups;
-            self.sort_duplicate_groups();
-            if self.duplicates.visible_groups == 0 {
-                self.duplicates.visible_groups = self.duplicates.groups.len().min(20);
-            }
-            if self.duplicates.selections.is_empty() {
-                self.reset_duplicate_selection_to_recommended();
-            }
         }
         let finished = {
             let session = self
@@ -1048,7 +1118,22 @@ impl DirOtterNativeApp {
         self.sort_duplicate_groups();
         self.duplicates.visible_groups = self.duplicates.groups.len().min(20);
         self.duplicates.pending_delete = None;
-        self.reset_duplicate_selection_to_recommended();
+        self.duplicates.total_duplicate_files = self
+            .duplicates
+            .groups
+            .iter()
+            .map(|group| group.files.len())
+            .sum();
+        self.duplicates.total_reclaimable_bytes = self
+            .duplicates
+            .groups
+            .iter()
+            .map(|group| group.total_waste)
+            .sum();
+        self.duplicates.selection_totals_dirty = true;
+        if self.duplicates.follow_recommended_selection || self.duplicates.selections.is_empty() {
+            self.reset_duplicate_selection_to_recommended();
+        }
     }
 
     fn sort_duplicate_groups(&mut self) {
@@ -1069,6 +1154,7 @@ impl DirOtterNativeApp {
     }
 
     fn reset_duplicate_selection_to_recommended(&mut self) {
+        self.duplicates.follow_recommended_selection = true;
         self.duplicates.selections = self
             .duplicates
             .groups
@@ -1088,9 +1174,11 @@ impl DirOtterNativeApp {
                     })
             })
             .collect();
+        self.duplicates.selection_totals_dirty = true;
     }
 
     fn clear_duplicate_selection(&mut self) {
+        self.duplicates.follow_recommended_selection = false;
         let fallback: Vec<_> = self
             .duplicates
             .groups
@@ -1111,6 +1199,7 @@ impl DirOtterNativeApp {
                 },
             );
         }
+        self.duplicates.selection_totals_dirty = true;
     }
 
     fn duplicate_group_selection(
@@ -1145,6 +1234,7 @@ impl DirOtterNativeApp {
         else {
             return;
         };
+        self.duplicates.follow_recommended_selection = false;
         let current = self.duplicate_group_selection(group);
         self.duplicates.selections.insert(
             group_id,
@@ -1153,6 +1243,7 @@ impl DirOtterNativeApp {
                 enabled,
             },
         );
+        self.duplicates.selection_totals_dirty = true;
     }
 
     fn set_duplicate_group_keep_path(&mut self, group_id: u64, keep_path: Arc<str>) {
@@ -1164,6 +1255,7 @@ impl DirOtterNativeApp {
         else {
             return;
         };
+        self.duplicates.follow_recommended_selection = false;
         let current = self.duplicate_group_selection(group);
         self.duplicates.selections.insert(
             group_id,
@@ -1172,30 +1264,42 @@ impl DirOtterNativeApp {
                 enabled: current.enabled,
             },
         );
+        self.duplicates.selection_totals_dirty = true;
     }
 
-    fn duplicate_delete_totals(&self) -> (usize, usize, u64) {
-        self.duplicates.groups.iter().fold(
-            (0usize, 0usize, 0u64),
-            |(groups, files, bytes), group| {
-                let selection = self.duplicate_group_selection(group);
-                if !selection.enabled {
-                    return (groups, files, bytes);
-                }
-                let delete_count = group
-                    .files
-                    .iter()
-                    .filter(|file| file.path != selection.keep_path.as_ref())
-                    .count();
-                if delete_count == 0 {
-                    return (groups, files, bytes);
-                }
-                (
-                    groups + 1,
-                    files + delete_count,
-                    bytes.saturating_add(group.size.saturating_mul(delete_count as u64)),
-                )
-            },
+    fn duplicate_delete_totals(&mut self) -> (usize, usize, u64) {
+        if self.duplicates.selection_totals_dirty {
+            let (groups, files, bytes) = self.duplicates.groups.iter().fold(
+                (0usize, 0usize, 0u64),
+                |(groups, files, bytes), group| {
+                    let selection = self.duplicate_group_selection(group);
+                    if !selection.enabled {
+                        return (groups, files, bytes);
+                    }
+                    let delete_count = group
+                        .files
+                        .iter()
+                        .filter(|file| file.path != selection.keep_path.as_ref())
+                        .count();
+                    if delete_count == 0 {
+                        return (groups, files, bytes);
+                    }
+                    (
+                        groups + 1,
+                        files + delete_count,
+                        bytes.saturating_add(group.size.saturating_mul(delete_count as u64)),
+                    )
+                },
+            );
+            self.duplicates.selected_groups_cache = groups;
+            self.duplicates.selected_files_cache = files;
+            self.duplicates.selected_bytes_cache = bytes;
+            self.duplicates.selection_totals_dirty = false;
+        }
+        (
+            self.duplicates.selected_groups_cache,
+            self.duplicates.selected_files_cache,
+            self.duplicates.selected_bytes_cache,
         )
     }
 
@@ -1903,6 +2007,7 @@ impl DirOtterNativeApp {
         self.execution_report = None;
         self.cleanup = CleanupPanelState::default();
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         self.refresh_diagnostics();
         self.scan_session = None;
         self.scan_finalize_session = None;
@@ -2039,6 +2144,7 @@ impl DirOtterNativeApp {
         self.selection = SelectionState::default();
         self.treemap_focus_path = None;
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         true
     }
 
@@ -2056,6 +2162,7 @@ impl DirOtterNativeApp {
                     self.refresh_cleanup_analysis();
                 }
                 self.reset_duplicate_review();
+                self.reset_duplicate_prep();
                 self.refresh_memory_status();
                 true
             }
@@ -2116,6 +2223,7 @@ impl DirOtterNativeApp {
             self.completed_top_dirs = payload.top_dirs;
             self.apply_cleanup_analysis(payload.cleanup_analysis);
             self.reset_duplicate_review();
+            self.reset_duplicate_prep();
             self.refresh_memory_status();
             self.missing_result_store_root = None;
         } else {
@@ -2218,6 +2326,7 @@ impl DirOtterNativeApp {
         self.status = AppStatus::Idle;
         self.treemap_focus_path = None;
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         let trimmed = dirotter_platform::trim_process_memory();
         self.refresh_memory_status();
         self.refresh_diagnostics();
@@ -2316,6 +2425,7 @@ impl DirOtterNativeApp {
         self.missing_result_store_root = None;
         self.cleanup = CleanupPanelState::default();
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         self.delete_session = None;
         self.delete_finalize_session = None;
         self.queued_delete = None;
@@ -2418,6 +2528,7 @@ impl DirOtterNativeApp {
             }
 
             for batch in batches {
+                self.absorb_duplicate_prep_batch(&batch);
                 self.pending_batch_events.push_back(batch);
                 if self.pending_batch_events.len() > MAX_PENDING_BATCH_EVENTS {
                     let drop_n = self.pending_batch_events.len() - MAX_PENDING_BATCH_EVENTS;
@@ -3944,7 +4055,7 @@ impl eframe::App for DirOtterNativeApp {
                         with_page_width_fill_height(ui, PAGE_MAX_WIDTH, |ui| self.ui_treemap(ui))
                     }
                     Page::Duplicates => {
-                        with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 20.0, |ui| {
+                        with_page_width_fill_height(ui, DUPLICATES_PAGE_MAX_WIDTH, |ui| {
                             self.ui_duplicates(ui)
                         })
                     }
@@ -5252,6 +5363,11 @@ mod ui_tests {
     #[test]
     fn all_supported_languages_cover_result_pages_keys() {
         assert_translations_cover_source(include_str!("result_pages.rs"), "result-page");
+    }
+
+    #[test]
+    fn all_supported_languages_cover_duplicates_pages_keys() {
+        assert_translations_cover_source(include_str!("duplicates_pages.rs"), "duplicates-page");
     }
 
     #[test]
@@ -8071,6 +8187,8 @@ pub(super) fn ui_errors(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
 use super::*;
 
 pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    ui.set_width(ui.available_width());
+    ui.set_max_width(ui.available_width());
     page_header(
         ui,
         app.t("DirOtter 工作台", "DirOtter Workspace"),
@@ -8083,14 +8201,46 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     if app.scan_active() {
+        let (scanned_files, candidate_groups, candidate_files) = app.duplicate_prep_snapshot();
         tone_banner(
             ui,
-            app.t("扫描完成后再审阅重复文件", "Review Duplicates After Scan Completion"),
-            app.t(
-                "重复文件审阅依赖最终结果快照。请先完成扫描，避免在实时增量阶段做删除决策。",
-                "Duplicate review relies on the completed snapshot. Finish the scan first so deletion decisions are not made from live incremental results.",
+            app.t("扫描中已开始预建重复候选", "Duplicate Candidates Are Being Prepared During Scan"),
+            &format!(
+                "{} {}  |  {} {}  |  {} {}",
+                app.t(
+                    "当前仍等待最终快照后再开放稳定审阅，但按大小分组的候选已经在扫描过程中同步累计。",
+                    "Stable review still waits for the final snapshot, but size-based duplicate candidates are already being accumulated during the scan.",
+                ),
+                app.t(
+                    "这样扫描结束后无需再把整份结果按大小重扫一遍。",
+                    "This avoids re-scanning the whole result by size after the scan completes.",
+                ),
+                format_count(scanned_files as u64),
+                app.t("个文件已纳入预处理", "files pre-indexed"),
+                format_count(candidate_groups as u64),
+                app.t("个候选组", "candidate groups"),
             ),
         );
+        ui.add_space(10.0);
+        surface_panel(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                compact_stat_chip(
+                    ui,
+                    app.t("预处理文件", "Pre-indexed Files"),
+                    &format_count(scanned_files as u64),
+                );
+                compact_stat_chip(
+                    ui,
+                    app.t("候选组", "Candidate Groups"),
+                    &format_count(candidate_groups as u64),
+                );
+                compact_stat_chip(
+                    ui,
+                    app.t("候选文件", "Candidate Files"),
+                    &format_count(candidate_files as u64),
+                );
+            });
+        });
         return;
     }
 
@@ -8136,8 +8286,13 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
 
     app.start_duplicate_scan_if_needed();
 
-    if let Some(session) = app.duplicate_scan_session.as_ref() {
-        let snapshot = session.snapshot();
+    let duplicate_scan_snapshot = app
+        .duplicate_scan_session
+        .as_ref()
+        .map(|session| session.snapshot());
+    let duplicate_scan_running = duplicate_scan_snapshot.is_some();
+
+    if let Some(snapshot) = duplicate_scan_snapshot.as_ref() {
         let progress = if snapshot.candidate_groups_total == 0 {
             app.t("正在整理候选分组…", "Preparing candidate groups...")
                 .to_string()
@@ -8166,44 +8321,59 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     }
 
     let (selected_groups, selected_files, selected_bytes) = app.duplicate_delete_totals();
-    let total_duplicate_files: usize = app
-        .duplicates
-        .groups
-        .iter()
-        .map(|group| group.files.len())
-        .sum();
-    let total_waste: u64 = app
-        .duplicates
-        .groups
-        .iter()
-        .map(|group| group.total_waste)
-        .sum();
+    let total_duplicate_files: usize = if duplicate_scan_running && app.duplicates.groups.is_empty()
+    {
+        duplicate_scan_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.duplicate_files_found)
+            .unwrap_or(0)
+    } else {
+        app.duplicates.total_duplicate_files
+    };
+    let total_waste: u64 = if duplicate_scan_running && app.duplicates.groups.is_empty() {
+        duplicate_scan_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.reclaimable_bytes_found)
+            .unwrap_or(0)
+    } else {
+        app.duplicates.total_reclaimable_bytes
+    };
+    let total_group_count: usize = if duplicate_scan_running && app.duplicates.groups.is_empty() {
+        duplicate_scan_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.groups_found)
+            .unwrap_or(0)
+    } else {
+        app.duplicates.groups.len()
+    };
 
-    ui.columns(3, |columns| {
-        compact_metric_block(
-            &mut columns[0],
-            app.t("可释放空间", "Reclaimable Space"),
-            &format_bytes(total_waste),
-            app.t(
-                "只统计每组删去重复副本后可回收的空间",
-                "Waste beyond one keeper per group",
-            ),
-        );
-        compact_metric_block(
-            &mut columns[1],
-            app.t("重复文件数", "Duplicate Files"),
-            &format_count(total_duplicate_files as u64),
-            app.t("所有重复副本总数", "All files inside duplicate groups"),
-        );
-        compact_metric_block(
-            &mut columns[2],
-            app.t("重复组数", "Duplicate Groups"),
-            &format_count(app.duplicates.groups.len() as u64),
-            app.t(
-                "按组决策，而不是逐个文件决策",
-                "Operate on groups, not isolated files",
-            ),
-        );
+    surface_panel(ui, |ui| {
+        ui.columns(3, |columns| {
+            compact_metric_block(
+                &mut columns[0],
+                app.t("可释放空间", "Reclaimable Space"),
+                &format_bytes(total_waste),
+                app.t(
+                    "只统计每组删去重复副本后可回收的空间",
+                    "Waste beyond one keeper per group",
+                ),
+            );
+            compact_metric_block(
+                &mut columns[1],
+                app.t("重复文件数", "Duplicate Files"),
+                &format_count(total_duplicate_files as u64),
+                app.t("所有重复副本总数", "All files inside duplicate groups"),
+            );
+            compact_metric_block(
+                &mut columns[2],
+                app.t("重复组数", "Duplicate Groups"),
+                &format_count(total_group_count as u64),
+                app.t(
+                    "按组决策，而不是逐个文件决策",
+                    "Operate on groups, not isolated files",
+                ),
+            );
+        });
     });
 
     ui.add_space(12.0);
@@ -8215,71 +8385,149 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     let sort_waste_label = app.t("按可释放空间", "By Reclaimable Space");
     let sort_size_label = app.t("按文件大小", "By File Size");
     let expand_all_label = app.t("展开全部", "Expand All");
+    let operate_groups_label = app.t(
+        "按组决策，而不是逐个文件决策",
+        "Operate on groups, not isolated files",
+    );
+    let selected_groups_label = app.t("组已加入删除计划", "groups selected");
+    let selected_files_label = app.t("个文件待删除", "files to delete");
+    let estimated_reclaim_label = app.t("预计释放", "estimated reclaim");
+    let interaction_enabled = !app.delete_active() && !duplicate_scan_running;
     surface_panel(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(!app.delete_active(), egui::Button::new(auto_select_label))
-                .clicked()
-            {
-                app.reset_duplicate_selection_to_recommended();
-            }
-            if ui
-                .add_enabled(
-                    !app.delete_active(),
-                    egui::Button::new(clear_selection_label),
-                )
-                .clicked()
-            {
-                app.clear_duplicate_selection();
-            }
-            if ui
-                .add_enabled(
-                    selected_files > 0 && !app.delete_active(),
-                    egui::Button::new(delete_selected_label),
-                )
-                .clicked()
-            {
-                app.queue_duplicate_delete_review();
-            }
-
-            ui.separator();
-            ui.checkbox(&mut app.duplicates.show_large_only, large_only_label);
-
-            egui::ComboBox::from_label(sort_label)
-                .selected_text(match app.duplicates.sort.unwrap_or(DuplicateSort::Waste) {
-                    DuplicateSort::Waste => sort_waste_label,
-                    DuplicateSort::Size => sort_size_label,
-                })
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    let sort = app.duplicates.sort.get_or_insert(DuplicateSort::Waste);
-                    changed |= ui
-                        .selectable_value(sort, DuplicateSort::Waste, sort_waste_label)
-                        .clicked();
-                    changed |= ui
-                        .selectable_value(sort, DuplicateSort::Size, sort_size_label)
-                        .clicked();
-                    if changed {
-                        app.sort_duplicate_groups();
+        dashboard_split(
+            ui,
+            360.0,
+            16.0,
+            |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(interaction_enabled, egui::Button::new(auto_select_label))
+                        .clicked()
+                    {
+                        app.reset_duplicate_selection_to_recommended();
+                    }
+                    if ui
+                        .add_enabled(
+                            interaction_enabled,
+                            egui::Button::new(clear_selection_label),
+                        )
+                        .clicked()
+                    {
+                        app.clear_duplicate_selection();
+                    }
+                    if ui
+                        .add_enabled(
+                            selected_files > 0 && interaction_enabled,
+                            egui::Button::new(delete_selected_label),
+                        )
+                        .clicked()
+                    {
+                        app.queue_duplicate_delete_review();
                     }
                 });
 
-            if ui.button(expand_all_label).clicked() {
-                app.duplicates.expanded_group_ids =
-                    app.duplicates.groups.iter().map(|group| group.id).collect();
-            }
-        });
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_enabled_ui(interaction_enabled, |ui| {
+                        ui.checkbox(&mut app.duplicates.show_large_only, large_only_label);
+                    });
 
-        ui.add_space(10.0);
+                    let combo_width = 240.0_f32.min(ui.available_width().max(160.0));
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(combo_width, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.add_enabled_ui(interaction_enabled, |ui| {
+                                egui::ComboBox::from_label(sort_label)
+                                    .width((combo_width - 24.0).max(120.0))
+                                    .selected_text(
+                                        match app.duplicates.sort.unwrap_or(DuplicateSort::Waste) {
+                                            DuplicateSort::Waste => sort_waste_label,
+                                            DuplicateSort::Size => sort_size_label,
+                                        },
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        let mut changed = false;
+                                        let sort =
+                                            app.duplicates.sort.get_or_insert(DuplicateSort::Waste);
+                                        changed |= ui
+                                            .selectable_value(
+                                                sort,
+                                                DuplicateSort::Waste,
+                                                sort_waste_label,
+                                            )
+                                            .clicked();
+                                        changed |= ui
+                                            .selectable_value(
+                                                sort,
+                                                DuplicateSort::Size,
+                                                sort_size_label,
+                                            )
+                                            .clicked();
+                                        if changed {
+                                            app.sort_duplicate_groups();
+                                        }
+                                    });
+                            });
+                        },
+                    );
+
+                    if ui
+                        .add_enabled(interaction_enabled, egui::Button::new(expand_all_label))
+                        .clicked()
+                    {
+                        app.duplicates.expanded_group_ids =
+                            app.duplicates.groups.iter().map(|group| group.id).collect();
+                    }
+                });
+
+                if duplicate_scan_running {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(app.t(
+                            "后台校验进行中，分组和自动选择会在校验完成后一次性稳定下来。",
+                            "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.",
+                        ))
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                    );
+                }
+            },
+            |ui| {
+                ui.label(
+                    egui::RichText::new(operate_groups_label)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    compact_stat_chip(
+                        ui,
+                        selected_groups_label,
+                        &format_count(selected_groups as u64),
+                    );
+                    compact_stat_chip(
+                        ui,
+                        selected_files_label,
+                        &format_count(selected_files as u64),
+                    );
+                    compact_stat_chip(ui, estimated_reclaim_label, &format_bytes(selected_bytes));
+                });
+            },
+        );
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(8.0);
         ui.label(
             egui::RichText::new(format!(
                 "{} {}  |  {} {}  |  {} {}",
                 format_count(selected_groups as u64),
-                app.t("组已加入删除计划", "groups selected"),
+                selected_groups_label,
                 format_count(selected_files as u64),
-                app.t("个文件待删除", "files to delete"),
+                selected_files_label,
                 format_bytes(selected_bytes),
-                app.t("预计释放", "estimated reclaim")
+                estimated_reclaim_label
             ))
             .text_style(egui::TextStyle::Small)
             .color(ui.visuals().weak_text_color()),
@@ -8287,185 +8535,262 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     });
 
     ui.add_space(12.0);
-    let groups: Vec<_> = app
+    let show_large_only = app.duplicates.show_large_only;
+    let filtered_group_count = app
         .duplicates
         .groups
         .iter()
-        .filter(|group| !app.duplicates.show_large_only || group.size >= 256 * 1024 * 1024)
-        .cloned()
-        .collect();
+        .filter(|group| !show_large_only || group.size >= 256 * 1024 * 1024)
+        .count();
 
-    if groups.is_empty() {
-        empty_state_panel(
-            ui,
-            app.t("没有重复文件组", "No Duplicate Groups"),
-            app.t(
-                "如果这里没有结果，要么当前快照里没有重复文件，要么后台校验还在进行。",
-                "Either the current snapshot has no duplicates, or the background verification is still running.",
-            ),
-        );
-        return;
-    }
-
-    let visible_count = app.duplicates.visible_groups.min(groups.len()).max(1);
-    let mut load_more = false;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            for (index, group) in groups.iter().take(visible_count).enumerate() {
-                let selection = app.duplicate_group_selection(group);
-                let expanded = app.duplicates.expanded_group_ids.contains(&group.id);
-                let recommended = group
-                    .files
-                    .get(group.recommended_keep_index)
-                    .cloned();
-                let group_title = format!(
-                    "{} #{}  |  {} {}",
-                    app.t("组", "Group"),
-                    group.id,
-                    format_bytes(group.total_waste),
-                    app.t("可释放", "reclaimable")
+    let list_height = ui.available_height().max(220.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), list_height),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_min_height(list_height);
+            if duplicate_scan_running && app.duplicates.groups.is_empty() {
+                empty_state_panel(
+                    ui,
+                    app.t("后台正在建立重复文件分组", "Building Duplicate Groups in Background"),
+                    app.t(
+                        "当前只更新轻量进度统计。等后台哈希校验完成后，再一次性加载完整分组，避免界面卡顿或假死。",
+                        "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.",
+                    ),
                 );
+                return;
+            }
+            if filtered_group_count == 0 {
+                empty_state_panel(
+                    ui,
+                    app.t("没有重复文件组", "No Duplicate Groups"),
+                    app.t(
+                        "如果这里没有结果，要么当前快照里没有重复文件，要么后台校验还在进行。",
+                        "Either the current snapshot has no duplicates, or the background verification is still running.",
+                    ),
+                );
+                return;
+            }
 
-                surface_panel(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        let disclosure = if expanded { "▼" } else { "▶" };
-                        if ui.button(disclosure).clicked() {
-                            if expanded {
-                                app.duplicates.expanded_group_ids.remove(&group.id);
-                            } else {
-                                app.duplicates.expanded_group_ids.insert(group.id);
-                            }
-                        }
-                        ui.label(egui::RichText::new(group_title).strong());
-                        ui.separator();
-                        risk_chip(ui, app.cleanup_risk_label(group.risk), app.cleanup_risk_color(group.risk));
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{}  |  {} {}",
-                                format_bytes(group.size),
-                                format_count(group.files.len() as u64),
-                                app.t("个副本", "copies")
-                            ))
-                            .text_style(egui::TextStyle::Small)
-                            .color(ui.visuals().weak_text_color()),
-                        );
-                    });
+            let visible_count = app
+                .duplicates
+                .visible_groups
+                .min(filtered_group_count)
+                .max(1);
+            let visible_group_indices: Vec<usize> = app
+                .duplicates
+                .groups
+                .iter()
+                .enumerate()
+                .filter(|(_, group)| !show_large_only || group.size >= 256 * 1024 * 1024)
+                .map(|(index, _)| index)
+                .take(visible_count)
+                .collect();
+            let mut load_more = false;
+            egui::ScrollArea::vertical()
+                .max_height(list_height)
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    for (index, group_index) in visible_group_indices.iter().enumerate() {
+                        let group = app.duplicates.groups[*group_index].clone();
+                        render_duplicate_group_card(app, ui, group);
+                        ui.add_space(10.0);
 
-                    ui.add_space(6.0);
-                    if let Some(recommended) = recommended.as_ref() {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} {}",
-                                app.t("推荐保留：", "Recommended keep:"),
-                                truncate_middle(&recommended.path, 88)
-                            ))
-                            .text_style(egui::TextStyle::Small)
-                            .color(river_teal()),
-                        );
-                    }
-                    ui.label(
-                        egui::RichText::new(app.t(
-                            "每组至少保留一个文件。高风险组默认不自动加入删除计划。",
-                            "Each group keeps at least one file. High-risk groups are not auto-selected for deletion.",
-                        ))
-                        .text_style(egui::TextStyle::Small)
-                        .color(ui.visuals().weak_text_color()),
-                    );
-
-                    let mut enabled = selection.enabled;
-                    if ui
-                        .checkbox(
-                            &mut enabled,
-                            app.t("删除本组的非保留副本", "Delete non-keeper files in this group"),
-                        )
-                        .changed()
-                    {
-                        app.set_duplicate_group_enabled(group.id, enabled);
-                    }
-
-                    if expanded {
-                        ui.add_space(8.0);
-                        for file in &group.files {
-                            let is_keep = selection.keep_path.as_ref() == file.path;
-                            let (location_label, location_color) =
-                                duplicate_location_badge(app, file.location);
-                            surface_panel(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    if ui.radio(is_keep, "").clicked() {
-                                        app.set_duplicate_group_keep_path(
-                                            group.id,
-                                            Arc::<str>::from(file.path.clone()),
-                                        );
-                                    }
-                                    if ui
-                                        .add_sized(
-                                            [(ui.available_width() - 280.0).max(220.0), CONTROL_HEIGHT],
-                                            egui::SelectableLabel::new(
-                                                app.selection_matches_path(&file.path),
-                                                truncate_middle(&file.path, 92),
-                                            ),
-                                        )
-                                        .clicked()
-                                    {
-                                        app.select_path(&file.path, SelectionSource::Duplicate);
-                                    }
-                                    if ui
-                                        .button(app.t("打开所在位置", "Open Location"))
-                                        .clicked()
-                                    {
-                                        app.open_duplicate_file_location(&file.path);
-                                    }
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(format_bytes(file.size));
-                                        },
-                                    );
-                                });
-                                ui.add_space(4.0);
-                                ui.horizontal_wrapped(|ui| {
-                                    risk_chip(ui, location_label, location_color);
-                                    if file.hidden {
-                                        risk_chip(
-                                            ui,
-                                            app.t("隐藏", "Hidden"),
-                                            egui::Color32::from_rgb(0x7C, 0x86, 0x8D),
-                                        );
-                                    }
-                                    if file.system {
-                                        risk_chip(ui, app.t("系统", "System"), danger_red());
-                                    }
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "{} {}  |  {} {}",
-                                            app.t("修改时间", "Modified"),
-                                            duplicate_modified_label(app, file.modified_unix_secs),
-                                            app.t("保留评分", "Keep score"),
-                                            file.keep_score
-                                        ))
-                                        .text_style(egui::TextStyle::Small)
-                                        .color(ui.visuals().weak_text_color()),
-                                    );
-                                });
-                            });
-                            ui.add_space(6.0);
+                        if index + 1 == visible_count && visible_count < filtered_group_count {
+                            load_more = true;
                         }
                     }
                 });
-                ui.add_space(10.0);
 
-                if index + 1 == visible_count && visible_count < groups.len() {
-                    load_more = true;
+            if load_more && app.duplicates.visible_groups < filtered_group_count {
+                app.duplicates.visible_groups =
+                    (app.duplicates.visible_groups + 20).min(filtered_group_count);
+                app.egui_ctx.request_repaint();
+            }
+        },
+    );
+}
+
+fn render_duplicate_group_card(
+    app: &mut DirOtterNativeApp,
+    ui: &mut egui::Ui,
+    group: dirotter_dup::DuplicateGroup,
+) {
+    let selection = app.duplicate_group_selection(&group);
+    let expanded = app.duplicates.expanded_group_ids.contains(&group.id);
+    let recommended = group.files.get(group.recommended_keep_index).cloned();
+    let group_title = format!(
+        "{} #{}  |  {} {}",
+        app.t("组", "Group"),
+        group.id,
+        format_bytes(group.total_waste),
+        app.t("可释放", "reclaimable")
+    );
+
+    surface_panel(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal_wrapped(|ui| {
+            let disclosure = if expanded { "▼" } else { "▶" };
+            if ui.button(disclosure).clicked() {
+                if expanded {
+                    app.duplicates.expanded_group_ids.remove(&group.id);
+                } else {
+                    app.duplicates.expanded_group_ids.insert(group.id);
                 }
             }
+            ui.label(egui::RichText::new(group_title).strong());
+            ui.separator();
+            risk_chip(
+                ui,
+                app.cleanup_risk_label(group.risk),
+                app.cleanup_risk_color(group.risk),
+            );
+            ui.separator();
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}  |  {} {}",
+                    format_bytes(group.size),
+                    format_count(group.files.len() as u64),
+                    app.t("个副本", "copies")
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
         });
 
-    if load_more && app.duplicates.visible_groups < groups.len() {
-        app.duplicates.visible_groups = (app.duplicates.visible_groups + 20).min(groups.len());
-        app.egui_ctx.request_repaint();
-    }
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        if let Some(recommended) = recommended.as_ref() {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(format!(
+                        "{} {}",
+                        app.t("推荐保留：", "Recommended keep:"),
+                        truncate_middle(&recommended.path, 104)
+                    ))
+                    .text_style(egui::TextStyle::Small)
+                    .color(river_teal()),
+                )
+                .wrap(),
+            );
+            ui.add_space(4.0);
+        }
+
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(app.t(
+                    "每组至少保留一个文件。高风险组默认不自动加入删除计划。",
+                    "Each group keeps at least one file. High-risk groups are not auto-selected for deletion.",
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            )
+            .wrap(),
+        );
+
+        ui.add_space(8.0);
+        let mut enabled = selection.enabled;
+        if ui
+            .checkbox(
+                &mut enabled,
+                app.t(
+                    "删除本组的非保留副本",
+                    "Delete non-keeper files in this group",
+                ),
+            )
+            .changed()
+        {
+            app.set_duplicate_group_enabled(group.id, enabled);
+        }
+
+        if expanded {
+            ui.add_space(10.0);
+            for file in &group.files {
+                render_duplicate_file_row(app, ui, group.id, &selection.keep_path, file);
+                ui.add_space(6.0);
+            }
+        }
+    });
+}
+
+fn render_duplicate_file_row(
+    app: &mut DirOtterNativeApp,
+    ui: &mut egui::Ui,
+    group_id: u64,
+    keep_path: &Arc<str>,
+    file: &dirotter_dup::DuplicateFileEntry,
+) {
+    let is_keep = keep_path.as_ref() == file.path;
+    let (location_label, location_color) = duplicate_location_badge(app, file.location);
+    surface_panel(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            if ui.radio(is_keep, "").clicked() {
+                app.set_duplicate_group_keep_path(group_id, Arc::<str>::from(file.path.clone()));
+            }
+
+            let action_width = 120.0;
+            let size_width = 84.0;
+            let path_width = (ui.available_width() - action_width - size_width - 56.0).max(220.0);
+            if ui
+                .add_sized(
+                    [path_width, CONTROL_HEIGHT],
+                    egui::SelectableLabel::new(
+                        app.selection_matches_path(&file.path),
+                        truncate_middle(&file.path, 108),
+                    ),
+                )
+                .clicked()
+            {
+                app.select_path(&file.path, SelectionSource::Duplicate);
+            }
+
+            if ui
+                .add_sized(
+                    [action_width, CONTROL_HEIGHT],
+                    egui::Button::new(app.t("打开所在位置", "Open Location")),
+                )
+                .clicked()
+            {
+                app.open_duplicate_file_location(&file.path);
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_sized(
+                    [size_width, CONTROL_HEIGHT],
+                    egui::Label::new(egui::RichText::new(format_bytes(file.size)).strong()),
+                );
+            });
+        });
+
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            risk_chip(ui, location_label, location_color);
+            if file.hidden {
+                risk_chip(
+                    ui,
+                    app.t("隐藏", "Hidden"),
+                    egui::Color32::from_rgb(0x7C, 0x86, 0x8D),
+                );
+            }
+            if file.system {
+                risk_chip(ui, app.t("系统", "System"), danger_red());
+            }
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} {}  |  {} {}",
+                    app.t("修改时间", "Modified"),
+                    duplicate_modified_label(app, file.modified_unix_secs),
+                    app.t("保留评分", "Keep score"),
+                    file.keep_score
+                ))
+                .text_style(egui::TextStyle::Small)
+                .color(ui.visuals().weak_text_color()),
+            );
+        });
+    });
 }
 
 fn duplicate_location_badge(

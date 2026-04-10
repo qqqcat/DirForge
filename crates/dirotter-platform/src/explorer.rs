@@ -26,13 +26,25 @@ fn explorer_open_target(path: &Path) -> ExplorerOpenTarget {
     }
 }
 
+fn normalized_explorer_path(path: &Path) -> Result<String, PlatformError> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
+    let mut normalized = canonical.display().to_string().replace('/', "\\");
+    if let Some(stripped) = normalized.strip_prefix(r"\\?\") {
+        normalized = stripped.to_string();
+    }
+    Ok(normalized)
+}
+
 pub fn reveal_in_explorer(path: &str) -> Result<(), PlatformError> {
     require_existing(path)?;
 
     #[cfg(target_os = "windows")]
     {
+        let normalized = normalized_explorer_path(Path::new(path))?;
         std::process::Command::new("explorer")
-            .arg(path)
+            .arg(normalized)
             .spawn()
             .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
         Ok(())
@@ -65,8 +77,11 @@ pub fn select_in_explorer(path: &str) -> Result<(), PlatformError> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", p.display()))
+        let normalized = normalized_explorer_path(p)?;
+        use std::os::windows::process::CommandExt;
+
+        std::process::Command::new("explorer.exe")
+            .raw_arg(format!(r#"/select,"{}""#, normalized))
             .spawn()
             .map_err(|e| PlatformError::new(map_io_error(&e), e.to_string()))?;
         Ok(())

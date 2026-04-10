@@ -143,15 +143,6 @@ pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &
         );
         ui.add_space(14.0);
     }
-    tone_banner(
-            ui,
-            app.t("舒适优先的工作台", "A Comfort-First Workspace"),
-            app.t(
-                "语言、主题和字体回退都会立即生效。这里的目标不是“更花哨”，而是让长时间浏览目录树时更稳定、更耐看。",
-                "Language, theme, and font fallback all apply immediately. The goal here is not flashy UI, but a steadier workspace for long file-tree sessions.",
-            ),
-        );
-    ui.add_space(14.0);
     settings_section(
             ui,
             app.t("常用设置", "Common Settings"),
@@ -330,27 +321,6 @@ pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &
                         )
                     },
                 );
-            },
-        );
-
-    ui.add_space(14.0);
-    settings_section(
-            ui,
-            app.t("本地化说明", "Localization Notes"),
-            app.t(
-                "把与语言相关的规则放在一起，减少用户在不同卡片间来回找解释。",
-                "Keep language-related rules together so people do not have to hunt across separate cards.",
-            ),
-            |ui| {
-                ui.label(app.t(
-                    "应用会优先加载系统中的多脚本字体回退（Windows 优先 Microsoft YaHei / DengXian / Yu Gothic / Malgun / Nirmala / Leelawadee），尽量避免中文、日文、韩文、印地语、泰语等标签显示为方框。",
-                    "The app now prefers multi-script system fallback fonts (Windows prioritizes Microsoft YaHei, DengXian, Yu Gothic, Malgun, Nirmala, and Leelawadee) to reduce tofu boxes across CJK, Indic, and Thai labels.",
-                ));
-                ui.add_space(8.0);
-                ui.label(app.t(
-                    "首次启动会根据系统语言环境识别已接入的 19 种语言；这里的手动选择仍然会覆盖自动检测结果。",
-                    "The first launch can now infer all 19 supported languages from the system locale, and the manual choice here still overrides auto-detection.",
-                ));
             },
         );
 

@@ -7,7 +7,7 @@ use dirotter_scan::RankedPath;
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub(crate) struct DeleteSession {
     pub(crate) relay: Arc<Mutex<DeleteRelayState>>,
@@ -104,7 +104,8 @@ pub(crate) struct DuplicateScanState {
     pub(crate) candidate_groups_total: usize,
     pub(crate) candidate_groups_processed: usize,
     pub(crate) groups_found: usize,
-    pub(crate) groups: Vec<dirotter_dup::DuplicateGroup>,
+    pub(crate) duplicate_files_found: usize,
+    pub(crate) reclaimable_bytes_found: u64,
 }
 
 #[derive(Default)]
@@ -405,42 +406,53 @@ pub(crate) fn take_finished_result_store_load(
 pub(crate) fn start_duplicate_scan_session(
     ctx: egui::Context,
     store: NodeStore,
+    candidates: Option<Vec<dirotter_dup::DuplicateSizeCandidate>>,
 ) -> DuplicateScanSession {
     let relay = Arc::new(Mutex::new(DuplicateScanRelayState::default()));
     let relay_state = Arc::clone(&relay);
     std::thread::spawn(move || {
-        let groups = dirotter_dup::resolve_duplicates_with_progress(
-            dirotter_dup::collect_size_candidates(&store),
-            dirotter_dup::DupConfig::default(),
-            |progress| {
-                let mut state = relay_state.lock().expect("duplicate scan relay lock");
-                state.snapshot = DuplicateScanState {
-                    candidate_groups_total: progress.candidate_groups_total,
-                    candidate_groups_processed: progress.candidate_groups_processed,
-                    groups_found: progress.groups_found,
-                    groups: {
-                        let mut groups = state.snapshot.groups.clone();
-                        groups.extend(progress.latest_groups);
-                        groups.sort_by(|a, b| {
-                            b.total_waste
-                                .cmp(&a.total_waste)
-                                .then_with(|| b.size.cmp(&a.size))
-                                .then_with(|| a.id.cmp(&b.id))
-                        });
-                        groups
-                    },
-                };
-                drop(state);
-                ctx.request_repaint();
-            },
-        );
+        let mut last_emit = Instant::now();
+        let mut last_processed = 0usize;
+        let mut duplicate_files_found = 0usize;
+        let mut reclaimable_bytes_found = 0u64;
+        let cfg = dirotter_dup::DupConfig::default();
+        let candidates =
+            candidates.unwrap_or_else(|| dirotter_dup::collect_review_candidates(&store, cfg));
+        let groups = dirotter_dup::resolve_duplicates_with_progress(candidates, cfg, |progress| {
+            duplicate_files_found += progress.latest_duplicate_files_found;
+            reclaimable_bytes_found += progress.latest_reclaimable_bytes_found;
+
+            let processed = progress.candidate_groups_processed;
+            let should_emit = processed == progress.candidate_groups_total
+                || processed.saturating_sub(last_processed) >= 128
+                || last_emit.elapsed() >= Duration::from_millis(120);
+            if !should_emit {
+                return;
+            }
+
+            let mut state = relay_state.lock().expect("duplicate scan relay lock");
+            state.snapshot = DuplicateScanState {
+                candidate_groups_total: progress.candidate_groups_total,
+                candidate_groups_processed: progress.candidate_groups_processed,
+                groups_found: progress.groups_found,
+                duplicate_files_found,
+                reclaimable_bytes_found,
+            };
+            drop(state);
+            last_emit = Instant::now();
+            last_processed = processed;
+            ctx.request_repaint();
+        });
+
+        let groups_found = groups.len();
+        let duplicate_files_found = groups.iter().map(|group| group.files.len()).sum();
+        let reclaimable_bytes_found = groups.iter().map(|group| group.total_waste).sum();
 
         let mut state = relay_state.lock().expect("duplicate scan relay lock");
-        state.finished = Some(DuplicateScanPayload {
-            groups: groups.clone(),
-        });
-        state.snapshot.groups = groups;
-        state.snapshot.groups_found = state.snapshot.groups.len();
+        state.finished = Some(DuplicateScanPayload { groups });
+        state.snapshot.groups_found = groups_found;
+        state.snapshot.duplicate_files_found = duplicate_files_found;
+        state.snapshot.reclaimable_bytes_found = reclaimable_bytes_found;
         if state.snapshot.candidate_groups_total > 0 {
             state.snapshot.candidate_groups_processed = state.snapshot.candidate_groups_total;
         }

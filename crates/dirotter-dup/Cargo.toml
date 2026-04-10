@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 dirotter-core = { path = "../dirotter-core" }
+dirotter-platform = { path = "../dirotter-platform" }
 blake3.workspace = true
 rayon.workspace = true
 

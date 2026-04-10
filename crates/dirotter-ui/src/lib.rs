@@ -34,7 +34,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cleanup::{CleanupAnalysis, CleanupCandidate, CleanupCategory};
 use controller::{
@@ -78,6 +78,8 @@ const DUPLICATES_PAGE_MAX_WIDTH: f32 = 1480.0;
 const DASHBOARD_PAGE_MAX_WIDTH: f32 = 1160.0;
 const SETTINGS_PAGE_MAX_WIDTH: f32 = 1040.0;
 const PAGE_SIDE_GUTTER: f32 = 64.0;
+const DUPLICATE_AUTO_SELECT_MIN_WASTE_BYTES: u64 = 16 * 1024 * 1024;
+const DUPLICATE_AUTO_SELECT_MIN_AGE_DAYS: u64 = 30;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -277,6 +279,21 @@ struct DuplicatePanelState {
     pending_delete: Option<DuplicateDeleteRequest>,
     sort: Option<DuplicateSort>,
     show_large_only: bool,
+    follow_recommended_selection: bool,
+    total_duplicate_files: usize,
+    total_reclaimable_bytes: u64,
+    selected_groups_cache: usize,
+    selected_files_cache: usize,
+    selected_bytes_cache: u64,
+    selection_totals_dirty: bool,
+}
+
+#[derive(Default)]
+struct DuplicatePrepState {
+    by_size: HashMap<u64, Vec<Arc<str>>>,
+    scanned_files: usize,
+    candidate_groups: usize,
+    candidate_files: usize,
 }
 
 #[derive(Clone)]
@@ -362,6 +379,7 @@ pub struct DirOtterNativeApp {
     last_coalesce_commit: Instant,
     cleanup: CleanupPanelState,
     duplicates: DuplicatePanelState,
+    duplicate_prep: DuplicatePrepState,
 
     execution_report: Option<ExecutionReport>,
     pending_delete_confirmation: Option<PendingDeleteConfirmation>,
@@ -458,8 +476,10 @@ impl DirOtterNativeApp {
             cleanup: CleanupPanelState::default(),
             duplicates: DuplicatePanelState {
                 sort: Some(DuplicateSort::Waste),
+                follow_recommended_selection: true,
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -989,8 +1009,106 @@ impl DirOtterNativeApp {
         self.duplicate_scan_session = None;
         self.duplicates = DuplicatePanelState {
             sort: Some(DuplicateSort::Waste),
+            follow_recommended_selection: true,
+            selection_totals_dirty: true,
             ..DuplicatePanelState::default()
         };
+    }
+
+    fn reset_duplicate_prep(&mut self) {
+        self.duplicate_prep = DuplicatePrepState::default();
+    }
+
+    fn absorb_duplicate_prep_batch(&mut self, batch: &[BatchEntry]) {
+        let cfg = dirotter_dup::DupConfig::default();
+        for item in batch {
+            if item.is_dir {
+                continue;
+            }
+
+            self.duplicate_prep.scanned_files = self.duplicate_prep.scanned_files.saturating_add(1);
+            if item.size < cfg.min_candidate_size {
+                continue;
+            }
+
+            let bucket = self.duplicate_prep.by_size.entry(item.size).or_default();
+            let next_count = bucket.len() + 1;
+            let current_waste = item
+                .size
+                .saturating_mul(bucket.len().saturating_sub(1) as u64);
+            let next_waste = item
+                .size
+                .saturating_mul(next_count.saturating_sub(1) as u64);
+            if current_waste < cfg.min_candidate_total_waste
+                && next_waste >= cfg.min_candidate_total_waste
+            {
+                self.duplicate_prep.candidate_groups =
+                    self.duplicate_prep.candidate_groups.saturating_add(1);
+                self.duplicate_prep.candidate_files = self
+                    .duplicate_prep
+                    .candidate_files
+                    .saturating_add(next_count);
+            } else if next_waste >= cfg.min_candidate_total_waste {
+                self.duplicate_prep.candidate_files =
+                    self.duplicate_prep.candidate_files.saturating_add(1);
+            }
+            bucket.push(item.path.clone());
+        }
+    }
+
+    fn take_prebuilt_duplicate_candidates(
+        &mut self,
+    ) -> Option<Vec<dirotter_dup::DuplicateSizeCandidate>> {
+        if self.duplicate_prep.by_size.is_empty() {
+            return None;
+        }
+
+        let cfg = dirotter_dup::DupConfig::default();
+        let by_size = std::mem::take(&mut self.duplicate_prep.by_size);
+        let mut candidates: Vec<_> = by_size
+            .into_iter()
+            .filter_map(|(size, paths)| {
+                let total_waste = size.saturating_mul(paths.len().saturating_sub(1) as u64);
+                (paths.len() >= 2 && total_waste >= cfg.min_candidate_total_waste).then_some(
+                    dirotter_dup::DuplicateSizeCandidate {
+                        size,
+                        paths: paths.into_iter().map(|path| path.to_string()).collect(),
+                    },
+                )
+            })
+            .collect();
+        dirotter_dup::sort_size_candidates(&mut candidates);
+        Some(candidates)
+    }
+
+    fn duplicate_prep_snapshot(&self) -> (usize, usize, usize) {
+        (
+            self.duplicate_prep.scanned_files,
+            self.duplicate_prep.candidate_groups,
+            self.duplicate_prep.candidate_files,
+        )
+    }
+
+    fn duplicate_group_auto_select_enabled(&self, group: &dirotter_dup::DuplicateGroup) -> bool {
+        if group.risk != RiskLevel::Low || group.total_waste < DUPLICATE_AUTO_SELECT_MIN_WASTE_BYTES
+        {
+            return false;
+        }
+
+        let Some(newest_modified) = group
+            .files
+            .iter()
+            .filter_map(|file| file.modified_unix_secs)
+            .max()
+        else {
+            return true;
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let min_age_secs = DUPLICATE_AUTO_SELECT_MIN_AGE_DAYS * 24 * 60 * 60;
+        now.saturating_sub(newest_modified) >= min_age_secs
     }
 
     fn start_duplicate_scan_if_needed(&mut self) {
@@ -1004,30 +1122,17 @@ impl DirOtterNativeApp {
         let Some(store) = self.store.as_ref().cloned() else {
             return;
         };
-        self.duplicate_scan_session =
-            Some(start_duplicate_scan_session(self.egui_ctx.clone(), store));
+        let prebuilt_candidates = self.take_prebuilt_duplicate_candidates();
+        self.duplicate_scan_session = Some(start_duplicate_scan_session(
+            self.egui_ctx.clone(),
+            store,
+            prebuilt_candidates,
+        ));
     }
 
     fn process_duplicate_scan_events(&mut self) {
         if self.duplicate_scan_session.is_none() {
             return;
-        }
-        let snapshot = {
-            let session = self
-                .duplicate_scan_session
-                .as_ref()
-                .expect("duplicate scan session");
-            session.snapshot()
-        };
-        if !snapshot.groups.is_empty() {
-            self.duplicates.groups = snapshot.groups;
-            self.sort_duplicate_groups();
-            if self.duplicates.visible_groups == 0 {
-                self.duplicates.visible_groups = self.duplicates.groups.len().min(20);
-            }
-            if self.duplicates.selections.is_empty() {
-                self.reset_duplicate_selection_to_recommended();
-            }
         }
         let finished = {
             let session = self
@@ -1047,7 +1152,22 @@ impl DirOtterNativeApp {
         self.sort_duplicate_groups();
         self.duplicates.visible_groups = self.duplicates.groups.len().min(20);
         self.duplicates.pending_delete = None;
-        self.reset_duplicate_selection_to_recommended();
+        self.duplicates.total_duplicate_files = self
+            .duplicates
+            .groups
+            .iter()
+            .map(|group| group.files.len())
+            .sum();
+        self.duplicates.total_reclaimable_bytes = self
+            .duplicates
+            .groups
+            .iter()
+            .map(|group| group.total_waste)
+            .sum();
+        self.duplicates.selection_totals_dirty = true;
+        if self.duplicates.follow_recommended_selection || self.duplicates.selections.is_empty() {
+            self.reset_duplicate_selection_to_recommended();
+        }
     }
 
     fn sort_duplicate_groups(&mut self) {
@@ -1068,6 +1188,7 @@ impl DirOtterNativeApp {
     }
 
     fn reset_duplicate_selection_to_recommended(&mut self) {
+        self.duplicates.follow_recommended_selection = true;
         self.duplicates.selections = self
             .duplicates
             .groups
@@ -1081,15 +1202,17 @@ impl DirOtterNativeApp {
                             group.id,
                             DuplicateGroupSelection {
                                 keep_path: Arc::<str>::from(recommended.path.clone()),
-                                enabled: group.risk != RiskLevel::High,
+                                enabled: self.duplicate_group_auto_select_enabled(group),
                             },
                         )
                     })
             })
             .collect();
+        self.duplicates.selection_totals_dirty = true;
     }
 
     fn clear_duplicate_selection(&mut self) {
+        self.duplicates.follow_recommended_selection = false;
         let fallback: Vec<_> = self
             .duplicates
             .groups
@@ -1110,6 +1233,7 @@ impl DirOtterNativeApp {
                 },
             );
         }
+        self.duplicates.selection_totals_dirty = true;
     }
 
     fn duplicate_group_selection(
@@ -1126,7 +1250,7 @@ impl DirOtterNativeApp {
                     .get(group.recommended_keep_index)
                     .map(|recommended| DuplicateGroupSelection {
                         keep_path: Arc::<str>::from(recommended.path.clone()),
-                        enabled: group.risk != RiskLevel::High,
+                        enabled: self.duplicate_group_auto_select_enabled(group),
                     })
             })
             .unwrap_or_else(|| DuplicateGroupSelection {
@@ -1144,6 +1268,7 @@ impl DirOtterNativeApp {
         else {
             return;
         };
+        self.duplicates.follow_recommended_selection = false;
         let current = self.duplicate_group_selection(group);
         self.duplicates.selections.insert(
             group_id,
@@ -1152,6 +1277,7 @@ impl DirOtterNativeApp {
                 enabled,
             },
         );
+        self.duplicates.selection_totals_dirty = true;
     }
 
     fn set_duplicate_group_keep_path(&mut self, group_id: u64, keep_path: Arc<str>) {
@@ -1163,6 +1289,7 @@ impl DirOtterNativeApp {
         else {
             return;
         };
+        self.duplicates.follow_recommended_selection = false;
         let current = self.duplicate_group_selection(group);
         self.duplicates.selections.insert(
             group_id,
@@ -1171,30 +1298,42 @@ impl DirOtterNativeApp {
                 enabled: current.enabled,
             },
         );
+        self.duplicates.selection_totals_dirty = true;
     }
 
-    fn duplicate_delete_totals(&self) -> (usize, usize, u64) {
-        self.duplicates.groups.iter().fold(
-            (0usize, 0usize, 0u64),
-            |(groups, files, bytes), group| {
-                let selection = self.duplicate_group_selection(group);
-                if !selection.enabled {
-                    return (groups, files, bytes);
-                }
-                let delete_count = group
-                    .files
-                    .iter()
-                    .filter(|file| file.path != selection.keep_path.as_ref())
-                    .count();
-                if delete_count == 0 {
-                    return (groups, files, bytes);
-                }
-                (
-                    groups + 1,
-                    files + delete_count,
-                    bytes.saturating_add(group.size.saturating_mul(delete_count as u64)),
-                )
-            },
+    fn duplicate_delete_totals(&mut self) -> (usize, usize, u64) {
+        if self.duplicates.selection_totals_dirty {
+            let (groups, files, bytes) = self.duplicates.groups.iter().fold(
+                (0usize, 0usize, 0u64),
+                |(groups, files, bytes), group| {
+                    let selection = self.duplicate_group_selection(group);
+                    if !selection.enabled {
+                        return (groups, files, bytes);
+                    }
+                    let delete_count = group
+                        .files
+                        .iter()
+                        .filter(|file| file.path != selection.keep_path.as_ref())
+                        .count();
+                    if delete_count == 0 {
+                        return (groups, files, bytes);
+                    }
+                    (
+                        groups + 1,
+                        files + delete_count,
+                        bytes.saturating_add(group.size.saturating_mul(delete_count as u64)),
+                    )
+                },
+            );
+            self.duplicates.selected_groups_cache = groups;
+            self.duplicates.selected_files_cache = files;
+            self.duplicates.selected_bytes_cache = bytes;
+            self.duplicates.selection_totals_dirty = false;
+        }
+        (
+            self.duplicates.selected_groups_cache,
+            self.duplicates.selected_files_cache,
+            self.duplicates.selected_bytes_cache,
         )
     }
 
@@ -1902,6 +2041,7 @@ impl DirOtterNativeApp {
         self.execution_report = None;
         self.cleanup = CleanupPanelState::default();
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         self.refresh_diagnostics();
         self.scan_session = None;
         self.scan_finalize_session = None;
@@ -2038,6 +2178,7 @@ impl DirOtterNativeApp {
         self.selection = SelectionState::default();
         self.treemap_focus_path = None;
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         true
     }
 
@@ -2055,6 +2196,7 @@ impl DirOtterNativeApp {
                     self.refresh_cleanup_analysis();
                 }
                 self.reset_duplicate_review();
+                self.reset_duplicate_prep();
                 self.refresh_memory_status();
                 true
             }
@@ -2115,6 +2257,7 @@ impl DirOtterNativeApp {
             self.completed_top_dirs = payload.top_dirs;
             self.apply_cleanup_analysis(payload.cleanup_analysis);
             self.reset_duplicate_review();
+            self.reset_duplicate_prep();
             self.refresh_memory_status();
             self.missing_result_store_root = None;
         } else {
@@ -2217,6 +2360,7 @@ impl DirOtterNativeApp {
         self.status = AppStatus::Idle;
         self.treemap_focus_path = None;
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         let trimmed = dirotter_platform::trim_process_memory();
         self.refresh_memory_status();
         self.refresh_diagnostics();
@@ -2315,6 +2459,7 @@ impl DirOtterNativeApp {
         self.missing_result_store_root = None;
         self.cleanup = CleanupPanelState::default();
         self.reset_duplicate_review();
+        self.reset_duplicate_prep();
         self.delete_session = None;
         self.delete_finalize_session = None;
         self.queued_delete = None;
@@ -2417,6 +2562,7 @@ impl DirOtterNativeApp {
             }
 
             for batch in batches {
+                self.absorb_duplicate_prep_batch(&batch);
                 self.pending_batch_events.push_back(batch);
                 if self.pending_batch_events.len() > MAX_PENDING_BATCH_EVENTS {
                     let drop_n = self.pending_batch_events.len() - MAX_PENDING_BATCH_EVENTS;
@@ -4966,6 +5112,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5254,6 +5401,11 @@ mod ui_tests {
     }
 
     #[test]
+    fn all_supported_languages_cover_duplicates_pages_keys() {
+        assert_translations_cover_source(include_str!("duplicates_pages.rs"), "duplicates-page");
+    }
+
+    #[test]
     fn all_supported_languages_cover_settings_pages_keys() {
         assert_translations_cover_source(include_str!("settings_pages.rs"), "settings-page");
     }
@@ -5404,6 +5556,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5495,6 +5648,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5627,6 +5781,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5712,6 +5867,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5792,6 +5948,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,

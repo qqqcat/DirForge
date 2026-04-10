@@ -97,7 +97,10 @@
     "User Folder": "مجلد المستخدم",
     "Unknown": "مجهول",
     "Today": "اليوم",
-    "days ago": "منذ أيام"
+    "days ago": "منذ أيام",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "لا يزال التحقق من الخلفية قيد التشغيل. تظل الإجراءات الجماعية والاختيار التلقائي مقفلة حتى انتهاء عملية التحقق.",
+    "Building Duplicate Groups in Background": "بناء مجموعات مكررة في الخلفية",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "يتم تحديث إحصائيات التقدم الخفيف فقط في الوقت الحالي. سيتم تحميل قائمة المجموعة الكاملة بعد اكتمال التحقق من تجزئة الخلفية، بحيث تظل واجهة المستخدم مستجيبة."
   },
   "de": {
     "Failure Details": "Fehlerdetails",
@@ -197,7 +200,10 @@
     "User Folder": "Benutzerordner",
     "Unknown": "Unbekannt",
     "Today": "Heute",
-    "days ago": "vor Tagen"
+    "days ago": "vor Tagen",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Die Hintergrundüberprüfung läuft noch. Gruppenaktionen und automatische Auswahl bleiben gesperrt, bis die Überprüfung abgeschlossen ist.",
+    "Building Duplicate Groups in Background": "Erstellen doppelter Gruppen im Hintergrund",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Derzeit werden nur die leichten Fortschrittsstatistiken aktualisiert. Die vollständige Gruppenliste wird geladen, nachdem die Hintergrund-Hash-Überprüfung abgeschlossen ist, sodass die Benutzeroberfläche weiterhin reagiert."
   },
   "he": {
     "Failure Details": "פרטי כשל",
@@ -297,7 +303,10 @@
     "User Folder": "תיקיית משתמש",
     "Unknown": "לֹא יְדוּעַ",
     "Today": "הַיוֹם",
-    "days ago": "לפני ימים"
+    "days ago": "לפני ימים",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "אימות הרקע עדיין פועל. פעולות קבוצתיות ובחירה אוטומטית נשארים נעולים עד לסיום האימות.",
+    "Building Duplicate Groups in Background": "בניית קבוצות כפולות ברקע",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "רק סטטיסטיקות התקדמות קלות משקל מתעדכנות לעת עתה. רשימת הקבוצות המלאה תיטען לאחר השלמת אימות ה-hash ברקע, כך שממשק המשתמש יישאר מגיב."
   },
   "hi": {
     "Failure Details": "विफलता विवरण",
@@ -397,7 +406,10 @@
     "User Folder": "उपयोगकर्ता फ़ोल्डर",
     "Unknown": "अज्ञात",
     "Today": "आज",
-    "days ago": "दिन पहले"
+    "days ago": "दिन पहले",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "पृष्ठभूमि सत्यापन अभी भी चल रहा है. सत्यापन समाप्त होने तक समूह क्रियाएँ और स्वतः-चयन लॉक रहते हैं।",
+    "Building Duplicate Groups in Background": "पृष्ठभूमि में डुप्लिकेट समूह बनाना",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "अभी केवल हल्के प्रगति आँकड़े ही अपडेट हो रहे हैं। पृष्ठभूमि हैश सत्यापन पूरा होने के बाद पूरी समूह सूची लोड हो जाएगी, ताकि यूआई प्रतिक्रियाशील बना रहे।"
   },
   "id": {
     "Failure Details": "Detail Kegagalan",
@@ -497,7 +509,10 @@
     "User Folder": "Folder Pengguna",
     "Unknown": "Tidak dikenal",
     "Today": "Hari ini",
-    "days ago": "beberapa hari yang lalu"
+    "days ago": "beberapa hari yang lalu",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Verifikasi latar belakang masih berjalan. Tindakan grup dan pemilihan otomatis tetap terkunci hingga verifikasi selesai.",
+    "Building Duplicate Groups in Background": "Membangun Grup Duplikat di Latar Belakang",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Hanya statistik kemajuan ringan yang diperbarui untuk saat ini. Daftar grup lengkap akan dimuat setelah verifikasi hash latar belakang selesai, sehingga UI tetap responsif."
   },
   "it": {
     "Failure Details": "Dettagli del fallimento",
@@ -597,7 +612,10 @@
     "User Folder": "Cartella utente",
     "Unknown": "Sconosciuto",
     "Today": "Oggi",
-    "days ago": "giorni fa"
+    "days ago": "giorni fa",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "La verifica in background è ancora in corso. Le azioni di gruppo e la selezione automatica rimangono bloccate fino al termine della verifica.",
+    "Building Duplicate Groups in Background": "Creazione di gruppi duplicati in background",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Per ora vengono aggiornate solo le statistiche di avanzamento leggere. L'elenco completo dei gruppi verrà caricato al termine della verifica dell'hash in background, quindi l'interfaccia utente rimane reattiva."
   },
   "ja": {
     "Failure Details": "障害の詳細",
@@ -697,7 +715,10 @@
     "User Folder": "ユーザーフォルダー",
     "Unknown": "未知",
     "Today": "今日",
-    "days ago": "数日前"
+    "days ago": "数日前",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "バックグラウンド検証はまだ実行中です。グループアクションと自動選択は、検証が完了するまでロックされたままになります。",
+    "Building Duplicate Groups in Background": "バックグラウンドでの重複グループの構築",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "現時点では、軽量の進行状況統計のみが更新されています。バックグラウンド ハッシュ検証の完了後に完全なグループ リストが読み込まれるため、UI の応答性は維持されます。"
   },
   "ko": {
     "Failure Details": "실패 세부정보",
@@ -797,7 +818,10 @@
     "User Folder": "사용자 폴더",
     "Unknown": "알려지지 않은",
     "Today": "오늘",
-    "days ago": "며칠 전"
+    "days ago": "며칠 전",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "백그라운드 확인이 아직 실행 중입니다. 그룹 작업 및 자동 선택은 확인이 완료될 때까지 잠긴 상태로 유지됩니다.",
+    "Building Duplicate Groups in Background": "백그라운드에서 중복 그룹 만들기",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "현재는 간단한 진행 통계만 업데이트 중입니다. 백그라운드 해시 확인이 완료된 후 전체 그룹 목록이 로드되므로 UI는 계속 응답합니다."
   },
   "nl": {
     "Failure Details": "Foutdetails",
@@ -897,7 +921,10 @@
     "User Folder": "Gebruikersmap",
     "Unknown": "Onbekend",
     "Today": "Vandaag",
-    "days ago": "dagen geleden"
+    "days ago": "dagen geleden",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Achtergrondverificatie is nog steeds actief. Groepsacties en automatische selectie blijven vergrendeld totdat de verificatie is voltooid.",
+    "Building Duplicate Groups in Background": "Dubbele groepen op de achtergrond bouwen",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Momenteel worden alleen lichtgewicht voortgangsstatistieken bijgewerkt. De volledige groepslijst wordt geladen nadat de hash-verificatie op de achtergrond is voltooid, zodat de gebruikersinterface responsief blijft."
   },
   "pl": {
     "Failure Details": "Szczegóły awarii",
@@ -997,7 +1024,10 @@
     "User Folder": "Folder użytkownika",
     "Unknown": "Nieznany",
     "Today": "Dzisiaj",
-    "days ago": "dni temu"
+    "days ago": "dni temu",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Weryfikacja w tle nadal trwa. Działania grupowe i automatyczny wybór pozostają zablokowane do czasu zakończenia weryfikacji.",
+    "Building Duplicate Groups in Background": "Tworzenie zduplikowanych grup w tle",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Na razie aktualizowane są tylko statystyki dotyczące lekkich postępów. Pełna lista grup zostanie załadowana po zakończeniu weryfikacji skrótu w tle, dzięki czemu interfejs użytkownika pozostanie responsywny."
   },
   "ru": {
     "Failure Details": "Подробности сбоя",
@@ -1097,7 +1127,10 @@
     "User Folder": "Пользовательская папка",
     "Unknown": "Неизвестный",
     "Today": "Сегодня",
-    "days ago": "дней назад"
+    "days ago": "дней назад",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Фоновая проверка все еще выполняется. Групповые действия и автоматический выбор остаются заблокированными до завершения проверки.",
+    "Building Duplicate Groups in Background": "Создание повторяющихся групп в фоновом режиме",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "На данный момент обновляется только статистика прогресса в облегченном режиме. Полный список групп загрузится после завершения фоновой проверки хеша, поэтому пользовательский интерфейс остается отзывчивым."
   },
   "th": {
     "Failure Details": "รายละเอียดความล้มเหลว",
@@ -1197,7 +1230,10 @@
     "User Folder": "โฟลเดอร์ผู้ใช้",
     "Unknown": "ไม่ทราบ",
     "Today": "วันนี้",
-    "days ago": "วันที่ผ่านมา"
+    "days ago": "วันที่ผ่านมา",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "การยืนยันเบื้องหลังยังคงทำงานอยู่ การดำเนินการของกลุ่มและการเลือกอัตโนมัติจะยังคงล็อกอยู่จนกว่าการตรวจสอบจะเสร็จสิ้น",
+    "Building Duplicate Groups in Background": "การสร้างกลุ่มที่ซ้ำกันในเบื้องหลัง",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "มีเพียงสถิติความคืบหน้าแบบไลท์เวทเท่านั้นที่กำลังอัปเดตในตอนนี้ รายการกลุ่มทั้งหมดจะโหลดหลังจากการตรวจสอบแฮชพื้นหลังเสร็จสิ้น ดังนั้น UI จะยังคงตอบสนอง"
   },
   "tr": {
     "Failure Details": "Arıza Ayrıntıları",
@@ -1297,7 +1333,10 @@
     "User Folder": "Kullanıcı Klasörü",
     "Unknown": "Bilinmiyor",
     "Today": "Bugün",
-    "days ago": "günler önce"
+    "days ago": "günler önce",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Arka planda doğrulama hâlâ çalışıyor. Grup işlemleri ve otomatik seçim, doğrulama bitene kadar kilitli kalır.",
+    "Building Duplicate Groups in Background": "Arka Planda Yinelenen Gruplar Oluşturma",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Şimdilik yalnızca hafif ilerleme istatistikleri güncelleniyor. Arka plan karma doğrulaması tamamlandıktan sonra tam grup listesi yüklenir, böylece kullanıcı arayüzü yanıt vermeye devam eder."
   },
   "uk": {
     "Failure Details": "Деталі несправності",
@@ -1397,7 +1436,10 @@
     "User Folder": "Папка користувача",
     "Unknown": "Невідомий",
     "Today": "Сьогодні",
-    "days ago": "днів тому"
+    "days ago": "днів тому",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Фонова перевірка все ще виконується. Групові дії та автоматичний вибір залишаються заблокованими, доки не завершиться перевірка.",
+    "Building Duplicate Groups in Background": "Створення повторюваних груп у фоновому режимі",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Наразі оновлюється лише легка статистика прогресу. Повний список груп буде завантажено після завершення фонової перевірки хешу, тому інтерфейс користувача залишатиметься чуйним."
   },
   "vi": {
     "Failure Details": "Chi tiết lỗi",
@@ -1497,7 +1539,10 @@
     "User Folder": "Thư mục người dùng",
     "Unknown": "Không xác định",
     "Today": "Hôm nay",
-    "days ago": "ngày trước"
+    "days ago": "ngày trước",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "Xác minh lý lịch vẫn đang chạy. Hành động nhóm và lựa chọn tự động vẫn bị khóa cho đến khi quá trình xác minh kết thúc.",
+    "Building Duplicate Groups in Background": "Xây dựng các nhóm trùng lặp trong nền",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Hiện tại chỉ có số liệu thống kê tiến độ nhẹ đang được cập nhật. Danh sách nhóm đầy đủ sẽ tải sau khi quá trình xác minh băm nền hoàn tất, do đó giao diện người dùng vẫn phản hồi."
   },
   "fr": {
     "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete.": "\"Nettoyage rapide\" n'apparaît que lorsque la sélection actuelle correspond aux règles de cache à faible risque. Pour les autres cibles, utilisez Ouvrir l'emplacement, Corbeille ou Suppression permanente.",
@@ -1550,7 +1595,10 @@
     "User Folder": "Dossier utilisateur",
     "Unknown": "Inconnu",
     "Today": "Aujourd'hui",
-    "days ago": "il y a quelques jours"
+    "days ago": "il y a quelques jours",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "La vérification des antécédents est toujours en cours. Les actions de groupe et la sélection automatique restent verrouillées jusqu'à la fin de la vérification.",
+    "Building Duplicate Groups in Background": "Création de groupes en double en arrière-plan",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Seules les statistiques de progression légères sont mises à jour pour le moment. La liste complète des groupes se chargera une fois la vérification du hachage en arrière-plan terminée, de sorte que l'interface utilisateur reste réactive."
   },
   "es": {
     "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete.": "\"Limpieza rápida\" solo aparece cuando la selección actual coincide con las reglas de caché de bajo riesgo. Para otros objetivos, use Abrir ubicación, Papelera de reciclaje o Eliminar permanentemente.",
@@ -1603,6 +1651,9 @@
     "User Folder": "Carpeta de usuario",
     "Unknown": "Desconocido",
     "Today": "Hoy",
-    "days ago": "hace dias"
+    "days ago": "hace dias",
+    "Background verification is still running. Group actions and auto-selection stay locked until the verification finishes.": "La verificación de antecedentes aún está en ejecución. Las acciones grupales y la selección automática permanecen bloqueadas hasta que finaliza la verificación.",
+    "Building Duplicate Groups in Background": "Creación de grupos duplicados en segundo plano",
+    "Only lightweight progress stats are updating for now. The full group list will load after background hash verification completes, so the UI stays responsive.": "Por ahora solo se actualizan las estadísticas de progreso ligeras. La lista completa del grupo se cargará una vez que se complete la verificación de hash en segundo plano, para que la interfaz de usuario siga respondiendo."
   }
 }
