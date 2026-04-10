@@ -19,6 +19,9 @@ pub enum DuplicateLocation {
     Documents,
     Downloads,
     Desktop,
+    Pictures,
+    Videos,
+    Music,
     Temp,
     Cache,
     ProgramFiles,
@@ -26,6 +29,41 @@ pub enum DuplicateLocation {
     AppData,
     UserData,
     Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuplicateSafetyClass {
+    NeverAutoDelete,
+    ManualReview,
+    CautiousAuto,
+    SafeAuto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SafetyReasonTag {
+    SystemPath,
+    InstalledApp,
+    RuntimeDependency,
+    UserContent,
+    Downloads,
+    TempOrCache,
+    HiddenOrSystem,
+    InstallerPackage,
+    ArchivePackage,
+    ExecutableBinary,
+    DatabaseOrDiskImage,
+    ProjectSource,
+    DuplicateName,
+    SyncFolder,
+}
+
+#[derive(Debug, Clone)]
+pub struct DuplicateSafetyDecision {
+    pub class: DuplicateSafetyClass,
+    pub suggested_keep_allowed: bool,
+    pub auto_select_allowed: bool,
+    pub delete_allowed_by_default: bool,
+    pub reason_tags: Vec<SafetyReasonTag>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +84,7 @@ pub struct DuplicateGroup {
     pub files: Vec<DuplicateFileEntry>,
     pub total_waste: u64,
     pub risk: RiskLevel,
+    pub safety: DuplicateSafetyDecision,
     pub recommended_keep_index: usize,
 }
 
@@ -71,6 +110,7 @@ pub struct DupConfig {
     pub sample_bytes: usize,
     pub min_candidate_size: u64,
     pub min_candidate_total_waste: u64,
+    pub quick_actionable_only: bool,
     pub small_file_full_hash_max: u64,
     pub large_file_sample_threshold: u64,
     pub large_file_sample_points: usize,
@@ -84,6 +124,7 @@ impl Default for DupConfig {
             sample_bytes: 64 * 1024,
             min_candidate_size: 256 * 1024,
             min_candidate_total_waste: 8 * 1024 * 1024,
+            quick_actionable_only: false,
             small_file_full_hash_max: 1024 * 1024,
             large_file_sample_threshold: 128 * 1024 * 1024,
             large_file_sample_points: 5,
@@ -117,7 +158,11 @@ pub fn collect_size_candidates(store: &NodeStore) -> Vec<DuplicateSizeCandidate>
 pub fn collect_review_candidates(store: &NodeStore, cfg: DupConfig) -> Vec<DuplicateSizeCandidate> {
     let mut by_size: HashMap<u64, Vec<String>> = HashMap::new();
     for node in &store.nodes {
-        if matches!(node.kind, NodeKind::File) && node.size_self >= cfg.min_candidate_size {
+        if matches!(node.kind, NodeKind::File)
+            && node.size_self >= cfg.min_candidate_size
+            && (!cfg.quick_actionable_only
+                || allow_quick_duplicate_candidate_path(store.node_path(node)))
+        {
             by_size
                 .entry(node.size_self)
                 .or_default()
@@ -461,6 +506,12 @@ fn classify_location(path: &str) -> DuplicateLocation {
         DuplicateLocation::Windows
     } else if lower.contains("\\program files") {
         DuplicateLocation::ProgramFiles
+    } else if lower.contains("\\users\\") && lower.contains("\\pictures\\") {
+        DuplicateLocation::Pictures
+    } else if lower.contains("\\users\\") && lower.contains("\\videos\\") {
+        DuplicateLocation::Videos
+    } else if lower.contains("\\users\\") && lower.contains("\\music\\") {
+        DuplicateLocation::Music
     } else if lower.contains("\\users\\") && lower.contains("\\documents\\") {
         DuplicateLocation::Documents
     } else if lower.contains("\\users\\") && lower.contains("\\downloads\\") {
@@ -487,6 +538,9 @@ fn keep_score(file: &DuplicateFileEntry) -> i32 {
     let mut score = match file.location {
         DuplicateLocation::Documents => 180,
         DuplicateLocation::Desktop => 160,
+        DuplicateLocation::Pictures => 170,
+        DuplicateLocation::Videos => 170,
+        DuplicateLocation::Music => 150,
         DuplicateLocation::Downloads => 130,
         DuplicateLocation::UserData => 110,
         DuplicateLocation::Other => 70,
@@ -538,25 +592,202 @@ fn recommend_keep_index(files: &[DuplicateFileEntry]) -> usize {
         .unwrap_or(0)
 }
 
-fn risk_of_group(files: &[DuplicateFileEntry]) -> RiskLevel {
-    if files.iter().any(|file| {
-        file.system
-            || matches!(
-                file.location,
-                DuplicateLocation::Windows | DuplicateLocation::ProgramFiles
-            )
-    }) {
-        RiskLevel::High
-    } else if files.iter().any(|file| {
-        matches!(
-            file.location,
-            DuplicateLocation::Downloads | DuplicateLocation::AppData
-        )
-    }) {
-        RiskLevel::Medium
-    } else {
-        RiskLevel::Low
+pub fn allow_quick_duplicate_candidate_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let ext = file_extension(path);
+    if is_never_auto_path(&lower) || is_runtime_extension(ext.as_deref()) {
+        return false;
     }
+
+    if matches!(
+        ext.as_deref(),
+        Some("db" | "sqlite" | "sqlite3" | "pst" | "ost" | "vhd" | "vhdx" | "vmdk" | "qcow2")
+    ) {
+        return false;
+    }
+
+    if matches!(
+        ext.as_deref(),
+        Some("psd" | "ai" | "aep" | "prproj" | "blend" | "max" | "skp" | "dwg" | "cad")
+    ) {
+        return false;
+    }
+
+    lower.contains("\\downloads\\")
+        || lower.contains("\\temp\\")
+        || lower.contains("\\cache\\")
+        || looks_like_duplicate_copy_name(path)
+}
+
+fn safety_decision_for_group(files: &[DuplicateFileEntry]) -> DuplicateSafetyDecision {
+    let mut reason_tags = Vec::new();
+    let mut has_never = false;
+    let mut has_manual = false;
+    let mut has_cautious = false;
+    let mut has_safe = false;
+
+    for file in files {
+        let lower = file.path.to_ascii_lowercase();
+        let ext = file_extension(&file.path);
+
+        if file.hidden || file.system {
+            push_reason(&mut reason_tags, SafetyReasonTag::HiddenOrSystem);
+            has_never = true;
+        }
+        if is_never_auto_path(&lower) {
+            push_reason(
+                &mut reason_tags,
+                if lower.contains("\\windows") {
+                    SafetyReasonTag::SystemPath
+                } else {
+                    SafetyReasonTag::InstalledApp
+                },
+            );
+            has_never = true;
+        }
+        if is_runtime_extension(ext.as_deref()) {
+            push_reason(
+                &mut reason_tags,
+                if matches!(ext.as_deref(), Some("exe")) {
+                    SafetyReasonTag::ExecutableBinary
+                } else {
+                    SafetyReasonTag::RuntimeDependency
+                },
+            );
+            has_never = true;
+        }
+        if matches!(ext.as_deref(), Some("msi" | "msp" | "cab")) && !lower.contains("\\downloads\\")
+        {
+            push_reason(&mut reason_tags, SafetyReasonTag::InstallerPackage);
+            has_never = true;
+        }
+
+        if matches!(
+            file.location,
+            DuplicateLocation::Documents
+                | DuplicateLocation::Desktop
+                | DuplicateLocation::Pictures
+                | DuplicateLocation::Videos
+                | DuplicateLocation::Music
+        ) {
+            push_reason(&mut reason_tags, SafetyReasonTag::UserContent);
+            has_manual = true;
+        }
+        if lower.contains("\\onedrive\\")
+            || lower.contains("\\dropbox\\")
+            || lower.contains("\\google drive\\")
+            || lower.contains("\\icloud drive\\")
+            || lower.contains("\\syncthing\\")
+        {
+            push_reason(&mut reason_tags, SafetyReasonTag::SyncFolder);
+            has_manual = true;
+        }
+        if matches!(
+            ext.as_deref(),
+            Some("db" | "sqlite" | "sqlite3" | "pst" | "ost" | "vhd" | "vhdx" | "vmdk" | "qcow2")
+        ) {
+            push_reason(&mut reason_tags, SafetyReasonTag::DatabaseOrDiskImage);
+            has_manual = true;
+        }
+        if matches!(
+            ext.as_deref(),
+            Some("psd" | "ai" | "aep" | "prproj" | "blend" | "max" | "skp" | "dwg" | "cad")
+        ) {
+            push_reason(&mut reason_tags, SafetyReasonTag::ProjectSource);
+            has_manual = true;
+        }
+
+        if file.location == DuplicateLocation::Downloads {
+            push_reason(&mut reason_tags, SafetyReasonTag::Downloads);
+            has_cautious = true;
+        }
+        if matches!(ext.as_deref(), Some("zip" | "rar" | "7z")) {
+            push_reason(&mut reason_tags, SafetyReasonTag::ArchivePackage);
+            has_cautious = true;
+        }
+        if matches!(ext.as_deref(), Some("msi" | "msp" | "cab")) && lower.contains("\\downloads\\")
+        {
+            push_reason(&mut reason_tags, SafetyReasonTag::InstallerPackage);
+            has_cautious = true;
+        }
+
+        if matches!(
+            file.location,
+            DuplicateLocation::Temp | DuplicateLocation::Cache
+        ) {
+            push_reason(&mut reason_tags, SafetyReasonTag::TempOrCache);
+            has_safe = true;
+        }
+        if looks_like_duplicate_copy_name(&file.path) {
+            push_reason(&mut reason_tags, SafetyReasonTag::DuplicateName);
+            has_safe = true;
+        }
+    }
+
+    let class = if has_never {
+        DuplicateSafetyClass::NeverAutoDelete
+    } else if has_manual {
+        DuplicateSafetyClass::ManualReview
+    } else if has_cautious {
+        DuplicateSafetyClass::CautiousAuto
+    } else if has_safe {
+        DuplicateSafetyClass::SafeAuto
+    } else {
+        DuplicateSafetyClass::ManualReview
+    };
+
+    DuplicateSafetyDecision {
+        class,
+        suggested_keep_allowed: !matches!(class, DuplicateSafetyClass::NeverAutoDelete),
+        auto_select_allowed: matches!(
+            class,
+            DuplicateSafetyClass::CautiousAuto | DuplicateSafetyClass::SafeAuto
+        ),
+        delete_allowed_by_default: matches!(class, DuplicateSafetyClass::SafeAuto),
+        reason_tags,
+    }
+}
+
+fn push_reason(tags: &mut Vec<SafetyReasonTag>, tag: SafetyReasonTag) {
+    if !tags.contains(&tag) {
+        tags.push(tag);
+    }
+}
+
+fn is_never_auto_path(lower: &str) -> bool {
+    lower.contains("\\windows\\")
+        || lower.contains("\\program files\\")
+        || lower.contains("\\program files (x86)\\")
+        || lower.contains("\\programdata\\package cache\\")
+        || lower.contains("\\windows\\installer\\")
+        || lower.contains("\\windows\\winsxs\\")
+}
+
+fn is_runtime_extension(ext: Option<&str>) -> bool {
+    matches!(
+        ext,
+        Some("exe" | "dll" | "sys" | "drv" | "com" | "ocx" | "cpl")
+    )
+}
+
+fn file_extension(path: &str) -> Option<String> {
+    Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+}
+
+fn looks_like_duplicate_copy_name(path: &str) -> bool {
+    let lower = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    lower.contains(" copy")
+        || lower.contains(" - copy")
+        || lower.contains("副本")
+        || lower.contains("(1)")
+        || lower.contains("(2)")
 }
 
 fn partial_fingerprint(path: &Path, n: usize) -> io::Result<[u8; 32]> {
@@ -712,7 +943,13 @@ fn push_duplicate_group(
 
     let recommended_keep_index = recommend_keep_index(&files);
     let total_waste = size.saturating_mul((files.len() as u64).saturating_sub(1));
-    let risk = risk_of_group(&files);
+    let safety = safety_decision_for_group(&files);
+    let risk = match safety.class {
+        DuplicateSafetyClass::NeverAutoDelete => RiskLevel::High,
+        DuplicateSafetyClass::ManualReview => RiskLevel::Medium,
+        DuplicateSafetyClass::CautiousAuto => RiskLevel::Medium,
+        DuplicateSafetyClass::SafeAuto => RiskLevel::Low,
+    };
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let recommended_keep_path = files
         .get(recommended_keep_index)
@@ -729,6 +966,7 @@ fn push_duplicate_group(
         files,
         total_waste,
         risk,
+        safety,
         recommended_keep_index,
     });
     *next_group_id = next_group_id.saturating_add(1);

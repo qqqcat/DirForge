@@ -407,6 +407,7 @@ pub(crate) fn start_duplicate_scan_session(
     ctx: egui::Context,
     store: NodeStore,
     candidates: Option<Vec<dirotter_dup::DuplicateSizeCandidate>>,
+    cfg: dirotter_dup::DupConfig,
 ) -> DuplicateScanSession {
     let relay = Arc::new(Mutex::new(DuplicateScanRelayState::default()));
     let relay_state = Arc::clone(&relay);
@@ -415,7 +416,6 @@ pub(crate) fn start_duplicate_scan_session(
         let mut last_processed = 0usize;
         let mut duplicate_files_found = 0usize;
         let mut reclaimable_bytes_found = 0u64;
-        let cfg = dirotter_dup::DupConfig::default();
         let candidates =
             candidates.unwrap_or_else(|| dirotter_dup::collect_review_candidates(&store, cfg));
         let groups = dirotter_dup::resolve_duplicates_with_progress(candidates, cfg, |progress| {

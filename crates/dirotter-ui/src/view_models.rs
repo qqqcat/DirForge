@@ -88,6 +88,7 @@ pub(super) struct ExecutionFailureDetailsViewModel {
     pub summary_title: String,
     pub summary_value: String,
     pub summary_hint: String,
+    pub open_location_label: String,
     pub close_label: String,
     pub close_hint: String,
     pub items: Vec<ExecutionFailureDetailsItemViewModel>,
@@ -910,6 +911,7 @@ impl DirOtterNativeApp {
                 format_count(report.failed as u64),
                 self.t("失败", "failed")
             ),
+            open_location_label: self.t("打开所在位置", "Open File Location").to_string(),
             close_label: self.t("关闭", "Close").to_string(),
             close_hint: self
                 .t(

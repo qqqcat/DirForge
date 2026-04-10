@@ -194,6 +194,8 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     let auto_select_label = app.t("自动选择建议", "Auto Select Suggested");
     let clear_selection_label = app.t("清空选择", "Clear Selection");
     let delete_selected_label = app.t("删除选中", "Delete Selected");
+    let quick_mode_label = app.t("快速去重", "Quick Dedupe");
+    let full_mode_label = app.t("完整去重", "Full Review");
     let large_only_label = app.t("只看大文件", "Large Files Only");
     let sort_label = app.t("排序", "Sort");
     let sort_waste_label = app.t("按可释放空间", "By Reclaimable Space");
@@ -207,12 +209,52 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     let selected_files_label = app.t("个文件待删除", "files to delete");
     let estimated_reclaim_label = app.t("预计释放", "estimated reclaim");
     let interaction_enabled = !app.delete_active() && !duplicate_scan_running;
+    let review_mode = app.duplicates.review_mode;
+    let mode_help = match review_mode {
+        DuplicateReviewMode::Quick => app.t(
+            "快速去重默认只处理高价值重复组：单文件至少 4 MB，且整组预计可释放至少 32 MB。",
+            "Quick dedupe only reviews high-value groups by default: each file must be at least 4 MB and each group must reclaim at least 32 MB.",
+        ),
+        DuplicateReviewMode::Full => app.t(
+            "完整去重会放宽范围，包含更多中小型重复组，但确认时间会更长。",
+            "Full review widens the scope to include more medium and small duplicate groups, but verification takes longer.",
+        ),
+    };
     surface_panel(ui, |ui| {
         dashboard_split(
             ui,
             360.0,
             16.0,
             |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let quick_selected = review_mode == DuplicateReviewMode::Quick;
+                    if ui
+                        .add_enabled(
+                            interaction_enabled,
+                            egui::SelectableLabel::new(quick_selected, quick_mode_label),
+                        )
+                        .clicked()
+                    {
+                        app.set_duplicate_review_mode(DuplicateReviewMode::Quick);
+                    }
+                    let full_selected = review_mode == DuplicateReviewMode::Full;
+                    if ui
+                        .add_enabled(
+                            interaction_enabled,
+                            egui::SelectableLabel::new(full_selected, full_mode_label),
+                        )
+                        .clicked()
+                    {
+                        app.set_duplicate_review_mode(DuplicateReviewMode::Full);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(mode_help)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .add_enabled(interaction_enabled, egui::Button::new(auto_select_label))
@@ -375,13 +417,26 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                 return;
             }
             if filtered_group_count == 0 {
+                let (title, body) = match app.duplicates.review_mode {
+                    DuplicateReviewMode::Quick => (
+                        app.t("快速去重下没有高价值重复组", "No High-Value Groups In Quick Dedupe"),
+                        app.t(
+                            "当前快照里没有达到快速去重门槛的重复组。你可以切到“完整去重”查看更多中小型重复文件。",
+                            "No duplicate groups in the current snapshot meet the quick dedupe thresholds. Switch to Full Review to inspect more medium and small duplicate files.",
+                        ),
+                    ),
+                    DuplicateReviewMode::Full => (
+                        app.t("没有重复文件组", "No Duplicate Groups"),
+                        app.t(
+                            "如果这里没有结果，要么当前快照里没有重复文件，要么后台校验还在进行。",
+                            "Either the current snapshot has no duplicates, or the background verification is still running.",
+                        ),
+                    ),
+                };
                 empty_state_panel(
                     ui,
-                    app.t("没有重复文件组", "No Duplicate Groups"),
-                    app.t(
-                        "如果这里没有结果，要么当前快照里没有重复文件，要么后台校验还在进行。",
-                        "Either the current snapshot has no duplicates, or the background verification is still running.",
-                    ),
+                    title,
+                    body,
                 );
                 return;
             }
@@ -456,7 +511,7 @@ fn render_duplicate_group_card(
             ui.separator();
             risk_chip(
                 ui,
-                app.cleanup_risk_label(group.risk),
+                app.duplicate_safety_label(group.safety.class),
                 app.cleanup_risk_color(group.risk),
             );
             ui.separator();
@@ -494,30 +549,33 @@ fn render_duplicate_group_card(
 
         ui.add(
             egui::Label::new(
-                egui::RichText::new(app.t(
-                    "每组至少保留一个文件。高风险组默认不自动加入删除计划。",
-                    "Each group keeps at least one file. High-risk groups are not auto-selected for deletion.",
-                ))
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
+                egui::RichText::new(app.duplicate_safety_note(&group.safety))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
             )
             .wrap(),
         );
 
         ui.add_space(8.0);
         let mut enabled = selection.enabled;
-        if ui
-            .checkbox(
-                &mut enabled,
-                app.t(
-                    "删除本组的非保留副本",
-                    "Delete non-keeper files in this group",
-                ),
-            )
-            .changed()
-        {
-            app.set_duplicate_group_enabled(group.id, enabled);
-        }
+        let can_toggle_delete = !matches!(
+            group.safety.class,
+            dirotter_dup::DuplicateSafetyClass::NeverAutoDelete
+        );
+        ui.add_enabled_ui(can_toggle_delete, |ui| {
+            if ui
+                .checkbox(
+                    &mut enabled,
+                    app.t(
+                        "删除本组的非保留副本",
+                        "Delete non-keeper files in this group",
+                    ),
+                )
+                .changed()
+            {
+                app.set_duplicate_group_enabled(group.id, enabled);
+            }
+        });
 
         if expanded {
             ui.add_space(10.0);
@@ -622,6 +680,18 @@ fn duplicate_location_badge(
         dirotter_dup::DuplicateLocation::Desktop => (
             app.t("Desktop", "Desktop"),
             egui::Color32::from_rgb(0x4D, 0x9C, 0xD3),
+        ),
+        dirotter_dup::DuplicateLocation::Pictures => (
+            app.t("Pictures", "Pictures"),
+            egui::Color32::from_rgb(0x52, 0xA7, 0x7A),
+        ),
+        dirotter_dup::DuplicateLocation::Videos => (
+            app.t("Videos", "Videos"),
+            egui::Color32::from_rgb(0x4D, 0x9C, 0xD3),
+        ),
+        dirotter_dup::DuplicateLocation::Music => (
+            app.t("Music", "Music"),
+            egui::Color32::from_rgb(0x8E, 0x87, 0xB8),
         ),
         dirotter_dup::DuplicateLocation::ProgramFiles => {
             (app.t("Program Files", "Program Files"), danger_red())

@@ -1687,8 +1687,30 @@ translation_table!(lookup_vi, {
     "verified duplicate groups" => "các nhóm trùng lặp đã được xác minh",
 });
 
+fn shared_duplicate_safety_fallback(en: &str) -> Option<&'static str> {
+    match en {
+        "Manual Review Only" => Some("Manual Review Only"),
+        "Review Needed" => Some("Review Needed"),
+        "Cautious Auto" => Some("Cautious Auto"),
+        "Safe Auto" => Some("Safe Auto"),
+        "This group matched system paths, installed app paths, or runtime dependency rules, so no files are auto-selected for deletion." => Some(
+            "This group matched system paths, installed app paths, or runtime dependency rules, so no files are auto-selected for deletion.",
+        ),
+        "This group lives in user content or other high-value locations. Confirm which version you truly want to keep." => Some(
+            "This group lives in user content or other high-value locations. Confirm which version you truly want to keep.",
+        ),
+        "This group usually comes from repeated downloads or exported copies. Suggestions can be auto-selected, but deletion still requires confirmation." => Some(
+            "This group usually comes from repeated downloads or exported copies. Suggestions can be auto-selected, but deletion still requires confirmation.",
+        ),
+        "This group is low-risk duplicate content and fits the automatic cleanup flow." => Some(
+            "This group is low-risk duplicate content and fits the automatic cleanup flow.",
+        ),
+        _ => None,
+    }
+}
+
 pub(crate) fn translate_missing_ui_key(lang: Lang, en: &str) -> Option<&'static str> {
-    match lang {
+    let translated = match lang {
         Lang::Fr => lookup_fr(en),
         Lang::Es => lookup_es(en),
         Lang::Ar => lookup_ar(en),
@@ -1707,7 +1729,8 @@ pub(crate) fn translate_missing_ui_key(lang: Lang, en: &str) -> Option<&'static 
         Lang::Uk => lookup_uk(en),
         Lang::Vi => lookup_vi(en),
         _ => None,
-    }
+    };
+    translated.or_else(|| shared_duplicate_safety_fallback(en))
 }
 
 #[cfg(test)]

@@ -36,7 +36,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cleanup::{CleanupAnalysis, CleanupCandidate, CleanupCategory};
 use controller::{
@@ -80,6 +80,8 @@ const DUPLICATES_PAGE_MAX_WIDTH: f32 = 1480.0;
 const DASHBOARD_PAGE_MAX_WIDTH: f32 = 1160.0;
 const SETTINGS_PAGE_MAX_WIDTH: f32 = 1040.0;
 const PAGE_SIDE_GUTTER: f32 = 64.0;
+const DUPLICATE_AUTO_SELECT_MIN_WASTE_BYTES: u64 = 16 * 1024 * 1024;
+const DUPLICATE_AUTO_SELECT_MIN_AGE_DAYS: u64 = 30;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -262,6 +264,13 @@ enum DuplicateSort {
     Size,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum DuplicateReviewMode {
+    #[default]
+    Quick,
+    Full,
+}
+
 #[derive(Clone)]
 struct DuplicateDeleteRequest {
     label: String,
@@ -286,6 +295,7 @@ struct DuplicatePanelState {
     selected_files_cache: usize,
     selected_bytes_cache: u64,
     selection_totals_dirty: bool,
+    review_mode: DuplicateReviewMode,
 }
 
 #[derive(Default)]
@@ -832,6 +842,45 @@ impl DirOtterNativeApp {
         }
     }
 
+    fn duplicate_safety_label(&self, class: dirotter_dup::DuplicateSafetyClass) -> &'static str {
+        match class {
+            dirotter_dup::DuplicateSafetyClass::NeverAutoDelete => {
+                self.t("手动处理", "Manual Review Only")
+            }
+            dirotter_dup::DuplicateSafetyClass::ManualReview => {
+                self.t("请确认保留版本", "Review Needed")
+            }
+            dirotter_dup::DuplicateSafetyClass::CautiousAuto => {
+                self.t("可谨慎处理", "Cautious Auto")
+            }
+            dirotter_dup::DuplicateSafetyClass::SafeAuto => self.t("可安全处理", "Safe Auto"),
+        }
+    }
+
+    fn duplicate_safety_note(
+        &self,
+        decision: &dirotter_dup::DuplicateSafetyDecision,
+    ) -> &'static str {
+        match decision.class {
+            dirotter_dup::DuplicateSafetyClass::NeverAutoDelete => self.t(
+                "该组命中了系统目录、安装目录或运行依赖规则，不会自动选择删除项。",
+                "This group matched system paths, installed app paths, or runtime dependency rules, so no files are auto-selected for deletion.",
+            ),
+            dirotter_dup::DuplicateSafetyClass::ManualReview => self.t(
+                "该组位于用户资料或高价值目录，请确认你真正想保留的版本。",
+                "This group lives in user content or other high-value locations. Confirm which version you truly want to keep.",
+            ),
+            dirotter_dup::DuplicateSafetyClass::CautiousAuto => self.t(
+                "该组多见于下载副本或导出副本，可自动给出建议，但删除前仍需二次确认。",
+                "This group usually comes from repeated downloads or exported copies. Suggestions can be auto-selected, but deletion still requires confirmation.",
+            ),
+            dirotter_dup::DuplicateSafetyClass::SafeAuto => self.t(
+                "该组属于低风险重复文件，适合进入自动整理流程。",
+                "This group is low-risk duplicate content and fits the automatic cleanup flow.",
+            ),
+        }
+    }
+
     fn cleanup_category_color(&self, category: CleanupCategory) -> egui::Color32 {
         match category {
             CleanupCategory::Cache => river_teal(),
@@ -1006,13 +1055,39 @@ impl DirOtterNativeApp {
     }
 
     fn reset_duplicate_review(&mut self) {
+        let review_mode = self.duplicates.review_mode;
         self.duplicate_scan_session = None;
         self.duplicates = DuplicatePanelState {
             sort: Some(DuplicateSort::Waste),
             follow_recommended_selection: true,
             selection_totals_dirty: true,
+            review_mode,
             ..DuplicatePanelState::default()
         };
+    }
+
+    fn duplicate_dup_config(&self) -> dirotter_dup::DupConfig {
+        let mut cfg = dirotter_dup::DupConfig::default();
+        match self.duplicates.review_mode {
+            DuplicateReviewMode::Quick => {
+                cfg.min_candidate_size = 4 * 1024 * 1024;
+                cfg.min_candidate_total_waste = 32 * 1024 * 1024;
+                cfg.quick_actionable_only = true;
+            }
+            DuplicateReviewMode::Full => {}
+        }
+        cfg
+    }
+
+    fn set_duplicate_review_mode(&mut self, mode: DuplicateReviewMode) {
+        if self.duplicates.review_mode == mode || self.duplicate_scan_session.is_some() {
+            return;
+        }
+        self.duplicates.review_mode = mode;
+        self.reset_duplicate_review();
+        self.reset_duplicate_prep();
+        self.start_duplicate_scan_if_needed();
+        self.egui_ctx.request_repaint();
     }
 
     fn reset_duplicate_prep(&mut self) {
@@ -1020,29 +1095,40 @@ impl DirOtterNativeApp {
     }
 
     fn absorb_duplicate_prep_batch(&mut self, batch: &[BatchEntry]) {
+        let cfg = self.duplicate_dup_config();
         for item in batch {
             if item.is_dir {
                 continue;
             }
 
             self.duplicate_prep.scanned_files = self.duplicate_prep.scanned_files.saturating_add(1);
-            if item.size == 0 {
+            if item.size < cfg.min_candidate_size
+                || (cfg.quick_actionable_only
+                    && !dirotter_dup::allow_quick_duplicate_candidate_path(item.path.as_ref()))
+            {
                 continue;
             }
 
             let bucket = self.duplicate_prep.by_size.entry(item.size).or_default();
-            match bucket.len() {
-                0 => {}
-                1 => {
-                    self.duplicate_prep.candidate_groups =
-                        self.duplicate_prep.candidate_groups.saturating_add(1);
-                    self.duplicate_prep.candidate_files =
-                        self.duplicate_prep.candidate_files.saturating_add(2);
-                }
-                _ => {
-                    self.duplicate_prep.candidate_files =
-                        self.duplicate_prep.candidate_files.saturating_add(1);
-                }
+            let next_count = bucket.len() + 1;
+            let current_waste = item
+                .size
+                .saturating_mul(bucket.len().saturating_sub(1) as u64);
+            let next_waste = item
+                .size
+                .saturating_mul(next_count.saturating_sub(1) as u64);
+            if current_waste < cfg.min_candidate_total_waste
+                && next_waste >= cfg.min_candidate_total_waste
+            {
+                self.duplicate_prep.candidate_groups =
+                    self.duplicate_prep.candidate_groups.saturating_add(1);
+                self.duplicate_prep.candidate_files = self
+                    .duplicate_prep
+                    .candidate_files
+                    .saturating_add(next_count);
+            } else if next_waste >= cfg.min_candidate_total_waste {
+                self.duplicate_prep.candidate_files =
+                    self.duplicate_prep.candidate_files.saturating_add(1);
             }
             bucket.push(item.path.clone());
         }
@@ -1055,14 +1141,18 @@ impl DirOtterNativeApp {
             return None;
         }
 
+        let cfg = self.duplicate_dup_config();
         let by_size = std::mem::take(&mut self.duplicate_prep.by_size);
         let mut candidates: Vec<_> = by_size
             .into_iter()
             .filter_map(|(size, paths)| {
-                (paths.len() >= 2).then_some(dirotter_dup::DuplicateSizeCandidate {
-                    size,
-                    paths: paths.into_iter().map(|path| path.to_string()).collect(),
-                })
+                let total_waste = size.saturating_mul(paths.len().saturating_sub(1) as u64);
+                (paths.len() >= 2 && total_waste >= cfg.min_candidate_total_waste).then_some(
+                    dirotter_dup::DuplicateSizeCandidate {
+                        size,
+                        paths: paths.into_iter().map(|path| path.to_string()).collect(),
+                    },
+                )
             })
             .collect();
         dirotter_dup::sort_size_candidates(&mut candidates);
@@ -1077,6 +1167,29 @@ impl DirOtterNativeApp {
         )
     }
 
+    fn duplicate_group_auto_select_enabled(&self, group: &dirotter_dup::DuplicateGroup) -> bool {
+        if !group.safety.auto_select_allowed
+            || group.total_waste < DUPLICATE_AUTO_SELECT_MIN_WASTE_BYTES
+        {
+            return false;
+        }
+
+        let Some(newest_modified) = group
+            .files
+            .iter()
+            .filter_map(|file| file.modified_unix_secs)
+            .max()
+        else {
+            return true;
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let min_age_secs = DUPLICATE_AUTO_SELECT_MIN_AGE_DAYS * 24 * 60 * 60;
+        now.saturating_sub(newest_modified) >= min_age_secs
+    }
+
     fn start_duplicate_scan_if_needed(&mut self) {
         if self.scan_active()
             || self.delete_active()
@@ -1088,11 +1201,13 @@ impl DirOtterNativeApp {
         let Some(store) = self.store.as_ref().cloned() else {
             return;
         };
+        let cfg = self.duplicate_dup_config();
         let prebuilt_candidates = self.take_prebuilt_duplicate_candidates();
         self.duplicate_scan_session = Some(start_duplicate_scan_session(
             self.egui_ctx.clone(),
             store,
             prebuilt_candidates,
+            cfg,
         ));
     }
 
@@ -1168,7 +1283,7 @@ impl DirOtterNativeApp {
                             group.id,
                             DuplicateGroupSelection {
                                 keep_path: Arc::<str>::from(recommended.path.clone()),
-                                enabled: group.risk != RiskLevel::High,
+                                enabled: self.duplicate_group_auto_select_enabled(group),
                             },
                         )
                     })
@@ -1216,7 +1331,7 @@ impl DirOtterNativeApp {
                     .get(group.recommended_keep_index)
                     .map(|recommended| DuplicateGroupSelection {
                         keep_path: Arc::<str>::from(recommended.path.clone()),
-                        enabled: group.risk != RiskLevel::High,
+                        enabled: self.duplicate_group_auto_select_enabled(group),
                     })
             })
             .unwrap_or_else(|| DuplicateGroupSelection {
@@ -5078,6 +5193,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5521,6 +5637,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5612,6 +5729,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5744,6 +5862,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5829,6 +5948,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -5909,6 +6029,7 @@ mod ui_tests {
                 sort: Some(DuplicateSort::Waste),
                 ..DuplicatePanelState::default()
             },
+            duplicate_prep: DuplicatePrepState::default(),
             execution_report: None,
             pending_delete_confirmation: None,
             queued_delete: None,
@@ -8380,6 +8501,8 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     let auto_select_label = app.t("自动选择建议", "Auto Select Suggested");
     let clear_selection_label = app.t("清空选择", "Clear Selection");
     let delete_selected_label = app.t("删除选中", "Delete Selected");
+    let quick_mode_label = app.t("快速去重", "Quick Dedupe");
+    let full_mode_label = app.t("完整去重", "Full Review");
     let large_only_label = app.t("只看大文件", "Large Files Only");
     let sort_label = app.t("排序", "Sort");
     let sort_waste_label = app.t("按可释放空间", "By Reclaimable Space");
@@ -8393,12 +8516,52 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     let selected_files_label = app.t("个文件待删除", "files to delete");
     let estimated_reclaim_label = app.t("预计释放", "estimated reclaim");
     let interaction_enabled = !app.delete_active() && !duplicate_scan_running;
+    let review_mode = app.duplicates.review_mode;
+    let mode_help = match review_mode {
+        DuplicateReviewMode::Quick => app.t(
+            "快速去重默认只处理高价值重复组：单文件至少 4 MB，且整组预计可释放至少 32 MB。",
+            "Quick dedupe only reviews high-value groups by default: each file must be at least 4 MB and each group must reclaim at least 32 MB.",
+        ),
+        DuplicateReviewMode::Full => app.t(
+            "完整去重会放宽范围，包含更多中小型重复组，但确认时间会更长。",
+            "Full review widens the scope to include more medium and small duplicate groups, but verification takes longer.",
+        ),
+    };
     surface_panel(ui, |ui| {
         dashboard_split(
             ui,
             360.0,
             16.0,
             |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let quick_selected = review_mode == DuplicateReviewMode::Quick;
+                    if ui
+                        .add_enabled(
+                            interaction_enabled,
+                            egui::SelectableLabel::new(quick_selected, quick_mode_label),
+                        )
+                        .clicked()
+                    {
+                        app.set_duplicate_review_mode(DuplicateReviewMode::Quick);
+                    }
+                    let full_selected = review_mode == DuplicateReviewMode::Full;
+                    if ui
+                        .add_enabled(
+                            interaction_enabled,
+                            egui::SelectableLabel::new(full_selected, full_mode_label),
+                        )
+                        .clicked()
+                    {
+                        app.set_duplicate_review_mode(DuplicateReviewMode::Full);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(mode_help)
+                        .text_style(egui::TextStyle::Small)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .add_enabled(interaction_enabled, egui::Button::new(auto_select_label))
@@ -8561,13 +8724,26 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                 return;
             }
             if filtered_group_count == 0 {
+                let (title, body) = match app.duplicates.review_mode {
+                    DuplicateReviewMode::Quick => (
+                        app.t("快速去重下没有高价值重复组", "No High-Value Groups In Quick Dedupe"),
+                        app.t(
+                            "当前快照里没有达到快速去重门槛的重复组。你可以切到“完整去重”查看更多中小型重复文件。",
+                            "No duplicate groups in the current snapshot meet the quick dedupe thresholds. Switch to Full Review to inspect more medium and small duplicate files.",
+                        ),
+                    ),
+                    DuplicateReviewMode::Full => (
+                        app.t("没有重复文件组", "No Duplicate Groups"),
+                        app.t(
+                            "如果这里没有结果，要么当前快照里没有重复文件，要么后台校验还在进行。",
+                            "Either the current snapshot has no duplicates, or the background verification is still running.",
+                        ),
+                    ),
+                };
                 empty_state_panel(
                     ui,
-                    app.t("没有重复文件组", "No Duplicate Groups"),
-                    app.t(
-                        "如果这里没有结果，要么当前快照里没有重复文件，要么后台校验还在进行。",
-                        "Either the current snapshot has no duplicates, or the background verification is still running.",
-                    ),
+                    title,
+                    body,
                 );
                 return;
             }
@@ -8642,7 +8818,7 @@ fn render_duplicate_group_card(
             ui.separator();
             risk_chip(
                 ui,
-                app.cleanup_risk_label(group.risk),
+                app.duplicate_safety_label(group.safety.class),
                 app.cleanup_risk_color(group.risk),
             );
             ui.separator();
@@ -8680,30 +8856,33 @@ fn render_duplicate_group_card(
 
         ui.add(
             egui::Label::new(
-                egui::RichText::new(app.t(
-                    "每组至少保留一个文件。高风险组默认不自动加入删除计划。",
-                    "Each group keeps at least one file. High-risk groups are not auto-selected for deletion.",
-                ))
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
+                egui::RichText::new(app.duplicate_safety_note(&group.safety))
+                    .text_style(egui::TextStyle::Small)
+                    .color(ui.visuals().weak_text_color()),
             )
             .wrap(),
         );
 
         ui.add_space(8.0);
         let mut enabled = selection.enabled;
-        if ui
-            .checkbox(
-                &mut enabled,
-                app.t(
-                    "删除本组的非保留副本",
-                    "Delete non-keeper files in this group",
-                ),
-            )
-            .changed()
-        {
-            app.set_duplicate_group_enabled(group.id, enabled);
-        }
+        let can_toggle_delete = !matches!(
+            group.safety.class,
+            dirotter_dup::DuplicateSafetyClass::NeverAutoDelete
+        );
+        ui.add_enabled_ui(can_toggle_delete, |ui| {
+            if ui
+                .checkbox(
+                    &mut enabled,
+                    app.t(
+                        "删除本组的非保留副本",
+                        "Delete non-keeper files in this group",
+                    ),
+                )
+                .changed()
+            {
+                app.set_duplicate_group_enabled(group.id, enabled);
+            }
+        });
 
         if expanded {
             ui.add_space(10.0);
@@ -8808,6 +8987,18 @@ fn duplicate_location_badge(
         dirotter_dup::DuplicateLocation::Desktop => (
             app.t("Desktop", "Desktop"),
             egui::Color32::from_rgb(0x4D, 0x9C, 0xD3),
+        ),
+        dirotter_dup::DuplicateLocation::Pictures => (
+            app.t("Pictures", "Pictures"),
+            egui::Color32::from_rgb(0x52, 0xA7, 0x7A),
+        ),
+        dirotter_dup::DuplicateLocation::Videos => (
+            app.t("Videos", "Videos"),
+            egui::Color32::from_rgb(0x4D, 0x9C, 0xD3),
+        ),
+        dirotter_dup::DuplicateLocation::Music => (
+            app.t("Music", "Music"),
+            egui::Color32::from_rgb(0x8E, 0x87, 0xB8),
         ),
         dirotter_dup::DuplicateLocation::ProgramFiles => {
             (app.t("Program Files", "Program Files"), danger_red())
@@ -9422,15 +9613,6 @@ pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &
         );
         ui.add_space(14.0);
     }
-    tone_banner(
-            ui,
-            app.t("舒适优先的工作台", "A Comfort-First Workspace"),
-            app.t(
-                "语言、主题和字体回退都会立即生效。这里的目标不是“更花哨”，而是让长时间浏览目录树时更稳定、更耐看。",
-                "Language, theme, and font fallback all apply immediately. The goal here is not flashy UI, but a steadier workspace for long file-tree sessions.",
-            ),
-        );
-    ui.add_space(14.0);
     settings_section(
             ui,
             app.t("常用设置", "Common Settings"),
@@ -9609,27 +9791,6 @@ pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &
                         )
                     },
                 );
-            },
-        );
-
-    ui.add_space(14.0);
-    settings_section(
-            ui,
-            app.t("本地化说明", "Localization Notes"),
-            app.t(
-                "把与语言相关的规则放在一起，减少用户在不同卡片间来回找解释。",
-                "Keep language-related rules together so people do not have to hunt across separate cards.",
-            ),
-            |ui| {
-                ui.label(app.t(
-                    "应用会优先加载系统中的多脚本字体回退（Windows 优先 Microsoft YaHei / DengXian / Yu Gothic / Malgun / Nirmala / Leelawadee），尽量避免中文、日文、韩文、印地语、泰语等标签显示为方框。",
-                    "The app now prefers multi-script system fallback fonts (Windows prioritizes Microsoft YaHei, DengXian, Yu Gothic, Malgun, Nirmala, and Leelawadee) to reduce tofu boxes across CJK, Indic, and Thai labels.",
-                ));
-                ui.add_space(8.0);
-                ui.label(app.t(
-                    "首次启动会根据系统语言环境识别已接入的 19 种语言；这里的手动选择仍然会覆盖自动检测结果。",
-                    "The first launch can now infer all 19 supported languages from the system locale, and the manual choice here still overrides auto-detection.",
-                ));
             },
         );
 

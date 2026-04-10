@@ -262,6 +262,13 @@ enum DuplicateSort {
     Size,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum DuplicateReviewMode {
+    #[default]
+    Quick,
+    Full,
+}
+
 #[derive(Clone)]
 struct DuplicateDeleteRequest {
     label: String,
@@ -286,6 +293,8 @@ struct DuplicatePanelState {
     selected_files_cache: usize,
     selected_bytes_cache: u64,
     selection_totals_dirty: bool,
+    review_mode: DuplicateReviewMode,
+    review_completed: bool,
 }
 
 #[derive(Default)]
@@ -832,6 +841,45 @@ impl DirOtterNativeApp {
         }
     }
 
+    fn duplicate_safety_label(&self, class: dirotter_dup::DuplicateSafetyClass) -> &'static str {
+        match class {
+            dirotter_dup::DuplicateSafetyClass::NeverAutoDelete => {
+                self.t("手动处理", "Manual Review Only")
+            }
+            dirotter_dup::DuplicateSafetyClass::ManualReview => {
+                self.t("请确认保留版本", "Review Needed")
+            }
+            dirotter_dup::DuplicateSafetyClass::CautiousAuto => {
+                self.t("可谨慎处理", "Cautious Auto")
+            }
+            dirotter_dup::DuplicateSafetyClass::SafeAuto => self.t("可安全处理", "Safe Auto"),
+        }
+    }
+
+    fn duplicate_safety_note(
+        &self,
+        decision: &dirotter_dup::DuplicateSafetyDecision,
+    ) -> &'static str {
+        match decision.class {
+            dirotter_dup::DuplicateSafetyClass::NeverAutoDelete => self.t(
+                "该组命中了系统目录、安装目录或运行依赖规则，不会自动选择删除项。",
+                "This group matched system paths, installed app paths, or runtime dependency rules, so no files are auto-selected for deletion.",
+            ),
+            dirotter_dup::DuplicateSafetyClass::ManualReview => self.t(
+                "该组位于用户资料或高价值目录，请确认你真正想保留的版本。",
+                "This group lives in user content or other high-value locations. Confirm which version you truly want to keep.",
+            ),
+            dirotter_dup::DuplicateSafetyClass::CautiousAuto => self.t(
+                "该组多见于下载副本或导出副本，可自动给出建议，但删除前仍需二次确认。",
+                "This group usually comes from repeated downloads or exported copies. Suggestions can be auto-selected, but deletion still requires confirmation.",
+            ),
+            dirotter_dup::DuplicateSafetyClass::SafeAuto => self.t(
+                "该组属于低风险重复文件，适合进入自动整理流程。",
+                "This group is low-risk duplicate content and fits the automatic cleanup flow.",
+            ),
+        }
+    }
+
     fn cleanup_category_color(&self, category: CleanupCategory) -> egui::Color32 {
         match category {
             CleanupCategory::Cache => river_teal(),
@@ -1006,13 +1054,40 @@ impl DirOtterNativeApp {
     }
 
     fn reset_duplicate_review(&mut self) {
+        let review_mode = self.duplicates.review_mode;
         self.duplicate_scan_session = None;
         self.duplicates = DuplicatePanelState {
             sort: Some(DuplicateSort::Waste),
             follow_recommended_selection: true,
             selection_totals_dirty: true,
+            review_mode,
+            review_completed: false,
             ..DuplicatePanelState::default()
         };
+    }
+
+    fn duplicate_dup_config(&self) -> dirotter_dup::DupConfig {
+        let mut cfg = dirotter_dup::DupConfig::default();
+        match self.duplicates.review_mode {
+            DuplicateReviewMode::Quick => {
+                cfg.min_candidate_size = 4 * 1024 * 1024;
+                cfg.min_candidate_total_waste = 32 * 1024 * 1024;
+                cfg.quick_actionable_only = true;
+            }
+            DuplicateReviewMode::Full => {}
+        }
+        cfg
+    }
+
+    fn set_duplicate_review_mode(&mut self, mode: DuplicateReviewMode) {
+        if self.duplicates.review_mode == mode || self.duplicate_scan_session.is_some() {
+            return;
+        }
+        self.duplicates.review_mode = mode;
+        self.reset_duplicate_review();
+        self.reset_duplicate_prep();
+        self.start_duplicate_scan_if_needed();
+        self.egui_ctx.request_repaint();
     }
 
     fn reset_duplicate_prep(&mut self) {
@@ -1020,14 +1095,17 @@ impl DirOtterNativeApp {
     }
 
     fn absorb_duplicate_prep_batch(&mut self, batch: &[BatchEntry]) {
-        let cfg = dirotter_dup::DupConfig::default();
+        let cfg = self.duplicate_dup_config();
         for item in batch {
             if item.is_dir {
                 continue;
             }
 
             self.duplicate_prep.scanned_files = self.duplicate_prep.scanned_files.saturating_add(1);
-            if item.size < cfg.min_candidate_size {
+            if item.size < cfg.min_candidate_size
+                || (cfg.quick_actionable_only
+                    && !dirotter_dup::allow_quick_duplicate_candidate_path(item.path.as_ref()))
+            {
                 continue;
             }
 
@@ -1063,7 +1141,7 @@ impl DirOtterNativeApp {
             return None;
         }
 
-        let cfg = dirotter_dup::DupConfig::default();
+        let cfg = self.duplicate_dup_config();
         let by_size = std::mem::take(&mut self.duplicate_prep.by_size);
         let mut candidates: Vec<_> = by_size
             .into_iter()
@@ -1090,7 +1168,8 @@ impl DirOtterNativeApp {
     }
 
     fn duplicate_group_auto_select_enabled(&self, group: &dirotter_dup::DuplicateGroup) -> bool {
-        if group.risk != RiskLevel::Low || group.total_waste < DUPLICATE_AUTO_SELECT_MIN_WASTE_BYTES
+        if !group.safety.auto_select_allowed
+            || group.total_waste < DUPLICATE_AUTO_SELECT_MIN_WASTE_BYTES
         {
             return false;
         }
@@ -1115,6 +1194,7 @@ impl DirOtterNativeApp {
         if self.scan_active()
             || self.delete_active()
             || self.duplicate_scan_session.is_some()
+            || self.duplicates.review_completed
             || !self.duplicates.groups.is_empty()
         {
             return;
@@ -1122,11 +1202,13 @@ impl DirOtterNativeApp {
         let Some(store) = self.store.as_ref().cloned() else {
             return;
         };
+        let cfg = self.duplicate_dup_config();
         let prebuilt_candidates = self.take_prebuilt_duplicate_candidates();
         self.duplicate_scan_session = Some(start_duplicate_scan_session(
             self.egui_ctx.clone(),
             store,
             prebuilt_candidates,
+            cfg,
         ));
     }
 
@@ -1149,6 +1231,7 @@ impl DirOtterNativeApp {
 
     fn apply_duplicate_groups(&mut self, groups: Vec<dirotter_dup::DuplicateGroup>) {
         self.duplicates.groups = groups;
+        self.duplicates.review_completed = true;
         self.sort_duplicate_groups();
         self.duplicates.visible_groups = self.duplicates.groups.len().min(20);
         self.duplicates.pending_delete = None;
@@ -1425,6 +1508,10 @@ impl DirOtterNativeApp {
     }
 
     fn open_duplicate_file_location(&mut self, path: &str) {
+        self.open_path_location(path);
+    }
+
+    fn open_path_location(&mut self, path: &str) {
         match dirotter_platform::select_in_explorer(path) {
             Ok(_) => {
                 self.explorer_feedback = Some((
@@ -2166,7 +2253,10 @@ impl DirOtterNativeApp {
     }
 
     fn release_result_store_to_snapshot(&mut self) -> bool {
-        if self.store.is_none() {
+        if self.store.is_none()
+            || self.result_store_load_session.is_some()
+            || self.duplicate_scan_session.is_some()
+        {
             return false;
         }
         if !self.save_snapshot_before_memory_release() {
@@ -2209,6 +2299,12 @@ impl DirOtterNativeApp {
             && (self.summary.bytes_observed > 0
                 || !self.completed_top_files.is_empty()
                 || !self.completed_top_dirs.is_empty())
+    }
+
+    fn result_store_is_in_active_use(&self) -> bool {
+        self.result_store_load_session.is_some()
+            || self.duplicate_scan_session.is_some()
+            || matches!(self.page, Page::Treemap | Page::Duplicates)
     }
 
     fn result_store_load_active(&self) -> bool {
@@ -2266,7 +2362,7 @@ impl DirOtterNativeApp {
     }
 
     fn maybe_auto_release_memory(&mut self) {
-        if self.scan_active() || self.delete_active() {
+        if self.scan_active() || self.delete_active() || self.result_store_is_in_active_use() {
             return;
         }
         if self.last_user_activity.elapsed() < Duration::from_secs(IDLE_MEMORY_RELEASE_SECS) {
@@ -2283,7 +2379,7 @@ impl DirOtterNativeApp {
         }
 
         self.trim_transient_runtime_memory();
-        if self.page != Page::Treemap && matches!(self.status, AppStatus::Completed) {
+        if matches!(self.status, AppStatus::Completed) {
             let _ = self.release_result_store_to_snapshot();
         }
         let _ = dirotter_platform::trim_process_memory();
@@ -2952,28 +3048,7 @@ impl DirOtterNativeApp {
                             .clicked()
                         {
                             if let Some(target) = selected_target.as_ref() {
-                                match dirotter_platform::select_in_explorer(target.path.as_ref()) {
-                                    Ok(_) => {
-                                        self.explorer_feedback = Some((
-                                            self.t(
-                                                "已在系统文件管理器中打开目标位置。",
-                                                "Opened the target location in the system file manager.",
-                                            )
-                                            .to_string(),
-                                            true,
-                                        ));
-                                    }
-                                    Err(err) => {
-                                        self.explorer_feedback = Some((
-                                            format!(
-                                                "{}: {}",
-                                                self.t("打开位置失败", "Failed to open location"),
-                                                err.message
-                                            ),
-                                            false,
-                                        ));
-                                    }
-                                }
+                                self.open_path_location(target.path.as_ref());
                             }
                         }
                         if inspector_actions_view.show_fast_cleanup
@@ -3497,28 +3572,7 @@ impl DirOtterNativeApp {
         let Some(target) = self.selected_target() else {
             return;
         };
-        match dirotter_platform::select_in_explorer(target.path.as_ref()) {
-            Ok(_) => {
-                self.explorer_feedback = Some((
-                    self.t(
-                        "已在系统文件管理器中打开目标位置。",
-                        "Opened the target location in the system file manager.",
-                    )
-                    .to_string(),
-                    true,
-                ));
-            }
-            Err(err) => {
-                self.explorer_feedback = Some((
-                    format!(
-                        "{}: {}",
-                        self.t("打开位置失败", "Failed to open location"),
-                        err.message
-                    ),
-                    false,
-                ));
-            }
-        }
+        self.open_path_location(target.path.as_ref());
     }
 
     fn ui_cleanup_delete_confirm_dialog(&mut self, ctx: &egui::Context) {
@@ -3786,14 +3840,32 @@ impl DirOtterNativeApp {
                                             egui::RichText::new(&item.failure_title).strong(),
                                         );
                                         ui.add_space(4.0);
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(&item.path_value)
-                                                    .monospace()
-                                                    .color(ui.visuals().text_color()),
-                                            )
-                                            .wrap_mode(egui::TextWrapMode::Wrap),
-                                        );
+                                        ui.horizontal_top(|ui| {
+                                            let button_width = 160.0;
+                                            let path_width =
+                                                (ui.available_width() - button_width - 8.0)
+                                                    .max(180.0);
+                                            ui.add_sized(
+                                                [path_width, 0.0],
+                                                egui::Label::new(
+                                                    egui::RichText::new(&item.path_value)
+                                                        .monospace()
+                                                        .color(ui.visuals().text_color()),
+                                                )
+                                                .wrap_mode(egui::TextWrapMode::Wrap),
+                                            );
+                                            if ui
+                                                .add_sized(
+                                                    [button_width, CONTROL_HEIGHT],
+                                                    egui::Button::new(
+                                                        &view_model.open_location_label,
+                                                    ),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.open_path_location(&item.path_value);
+                                            }
+                                        });
                                         ui.add_space(6.0);
                                         ui.add(
                                             egui::Label::new(
@@ -6229,6 +6301,80 @@ mod ui_tests {
     }
 
     #[test]
+    fn completed_zero_duplicate_review_does_not_restart() {
+        let mut app = make_test_app();
+        app.store = Some(NodeStore::default());
+
+        app.apply_duplicate_groups(Vec::new());
+        app.start_duplicate_scan_if_needed();
+
+        assert!(app.duplicates.review_completed);
+        assert!(app.duplicate_scan_session.is_none());
+        assert!(app.duplicates.groups.is_empty());
+    }
+
+    #[test]
+    fn auto_release_skips_duplicate_page_even_under_memory_pressure() {
+        let mut app = make_test_app();
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "d:\\".into(), "d:\\".into(), NodeKind::Dir, 0);
+        store.add_node(
+            Some(root),
+            "archive.zip".into(),
+            "d:\\archive.zip".into(),
+            NodeKind::File,
+            42,
+        );
+        store.rollup();
+        app.store = Some(store);
+        app.status = AppStatus::Completed;
+        app.page = Page::Duplicates;
+        app.last_user_activity = Instant::now() - Duration::from_secs(IDLE_MEMORY_RELEASE_SECS + 5);
+        app.system_memory = Some(dirotter_platform::SystemMemoryStats {
+            memory_load_percent: HIGH_MEMORY_LOAD_PERCENT,
+            total_phys_bytes: 16,
+            available_phys_bytes: 1,
+            low_memory_signal: Some(true),
+        });
+
+        app.maybe_auto_release_memory();
+
+        assert!(app.store.is_some());
+    }
+
+    #[test]
+    fn auto_release_skips_while_duplicate_verification_is_running() {
+        let mut app = make_test_app();
+        let mut store = NodeStore::default();
+        let root = store.add_node(None, "d:\\".into(), "d:\\".into(), NodeKind::Dir, 0);
+        store.add_node(
+            Some(root),
+            "archive.zip".into(),
+            "d:\\archive.zip".into(),
+            NodeKind::File,
+            42,
+        );
+        store.rollup();
+        app.store = Some(store);
+        app.status = AppStatus::Completed;
+        app.last_user_activity = Instant::now() - Duration::from_secs(IDLE_MEMORY_RELEASE_SECS + 5);
+        app.system_memory = Some(dirotter_platform::SystemMemoryStats {
+            memory_load_percent: HIGH_MEMORY_LOAD_PERCENT,
+            total_phys_bytes: 16,
+            available_phys_bytes: 1,
+            low_memory_signal: Some(true),
+        });
+        app.duplicate_scan_session = Some(controller::DuplicateScanSession {
+            relay: Arc::new(Mutex::new(controller::DuplicateScanRelayState::default())),
+        });
+
+        app.maybe_auto_release_memory();
+
+        assert!(app.store.is_some());
+        assert!(app.duplicate_scan_session.is_some());
+    }
+
+    #[test]
     fn execution_failure_details_include_full_path_reason_and_suggestion() {
         let mut app = make_test_app();
         app.execution_report = Some(ExecutionReport {
@@ -6261,6 +6407,7 @@ mod ui_tests {
             view_model.items[0].failure_title,
             "Still Failed After Retries"
         );
+        assert_eq!(view_model.open_location_label, "Open File Location");
         assert!(view_model.items[0]
             .failure_body
             .contains("retried this operation"));
