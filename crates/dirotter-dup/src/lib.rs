@@ -406,7 +406,7 @@ fn duplicate_hash_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
         let threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(4).max(2))
+            .map(|n| n.get().clamp(2, 4))
             .unwrap_or(2);
         ThreadPoolBuilder::new()
             .num_threads(threads)

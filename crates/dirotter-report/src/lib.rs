@@ -1,4 +1,6 @@
 use dirotter_core::{ErrorKind, NodeKind, NodeStore, ScanErrorRecord};
+#[cfg(test)]
+use dirotter_dup::{DuplicateSafetyClass, DuplicateSafetyDecision, SafetyReasonTag};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::fs;
@@ -280,6 +282,13 @@ mod tests {
             ],
             total_waste: 10,
             risk: RiskLevel::Low,
+            safety: DuplicateSafetyDecision {
+                class: DuplicateSafetyClass::SafeAuto,
+                suggested_keep_allowed: true,
+                auto_select_allowed: true,
+                delete_allowed_by_default: true,
+                reason_tags: vec![SafetyReasonTag::DuplicateName],
+            },
             recommended_keep_index: 0,
         }];
         export_duplicates_csv(&groups, &dup_out).expect("dups csv");

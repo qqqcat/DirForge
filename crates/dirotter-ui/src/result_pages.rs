@@ -1,5 +1,12 @@
 use super::*;
 
+struct RankedTreemapEntry {
+    path: Arc<str>,
+    name: String,
+    size_bytes: u64,
+    kind: NodeKind,
+}
+
 pub(super) fn ui_current_scan(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     page_header(
             ui,
@@ -184,10 +191,6 @@ pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
         return;
     }
 
-    if app.can_reload_result_store_from_cache() {
-        app.begin_result_store_load_if_needed();
-    }
-
     if app.result_store_load_active() {
         tone_banner(
             ui,
@@ -197,6 +200,11 @@ pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                 "DirOtter is loading the saved result snapshot in the background. The lightweight result view will open automatically when it is ready, without decompressing or rebuilding the whole result tree on the current UI frame.",
             ),
         );
+        return;
+    }
+
+    if app.store.is_none() {
+        ui_lightweight_treemap_from_rankings(app, ui);
         return;
     }
 
@@ -303,102 +311,408 @@ pub(super) fn ui_treemap(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     surface_panel(ui, |ui| {
         ui.set_min_height(panel_height);
         ui.label(
-            egui::RichText::new(app.t("目录结果条形图", "Directory Result Bars"))
+            egui::RichText::new(app.t("目录空间 Treemap", "Directory Space Treemap"))
                 .text_style(egui::TextStyle::Name("title".into())),
         );
         ui.label(
             egui::RichText::new(app.t(
-                "点击条目可联动 Inspector；目录可继续进入下一层。",
-                "Click an item to sync Inspector. Directories can drill into the next level.",
+                "点击矩形可选中对象；点击目录矩形会进入下一层。",
+                "Click a rectangle to select an item. Directory rectangles drill into the next level.",
             ))
             .text_style(egui::TextStyle::Small)
             .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(8.0);
 
-        let list_height = (panel_height - 84.0).max(220.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), list_height),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show_rows(ui, 96.0, entries.len(), |ui, row_range| {
-                        for row in row_range {
-                            let Some(entry) = entries.get(row) else {
-                                continue;
-                            };
-                            let share =
-                                (entry.size_bytes as f32 / scope_total as f32).clamp(0.0, 1.0);
-                            let selected = app.selection_matches_treemap_entry(entry);
-                            let label = format!(
-                                "{} {}",
-                                if matches!(entry.kind, NodeKind::Dir) {
-                                    app.t("目录", "DIR")
-                                } else {
-                                    app.t("文件", "FILE")
-                                },
-                                truncate_middle(entry.name.as_ref(), 56)
-                            );
-                            let subtitle = match entry.kind {
-                                NodeKind::Dir => format!(
-                                    "{} {}  |  {} {}",
-                                    format_count(entry.file_count),
-                                    app.t("文件", "files"),
-                                    format_count(entry.dir_count.saturating_sub(1)),
-                                    app.t("子目录", "subdirs")
-                                ),
-                                NodeKind::File => app.t("文件项", "File item").to_string(),
-                            };
+        draw_treemap_result_blocks(app, ui, &entries, scope_total);
+    });
+}
 
-                            surface_panel(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .add_sized(
-                                            [
-                                                (ui.available_width() - 220.0).max(160.0),
-                                                CONTROL_HEIGHT,
-                                            ],
-                                            egui::SelectableLabel::new(selected, label.clone()),
-                                        )
-                                        .clicked()
-                                    {
-                                        app.select_node(entry.node_id, SelectionSource::Treemap);
-                                    }
-                                    if matches!(entry.kind, NodeKind::Dir)
-                                        && ui.button(app.t("进入下一层", "Open Level")).clicked()
-                                    {
-                                        app.focus_treemap_node(entry.node_id);
-                                    }
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(format_bytes(entry.size_bytes));
-                                        },
-                                    );
-                                });
-                                ui.add_space(4.0);
-                                ui.add(
-                                    egui::ProgressBar::new(share)
-                                        .desired_width(ui.available_width())
-                                        .fill(if matches!(entry.kind, NodeKind::Dir) {
-                                            river_teal()
-                                        } else {
-                                            info_blue()
-                                        })
-                                        .text(format!("{:.1}%", share * 100.0)),
-                                );
-                                ui.add_space(4.0);
-                                ui.label(
-                                    egui::RichText::new(subtitle)
-                                        .text_style(egui::TextStyle::Small)
-                                        .color(ui.visuals().weak_text_color()),
-                                );
-                            });
-                            ui.add_space(8.0);
-                        }
-                    });
-            },
+fn ui_lightweight_treemap_from_rankings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
+    let mut entries = Vec::new();
+    entries.extend(
+        app.current_ranked_dirs(48)
+            .into_iter()
+            .map(|(path, size_bytes)| ranked_treemap_entry(path, size_bytes, NodeKind::Dir)),
+    );
+    entries.extend(
+        app.current_ranked_files(48)
+            .into_iter()
+            .map(|(path, size_bytes)| ranked_treemap_entry(path, size_bytes, NodeKind::File)),
+    );
+    entries.sort_by(|a, b| {
+        b.size_bytes
+            .cmp(&a.size_bytes)
+            .then_with(|| a.path.as_ref().cmp(b.path.as_ref()))
+    });
+    entries.truncate(96);
+
+    if entries.is_empty() {
+        tone_banner(
+            ui,
+            app.t("还没有可用结果", "No Completed Result Yet"),
+            app.t(
+                "扫描完成后会先保留轻量 Top-N 结果。当前没有可展示的目录或文件。",
+                "After a scan finishes, DirOtter keeps a lightweight Top-N result. There are no folders or files to show right now.",
+            ),
+        );
+        return;
+    }
+
+    let total = app
+        .summary
+        .bytes_observed
+        .max(entries.iter().map(|entry| entry.size_bytes).sum::<u64>());
+    tone_banner(
+        ui,
+        app.t("轻量 Treemap", "Lightweight Treemap"),
+        app.t(
+            "这里直接使用扫描完成时保留的 Top-N 结果，不自动载入完整结果树，因此切换页面不会触发大内存整理。",
+            "This view uses the Top-N result kept after scan completion and does not auto-load the full result tree, so switching pages does not trigger heavy memory work.",
+        ),
+    );
+    ui.add_space(12.0);
+    ui.columns(3, |columns| {
+        compact_metric_block(
+            &mut columns[0],
+            app.t("已扫描体积", "Scanned Size"),
+            &format_bytes(app.summary.bytes_observed),
+            app.t("完整扫描摘要", "Completed scan summary"),
+        );
+        compact_metric_block(
+            &mut columns[1],
+            app.t("显示项目", "Visible Items"),
+            &format_count(entries.len() as u64),
+            app.t("目录和文件 Top-N", "Directory and file Top-N"),
+        );
+        compact_metric_block(
+            &mut columns[2],
+            app.t("资源策略", "Resource Policy"),
+            app.t("轻量", "Lightweight"),
+            app.t("不常驻完整结果树", "Full tree is not kept resident"),
         );
     });
+    ui.add_space(12.0);
+    surface_panel(ui, |ui| {
+        ui.label(
+            egui::RichText::new(app.t("空间占用 Treemap", "Space Usage Treemap"))
+                .text_style(egui::TextStyle::Name("title".into())),
+        );
+        ui.label(
+            egui::RichText::new(app.t(
+                "点击矩形可联动右侧检查器；如需更细层级，请重新扫描目标子目录。",
+                "Click a rectangle to sync the inspector. For a deeper level, scan that subfolder directly.",
+            ))
+            .text_style(egui::TextStyle::Small)
+            .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(8.0);
+        draw_ranked_treemap_blocks(app, ui, &entries, total.max(1));
+    });
+}
+
+fn ranked_treemap_entry(path: Arc<str>, size_bytes: u64, kind: NodeKind) -> RankedTreemapEntry {
+    let name = PathBuf::from(path.as_ref())
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| path.to_string());
+    RankedTreemapEntry {
+        path,
+        name,
+        size_bytes,
+        kind,
+    }
+}
+
+fn draw_ranked_treemap_blocks(
+    app: &mut DirOtterNativeApp,
+    ui: &mut egui::Ui,
+    entries: &[RankedTreemapEntry],
+    scope_total: u64,
+) {
+    let visible_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.size_bytes > 0)
+        .take(96)
+        .collect();
+    if visible_entries.is_empty() {
+        return;
+    }
+
+    let width = ui.available_width().max(320.0);
+    let height = (width * 0.46).clamp(360.0, 620.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let canvas = rect.shrink(8.0);
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals().clone();
+    let border = border_color(&visuals);
+    let text_color = visuals.text_color();
+    let weak_text = visuals.weak_text_color();
+    let total = scope_total.max(1);
+    let palette = [
+        river_teal(),
+        info_blue(),
+        success_green(),
+        egui::Color32::from_rgb(0xC4, 0x79, 0x3B),
+        egui::Color32::from_rgb(0x76, 0x7C, 0xC8),
+        egui::Color32::from_rgb(0x96, 0x7B, 0x5A),
+    ];
+    painter.rect_filled(rect, egui::Rounding::same(0.0), visuals.panel_fill);
+    painter.rect_stroke(
+        rect,
+        egui::Rounding::same(0.0),
+        egui::Stroke::new(1.0, border),
+    );
+
+    let mut remaining = canvas;
+    let mut remaining_total = visible_entries
+        .iter()
+        .map(|entry| entry.size_bytes)
+        .sum::<u64>()
+        .max(1) as f32;
+
+    for (idx, entry) in visible_entries.iter().enumerate() {
+        let last = idx + 1 == visible_entries.len();
+        let share = (entry.size_bytes as f32 / remaining_total).clamp(0.0, 1.0);
+        let cell = if last {
+            remaining
+        } else if remaining.width() >= remaining.height() {
+            let split_width = (remaining.width() * share).clamp(18.0, remaining.width());
+            let cell = egui::Rect::from_min_max(
+                remaining.min,
+                egui::pos2(remaining.left() + split_width, remaining.bottom()),
+            );
+            remaining.min.x = (remaining.min.x + split_width + 3.0).min(remaining.max.x);
+            cell
+        } else {
+            let split_height = (remaining.height() * share).clamp(18.0, remaining.height());
+            let cell = egui::Rect::from_min_max(
+                remaining.min,
+                egui::pos2(remaining.right(), remaining.top() + split_height),
+            );
+            remaining.min.y = (remaining.min.y + split_height + 3.0).min(remaining.max.y);
+            cell
+        };
+        remaining_total = (remaining_total - entry.size_bytes as f32).max(1.0);
+        if cell.width() < 4.0 || cell.height() < 4.0 {
+            continue;
+        }
+
+        let selected = app.selection_matches_path(entry.path.as_ref());
+        let fill = if selected {
+            visuals.selection.bg_fill
+        } else if matches!(entry.kind, NodeKind::Dir) {
+            palette[idx % palette.len()]
+        } else if visuals.dark_mode {
+            egui::Color32::from_rgb(0x3D, 0x62, 0x72)
+        } else {
+            egui::Color32::from_rgb(0x7B, 0xB3, 0xC7)
+        };
+        painter.rect_filled(cell, egui::Rounding::same(0.0), fill);
+        painter.rect_stroke(
+            cell,
+            egui::Rounding::same(0.0),
+            egui::Stroke::new(1.0, border),
+        );
+
+        let response = ui
+            .interact(
+                cell,
+                ui.make_persistent_id(("ranked_treemap_block", entry.path.as_ref())),
+                egui::Sense::click(),
+            )
+            .on_hover_text(format!(
+                "{}\n{}",
+                entry.path,
+                format_bytes(entry.size_bytes)
+            ));
+        if response.clicked() {
+            app.select_path(entry.path.as_ref(), SelectionSource::Treemap);
+        }
+
+        if cell.width() > 82.0 && cell.height() > 46.0 {
+            let title = truncate_middle(&entry.name, (cell.width() / 8.0) as usize);
+            painter.text(
+                cell.left_top() + egui::vec2(8.0, 7.0),
+                egui::Align2::LEFT_TOP,
+                title,
+                egui::FontId::proportional(13.0),
+                text_color,
+            );
+            painter.text(
+                cell.left_top() + egui::vec2(8.0, 26.0),
+                egui::Align2::LEFT_TOP,
+                format_bytes(entry.size_bytes),
+                egui::FontId::proportional(11.0),
+                weak_text,
+            );
+        }
+        if cell.width() > 70.0 && cell.height() > 70.0 {
+            painter.text(
+                cell.right_bottom() - egui::vec2(8.0, 8.0),
+                egui::Align2::RIGHT_BOTTOM,
+                format!("{:.1}%", entry.size_bytes as f32 / total as f32 * 100.0),
+                egui::FontId::proportional(11.0),
+                text_color,
+            );
+        }
+    }
+}
+
+fn draw_treemap_result_blocks(
+    app: &mut DirOtterNativeApp,
+    ui: &mut egui::Ui,
+    entries: &[TreemapEntry],
+    scope_total: u64,
+) {
+    let visible_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.size_bytes > 0)
+        .take(96)
+        .collect();
+    if visible_entries.is_empty() {
+        return;
+    }
+
+    let width = ui.available_width().max(320.0);
+    let height = (width * 0.46).clamp(360.0, 620.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let canvas = rect.shrink(8.0);
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals().clone();
+    let border = border_color(&visuals);
+    let text_color = visuals.text_color();
+    let weak_text = visuals.weak_text_color();
+    let total = visible_entries
+        .iter()
+        .map(|entry| entry.size_bytes)
+        .sum::<u64>()
+        .max(scope_total.min(u64::MAX - 1))
+        .max(1);
+    let palette = [
+        river_teal(),
+        info_blue(),
+        success_green(),
+        egui::Color32::from_rgb(0xC4, 0x79, 0x3B),
+        egui::Color32::from_rgb(0x76, 0x7C, 0xC8),
+        egui::Color32::from_rgb(0x96, 0x7B, 0x5A),
+    ];
+    painter.rect_filled(rect, egui::Rounding::same(8.0), visuals.panel_fill);
+    painter.rect_stroke(
+        rect,
+        egui::Rounding::same(8.0),
+        egui::Stroke::new(1.0, border),
+    );
+
+    let mut remaining = canvas;
+    let mut remaining_total = visible_entries
+        .iter()
+        .map(|entry| entry.size_bytes)
+        .sum::<u64>()
+        .max(1) as f32;
+
+    for (idx, entry) in visible_entries.iter().enumerate() {
+        let last = idx + 1 == visible_entries.len();
+        let share = (entry.size_bytes as f32 / remaining_total).clamp(0.0, 1.0);
+        let cell = if last {
+            remaining
+        } else if remaining.width() >= remaining.height() {
+            let split_width = (remaining.width() * share).clamp(18.0, remaining.width());
+            let cell = egui::Rect::from_min_max(
+                remaining.min,
+                egui::pos2(remaining.left() + split_width, remaining.bottom()),
+            );
+            remaining.min.x = (remaining.min.x + split_width + 3.0).min(remaining.max.x);
+            cell
+        } else {
+            let split_height = (remaining.height() * share).clamp(18.0, remaining.height());
+            let cell = egui::Rect::from_min_max(
+                remaining.min,
+                egui::pos2(remaining.right(), remaining.top() + split_height),
+            );
+            remaining.min.y = (remaining.min.y + split_height + 3.0).min(remaining.max.y);
+            cell
+        };
+        remaining_total = (remaining_total - entry.size_bytes as f32).max(1.0);
+        if cell.width() < 4.0 || cell.height() < 4.0 {
+            continue;
+        }
+
+        let selected = app.selection_matches_treemap_entry(entry);
+        let mut fill = palette[idx % palette.len()];
+        if !matches!(entry.kind, NodeKind::Dir) {
+            fill = if visuals.dark_mode {
+                egui::Color32::from_rgb(0x3D, 0x62, 0x72)
+            } else {
+                egui::Color32::from_rgb(0x7B, 0xB3, 0xC7)
+            };
+        }
+        if selected {
+            fill = visuals.selection.bg_fill;
+        }
+        painter.rect_filled(cell, egui::Rounding::same(6.0), fill);
+        painter.rect_stroke(
+            cell,
+            egui::Rounding::same(6.0),
+            egui::Stroke::new(1.0, border),
+        );
+
+        let response = ui
+            .interact(
+                cell,
+                ui.make_persistent_id(("treemap_block", entry.node_id.0)),
+                egui::Sense::click(),
+            )
+            .on_hover_text(format!(
+                "{}\n{}\n{} {} / {} {}\n{}",
+                entry.path,
+                format_bytes(entry.size_bytes),
+                format_count(entry.file_count),
+                app.t("文件", "files"),
+                format_count(entry.dir_count.saturating_sub(1)),
+                app.t("子目录", "subdirs"),
+                if matches!(entry.kind, NodeKind::Dir) {
+                    app.t("点击进入下一层", "Click to open this level")
+                } else {
+                    app.t("点击选中文件", "Click to select this file")
+                }
+            ));
+        if response.clicked() {
+            if matches!(entry.kind, NodeKind::Dir) {
+                app.focus_treemap_node(entry.node_id);
+            } else {
+                app.select_node(entry.node_id, SelectionSource::Treemap);
+            }
+        }
+
+        let label_room = cell.width() > 82.0 && cell.height() > 46.0;
+        if label_room {
+            let title = truncate_middle(entry.name.as_ref(), (cell.width() / 8.0) as usize);
+            painter.text(
+                cell.left_top() + egui::vec2(8.0, 7.0),
+                egui::Align2::LEFT_TOP,
+                title,
+                egui::FontId::proportional(13.0),
+                text_color,
+            );
+            painter.text(
+                cell.left_top() + egui::vec2(8.0, 26.0),
+                egui::Align2::LEFT_TOP,
+                format_bytes(entry.size_bytes),
+                egui::FontId::proportional(11.0),
+                weak_text,
+            );
+        }
+        let percent = entry.size_bytes as f32 / total as f32;
+        if cell.width() > 70.0 && cell.height() > 70.0 {
+            painter.text(
+                cell.right_bottom() - egui::vec2(8.0, 8.0),
+                egui::Align2::RIGHT_BOTTOM,
+                format!("{:.1}%", percent * 100.0),
+                egui::FontId::proportional(11.0),
+                text_color,
+            );
+        }
+    }
 }

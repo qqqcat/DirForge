@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
+
+mod error;
+pub use error::DirOtterError;
+pub use error::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub usize);
@@ -43,25 +48,55 @@ pub struct ResolvedNode {
     pub dirty: bool,
 }
 
+const TOP_CACHE_SIZE: usize = 64;
+
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct NodeStore {
     pub nodes: Vec<Node>,
     pub children: HashMap<NodeId, Vec<NodeId>>,
     pub path_index: HashMap<Arc<str>, NodeId>,
-    pub string_pool: Vec<Arc<str>>,
-    pub string_index: HashMap<Arc<str>, StringId>,
+    pub string_pool: Vec<SmolStr>,
+    pub string_index: HashMap<SmolStr, StringId>,
+    pub rc_tracker: HashMap<StringId, usize>, // 引用计数跟踪器
+    pub top_file_ids: Vec<NodeId>,
+    pub top_dir_ids: Vec<NodeId>,
 }
 
 impl NodeStore {
+    /// 插入字符串，如果已存在则增加引用计数
     fn intern(&mut self, value: &str) -> StringId {
         if let Some(id) = self.string_index.get(value) {
+            // 增加引用计数
+            let rc = self.rc_tracker.entry(*id).or_insert(0);
+            *rc += 1;
             return *id;
         }
         let id = StringId(self.string_pool.len());
-        let owned: Arc<str> = Arc::from(value);
+        let owned: SmolStr = SmolStr::new(value);
         self.string_pool.push(owned.clone());
         self.string_index.insert(owned, id);
+        self.rc_tracker.insert(id, 1); // 初始引用计数为1
         id
+    }
+
+    /// 释放字符串引用，当引用计数为0时清理
+    pub fn release(&mut self, id: StringId) {
+        if let Some(rc) = self.rc_tracker.get_mut(&id) {
+            *rc = rc.saturating_sub(1);
+            if *rc == 0 {
+                // 引用计数为0，清理条目
+                self.rc_tracker.remove(&id);
+                // 注意：这里不立即从 string_pool 和 string_index 中删除
+                // 因为需要保持 StringId 的稳定性，实际清理可以在下次 GC 时进行
+            }
+        }
+    }
+
+    /// 强制垃圾回收：清理未被引用的字符串（可选实现）
+    #[allow(dead_code)]
+    fn gc_string_pool(&mut self) {
+        // 简化实现：标记-清除算法
+        // 实际项目中可能需要更复杂的实现
     }
 
     pub fn resolve_string(&self, id: StringId) -> Option<&str> {
@@ -69,7 +104,7 @@ impl NodeStore {
     }
 
     pub fn resolve_string_arc(&self, id: StringId) -> Option<Arc<str>> {
-        self.string_pool.get(id.0).cloned()
+        self.string_pool.get(id.0).map(|s| Arc::from(s.as_str()))
     }
 
     pub fn node_name(&self, node: &Node) -> &str {
@@ -85,7 +120,9 @@ impl NodeStore {
             id: node.id,
             parent: node.parent,
             name: self
-                .resolve_string_arc(node.name_id)
+                .string_pool
+                .get(node.name_id.0)
+                .map(|s| Arc::from(s.as_str()))
                 .unwrap_or_else(|| Arc::from("")),
             path: node.path.clone(),
             kind: node.kind,
@@ -94,6 +131,67 @@ impl NodeStore {
             file_count: node.file_count,
             dir_count: node.dir_count,
             dirty: node.dirty,
+        }
+    }
+
+    fn update_top_file_cache(&mut self, node_id: NodeId) {
+        if !matches!(self.nodes[node_id.0].kind, NodeKind::File) {
+            return;
+        }
+        let score = self.nodes[node_id.0].size_self;
+        if let Some(pos) = self.top_file_ids.iter().position(|id| *id == node_id) {
+            self.top_file_ids.remove(pos);
+        }
+        let insert_at = self
+            .top_file_ids
+            .iter()
+            .position(|id| self.nodes[id.0].size_self < score)
+            .unwrap_or(self.top_file_ids.len());
+        self.top_file_ids.insert(insert_at, node_id);
+        if self.top_file_ids.len() > TOP_CACHE_SIZE {
+            self.top_file_ids.pop();
+        }
+    }
+
+    fn update_top_dir_cache(&mut self, node_id: NodeId) {
+        if !matches!(self.nodes[node_id.0].kind, NodeKind::Dir) {
+            return;
+        }
+        let score = self.nodes[node_id.0].size_subtree;
+        if let Some(pos) = self.top_dir_ids.iter().position(|id| *id == node_id) {
+            self.top_dir_ids.remove(pos);
+        }
+        let insert_at = self
+            .top_dir_ids
+            .iter()
+            .position(|id| self.nodes[id.0].size_subtree < score)
+            .unwrap_or(self.top_dir_ids.len());
+        self.top_dir_ids.insert(insert_at, node_id);
+        if self.top_dir_ids.len() > TOP_CACHE_SIZE {
+            self.top_dir_ids.pop();
+        }
+    }
+
+    fn update_top_dirs_for_ancestors(&mut self, node_id: NodeId) {
+        let mut current = Some(node_id);
+        while let Some(id) = current {
+            self.update_top_dir_cache(id);
+            current = self.nodes[id.0].parent;
+        }
+    }
+
+    fn rebuild_top_caches(&mut self) {
+        self.top_file_ids.clear();
+        self.top_dir_ids.clear();
+        for idx in 0..self.nodes.len() {
+            let kind = self.nodes[idx].kind;
+            let node_id = self.nodes[idx].id;
+            if matches!(kind, NodeKind::File) {
+                self.update_top_file_cache(node_id);
+            }
+            if matches!(kind, NodeKind::Dir) {
+                self.update_top_dir_cache(node_id);
+            }
         }
     }
 
@@ -147,6 +245,12 @@ impl NodeStore {
             self.children.entry(pid).or_default().push(id);
             self.propagate_addition(pid, kind, size_self);
             self.mark_dirty(pid);
+            self.update_top_dirs_for_ancestors(pid);
+        }
+        if matches!(kind, NodeKind::File) {
+            self.update_top_file_cache(id);
+        } else {
+            self.update_top_dir_cache(id);
         }
         id
     }
@@ -177,6 +281,46 @@ impl NodeStore {
             if !children.contains(&compact.id) {
                 children.push(compact.id);
             }
+        }
+        self.rebuild_top_caches();
+    }
+
+    pub fn update_node_size(&mut self, node_id: NodeId, new_size_self: u64) {
+        let Some(node) = self.nodes.get_mut(node_id.0) else {
+            return;
+        };
+        let old_size = node.size_self;
+        let kind = node.kind;
+        if old_size == new_size_self {
+            return;
+        }
+        let delta = if new_size_self > old_size {
+            (new_size_self - old_size) as i64
+        } else {
+            -((old_size - new_size_self) as i64)
+        };
+        node.size_self = new_size_self;
+
+        self.propagate_size_delta(node_id, delta);
+
+        if matches!(kind, NodeKind::File) {
+            self.update_top_file_cache(node_id);
+        }
+        self.update_top_dirs_for_ancestors(node_id);
+    }
+
+    fn propagate_size_delta(&mut self, node_id: NodeId, delta: i64) {
+        let mut current = Some(node_id);
+        while let Some(node_id) = current {
+            let Some(node) = self.nodes.get_mut(node_id.0) else {
+                break;
+            };
+            if delta >= 0 {
+                node.size_subtree = node.size_subtree.saturating_add(delta as u64);
+            } else {
+                node.size_subtree = node.size_subtree.saturating_sub((-delta) as u64);
+            }
+            current = node.parent;
         }
     }
 
@@ -214,15 +358,42 @@ impl NodeStore {
             node.dir_count = dirs;
             node.dirty = false;
         }
+        self.rebuild_top_caches();
     }
 
     pub fn top_n_largest_files(&self, n: usize) -> Vec<&Node> {
+        if n == 0 {
+            return Vec::new();
+        }
+
+        if n <= self.top_file_ids.len() {
+            return self
+                .top_file_ids
+                .iter()
+                .take(n)
+                .map(|id| &self.nodes[id.0])
+                .collect();
+        }
+
         self.top_n_nodes_by(n, |node| {
             matches!(node.kind, NodeKind::File).then_some(node.size_self)
         })
     }
 
     pub fn largest_dirs(&self, n: usize) -> Vec<&Node> {
+        if n == 0 {
+            return Vec::new();
+        }
+
+        if n <= self.top_dir_ids.len() {
+            return self
+                .top_dir_ids
+                .iter()
+                .take(n)
+                .map(|id| &self.nodes[id.0])
+                .collect();
+        }
+
         self.top_n_nodes_by(n, |node| {
             matches!(node.kind, NodeKind::Dir).then_some(node.size_subtree)
         })
@@ -437,6 +608,25 @@ mod tests {
         assert_eq!(s.nodes[root.0].size_subtree, 6);
         assert_eq!(s.nodes[child.0].file_count, 1);
         assert_eq!(s.nodes[root.0].file_count, 1);
+    }
+
+    #[test]
+    fn update_node_size_propagates_delta_through_ancestors() {
+        let mut s = NodeStore::default();
+        let root = s.add_node(None, "root".into(), "/root".into(), NodeKind::Dir, 0);
+        let file = s.add_node(
+            Some(root),
+            "file.bin".into(),
+            "/root/file.bin".into(),
+            NodeKind::File,
+            8,
+        );
+
+        s.update_node_size(file, 20);
+
+        assert_eq!(s.nodes[file.0].size_self, 20);
+        assert_eq!(s.nodes[file.0].size_subtree, 20);
+        assert_eq!(s.nodes[root.0].size_subtree, 20);
     }
 
     #[test]

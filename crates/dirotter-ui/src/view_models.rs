@@ -163,19 +163,9 @@ impl DirOtterNativeApp {
         limit: usize,
         include_dirs: bool,
     ) -> Vec<dirotter_scan::RankedPath> {
+        let _ = include_dirs;
         paths
             .iter()
-            .filter(|(path, _)| {
-                fs::metadata(path.as_ref())
-                    .map(|meta| {
-                        if include_dirs {
-                            meta.is_dir()
-                        } else {
-                            meta.is_file()
-                        }
-                    })
-                    .unwrap_or(false)
-            })
             .take(limit)
             .map(|(path, size)| (path.clone(), *size))
             .collect()
@@ -287,11 +277,6 @@ impl DirOtterNativeApp {
                 store
                     .largest_dirs(limit)
                     .into_iter()
-                    .filter(|node| {
-                        fs::metadata(store.node_path(node))
-                            .map(|meta| meta.is_dir())
-                            .unwrap_or(false)
-                    })
                     .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
                     .take(limit)
                     .collect()
@@ -313,11 +298,6 @@ impl DirOtterNativeApp {
                 store
                     .top_n_largest_files(limit)
                     .into_iter()
-                    .filter(|node| {
-                        fs::metadata(store.node_path(node))
-                            .map(|meta| meta.is_file())
-                            .unwrap_or(false)
-                    })
                     .map(|node| (node.path.clone(), node.size_self))
                     .take(limit)
                     .collect()
@@ -325,25 +305,48 @@ impl DirOtterNativeApp {
             .unwrap_or_default()
     }
 
-    pub(super) fn ranked_files_in_scope(
+    pub(super) fn ranked_items_in_scope(
         &self,
         scope_path: &str,
         limit: usize,
     ) -> Vec<dirotter_scan::RankedPath> {
-        let Some(store) = self.store.as_ref() else {
-            return Vec::new();
+        if let Some(store) = self.store.as_ref() {
+            if let Some(scope_id) = store.path_index.get(scope_path).copied() {
+                if let Some(children) = store.children.get(&scope_id) {
+                    let mut items: Vec<_> = children
+                        .iter()
+                        .filter_map(|child_id| store.nodes.get(child_id.0))
+                        .map(|node| (node.path.clone(), node.size_subtree.max(node.size_self)))
+                        .collect();
+                    items
+                        .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_ref().cmp(b.0.as_ref())));
+                    items.truncate(limit);
+                    return items;
+                }
+            }
+        }
+
+        let top_files = if self.scan_active() {
+            &self.live_top_files
+        } else {
+            &self.completed_top_files
         };
-        let mut matches: Vec<dirotter_scan::RankedPath> = store
-            .nodes
+        let top_dirs = if self.scan_active() {
+            &self.live_top_dirs
+        } else {
+            &self.completed_top_dirs
+        };
+        let mut items: Vec<_> = top_dirs
             .iter()
-            .filter(|node| matches!(node.kind, NodeKind::File))
-            .filter(|node| store.node_path(node) != scope_path)
-            .filter(|node| path_within_scope(store.node_path(node), scope_path))
-            .map(|node| (node.path.clone(), node.size_self))
+            .chain(top_files.iter())
+            .filter(|(path, _)| path.as_ref() != scope_path)
+            .filter(|(path, _)| path_within_scope(path.as_ref(), scope_path))
+            .map(|(path, size)| (path.clone(), *size))
             .collect();
-        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_ref().cmp(b.0.as_ref())));
-        matches.truncate(limit);
-        matches
+        items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_ref().cmp(b.0.as_ref())));
+        items.dedup_by(|a, b| a.0 == b.0);
+        items.truncate(limit);
+        items
     }
 
     pub(super) fn contextual_ranked_files_panel(
@@ -359,22 +362,22 @@ impl DirOtterNativeApp {
             };
 
             if let Some(scope_path) = scope_path {
-                let scoped_files = self.ranked_files_in_scope(&scope_path, limit);
-                if !scoped_files.is_empty() {
+                let scoped_items = self.ranked_items_in_scope(&scope_path, limit);
+                if !scoped_items.is_empty() {
                     let scope_name = PathBuf::from(&scope_path)
                         .file_name()
                         .and_then(|name| name.to_str())
                         .map(|name| name.to_string())
                         .unwrap_or_else(|| scope_path.clone());
                     return (
-                        self.t("所选位置中的最大文件", "Largest Files In Selection")
+                        self.t("所选位置中的最大项目", "Largest Files In Selection")
                             .to_string(),
                         format!(
                             "{}: {}",
                             self.t("当前范围", "Current scope"),
                             truncate_middle(&scope_name, 40)
                         ),
-                        scoped_files,
+                        scoped_items,
                     );
                 }
             }

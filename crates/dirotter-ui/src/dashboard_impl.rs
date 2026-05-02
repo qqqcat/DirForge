@@ -11,19 +11,12 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             ),
         );
     let ranked_dirs = app.current_ranked_dirs(10);
-    let ranked_files = app.current_ranked_files(10);
+    let (items_title, items_subtitle, ranked_items) = app.contextual_ranked_files_panel(10);
     let folders_title = app.t("最大文件夹", "Largest Folders").to_string();
     let folders_subtitle = app
         .t(
             "优先看哪些目录占空间最多。",
             "Start with the folders consuming the most space.",
-        )
-        .to_string();
-    let files_title = app.t("最大文件", "Largest Files").to_string();
-    let files_subtitle = app
-        .t(
-            "这些通常是最直接可处理的空间占用点。",
-            "These are usually the quickest wins for reclaiming space.",
         )
         .to_string();
     if app.scan_active() {
@@ -65,9 +58,9 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                 |ui| {
                     render_ranked_size_list(
                         ui,
-                        &files_title,
-                        &files_subtitle,
-                        &ranked_files,
+                        &items_title,
+                        &items_subtitle,
+                        &ranked_items,
                         app.summary.bytes_observed,
                         &mut app.selection,
                         &mut app.execution_report,
@@ -88,9 +81,9 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
         ui.add_space(18.0);
         render_ranked_size_list(
             ui,
-            &files_title,
-            &files_subtitle,
-            &ranked_files,
+            &items_title,
+            &items_subtitle,
+            &ranked_items,
             app.summary.bytes_observed,
             &mut app.selection,
             &mut app.execution_report,
@@ -584,7 +577,7 @@ pub(super) fn render_scan_target_card(app: &mut DirOtterNativeApp, ui: &mut egui
                     );
                     let response = ui
                         .add_enabled_ui(!app.scan_active(), |ui| {
-                            sized_selectable(ui, 156.0, selected, label.clone())
+                            sized_selectable(ui, 156.0, selected, &label)
                         })
                         .inner
                         .on_hover_text(format!(

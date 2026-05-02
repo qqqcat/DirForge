@@ -1,5 +1,5 @@
 use crate::{
-    path_within_scope, SelectedTarget, MAX_BLOCKED_ITEMS_PER_CATEGORY,
+    path_within_scope, SelectedTarget, MAX_BLOCKED_ITEMS_PER_CATEGORY, MAX_CACHE_CLEANUP_ITEMS,
     MAX_CLEANUP_ITEMS_PER_CATEGORY, MAX_CLEANUP_TOTAL_ITEMS, MIN_CACHE_DIR_BYTES,
     MIN_CLEANUP_BYTES,
 };
@@ -145,7 +145,7 @@ pub(crate) fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
             file_count: node.file_count,
             dir_count: node.dir_count,
         };
-        let unused_days = cleanup_unused_days(target.path.as_ref());
+        let unused_days = None;
         push_ranked_cleanup_candidate(
             &mut category_candidates,
             CleanupCandidate {
@@ -185,11 +185,7 @@ pub(crate) fn build_cleanup_analysis(store: &NodeStore) -> CleanupAnalysis {
             continue;
         }
 
-        let unused_days = if risk == RiskLevel::High {
-            None
-        } else {
-            cleanup_unused_days(node_path)
-        };
+        let unused_days = None;
         let score = cleanup_score(node.size_self, unused_days, category, risk);
         if risk != RiskLevel::High && score < 1.0 {
             continue;
@@ -310,7 +306,8 @@ fn cleanup_sort_priority(category: CleanupCategory) -> usize {
 }
 
 fn is_system_path(lower_path: &str) -> bool {
-    lower_path.contains("\\windows")
+    lower_path.contains(":\\windows\\")
+        || lower_path.ends_with(":\\windows")
         || lower_path.contains("\\program files")
         || lower_path.contains("\\programdata")
         || lower_path.contains("\\system volume information")
@@ -323,6 +320,14 @@ fn is_cache_path(lower_path: &str, kind: NodeKind) -> bool {
         || lower_path.ends_with("\\temp")
         || lower_path.contains("\\cache\\")
         || lower_path.ends_with("\\cache")
+        || lower_path.contains("\\.cache\\")
+        || lower_path.ends_with("\\.cache")
+        || lower_path.contains("\\localcache\\")
+        || lower_path.ends_with("\\localcache")
+        || lower_path.contains("\\inetcache\\")
+        || lower_path.ends_with("\\inetcache")
+        || lower_path.contains("\\__pycache__\\")
+        || lower_path.ends_with("\\__pycache__")
         || lower_path.contains("\\tmp\\")
         || lower_path.ends_with("\\tmp")
         || (matches!(kind, NodeKind::Dir)
@@ -330,18 +335,6 @@ fn is_cache_path(lower_path: &str, kind: NodeKind) -> bool {
                 || lower_path.ends_with("\\shadercache")
                 || lower_path.ends_with("\\code cache")
                 || lower_path.ends_with("\\cached data")))
-}
-
-fn cleanup_unused_days(path: &str) -> Option<u64> {
-    let metadata = fs::metadata(path).ok()?;
-    let now = std::time::SystemTime::now();
-    let stamp = metadata
-        .accessed()
-        .ok()
-        .or_else(|| metadata.modified().ok())?;
-    now.duration_since(stamp)
-        .ok()
-        .map(|duration| duration.as_secs() / 86_400)
 }
 
 fn cleanup_score(
@@ -382,6 +375,12 @@ fn push_ranked_cleanup_candidate(
     candidate: CleanupCandidate,
 ) {
     let limit = cleanup_candidate_limit(candidate.risk);
+    let limit = if candidate.category == CleanupCategory::Cache && candidate.risk != RiskLevel::High
+    {
+        MAX_CACHE_CLEANUP_ITEMS
+    } else {
+        limit
+    };
     let bucket = category_candidates.entry(candidate.category).or_default();
     bucket.push(candidate);
     bucket.sort_by(|a, b| {

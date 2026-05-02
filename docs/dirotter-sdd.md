@@ -128,9 +128,11 @@ root planning
 - 设置落到 `settings.json`
 - 结果恢复使用 `zstd+bincode` 临时快照
 - 删除完成后的结果同步在后台进行
-- Result View 进入时的快照恢复也在后台进行
+- Result View 默认不恢复完整快照，只用扫描完成时保留的 Top-N 结果画轻量 Treemap
 - 如果持久设置目录不可写，自动回退到临时会话存储
 - 临时 session 根目录会在退出时清理，并定期回收陈旧目录
+- Overview / Live Scan 的 Top-N 证据直接来自扫描快照或完成态 Top-N，不在 UI 帧里再次访问文件系统过滤，避免权限、长路径或已清理路径把结果面板清空
+- Result View 使用 Top-N 目录和文件生成固定画布 Treemap；完整树已驻留时才使用当前目录直接子项支持逐层进入
 
 ## 8. 清理与删除执行模型
 
@@ -153,6 +155,9 @@ root planning
 - UI 立即获得“已移出”的反馈
 - 后台继续 purge
 - 卷根 staging 不可写时回退到源路径父目录
+- 删除完成后的默认收尾先走轻量同步：过滤摘要、Top-N、错误列表和清理建议；不为一键缓存清理强制重建完整结果树
+- 低风险缓存规则覆盖 `Temp`、`Cache`、`.cache`、`LocalCache`、`INetCache`、`__pycache__` 等常见 Windows / 开发工具缓存根
+- 清理分析不在完成收尾里对大量候选逐项调用 `fs::metadata()` 计算访问时间，避免把扫描完成后的整理阶段变成二次磁盘遍历
 
 删除反馈设计：
 

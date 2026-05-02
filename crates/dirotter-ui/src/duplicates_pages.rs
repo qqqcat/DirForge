@@ -212,8 +212,8 @@ pub(super) fn ui_duplicates(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     let review_mode = app.duplicates.review_mode;
     let mode_help = match review_mode {
         DuplicateReviewMode::Quick => app.t(
-            "快速去重默认只处理高价值重复组：单文件至少 4 MB，且整组预计可释放至少 32 MB。",
-            "Quick dedupe only reviews high-value groups by default: each file must be at least 4 MB and each group must reclaim at least 32 MB.",
+            "快速去重默认只处理低风险位置里的可操作重复组：单文件至少 1 MB，且整组预计可释放至少 8 MB。",
+            "Quick dedupe reviews actionable groups in low-risk locations by default: each file must be at least 1 MB and each group must reclaim at least 8 MB.",
         ),
         DuplicateReviewMode::Full => app.t(
             "完整去重会放宽范围，包含更多中小型重复组，但确认时间会更长。",
