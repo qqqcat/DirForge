@@ -4427,6 +4427,7 @@ fn settings_section(
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     surface_panel(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.add_space(12.0);
         ui.label(egui::RichText::new(title).text_style(egui::TextStyle::Name("title".into())));
         ui.add_space(10.0);
