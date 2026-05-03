@@ -146,7 +146,7 @@ DirOtter has successfully achieved **Production Readiness** status as of May 3, 
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Windows Portable Package | ✅ | `DirOtter-windows-x64-0.1.0-portable.zip` |
+| Windows Portable Package | ✅ | `DirOtter-windows-x64-1.0.1-portable.zip` |
 | Installation Script | ✅ | `install-windows-portable.ps1` |
 | Uninstallation Script | ✅ | `uninstall-windows-portable.ps1` |
 | Code Signing Pipeline | ⚠️ | Configured but requires secrets |

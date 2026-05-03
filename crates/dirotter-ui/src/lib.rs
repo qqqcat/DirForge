@@ -4222,10 +4222,6 @@ fn load_system_font_fallbacks() -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-fn sand_accent() -> egui::Color32 {
-    egui::Color32::from_rgb(0xD8, 0xC6, 0xA5)
-}
-
 pub fn river_teal() -> egui::Color32 {
     egui::Color32::from_rgb(0x2F, 0x7F, 0x86)
 }
@@ -4550,23 +4546,6 @@ fn empty_state_panel(ui: &mut egui::Ui, title: &str, body: &str) {
                 .text_style(egui::TextStyle::Small)
                 .color(ui.visuals().weak_text_color()),
         );
-    });
-}
-
-fn color_note_row(ui: &mut egui::Ui, swatch: egui::Color32, title: &str, body: &str) {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(rect, egui::Rounding::same(6.0), swatch);
-        ui.add_space(6.0);
-        ui.vertical(|ui| {
-            ui.label(egui::RichText::new(title).strong());
-            ui.label(
-                egui::RichText::new(body)
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-            );
-        });
     });
 }
 

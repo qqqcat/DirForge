@@ -24,7 +24,7 @@
 - `scripts/package-windows.ps1`
 - `scripts/install-windows-portable.ps1`
 - `scripts/uninstall-windows-portable.ps1`
-- `dist/DirOtter-windows-x64-0.1.0-portable/BUILD-INFO.json`
+- `dist/DirOtter-windows-x64-1.0.1-portable/BUILD-INFO.json`
 
 ## 2. 总体结论
 
@@ -80,7 +80,7 @@ DirOtter 当前处于 **Production Readiness with UI Regression Risk**。
 - `clippy -D warnings` 已不再是一次性清理，而是当前可持续维持的门槛。
 - `ci.yml` 已覆盖：`template validation + fmt + check + clippy + test + release build`
 - `release-windows.yml` 已覆盖：测试、release 构建、可选签名、便携打包、checksum 上传和 tag 发布。
-- 本地已存在 `0.1.0` 的 Windows 便携包与校验文件。
+- 本地已存在 `1.0.1` 的 Windows 便携包与校验文件。
 
 ## 4. 当前主要风险
 

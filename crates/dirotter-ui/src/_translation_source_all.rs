@@ -4224,10 +4224,6 @@ fn load_system_font_fallbacks() -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-fn sand_accent() -> egui::Color32 {
-    egui::Color32::from_rgb(0xD8, 0xC6, 0xA5)
-}
-
 pub fn river_teal() -> egui::Color32 {
     egui::Color32::from_rgb(0x2F, 0x7F, 0x86)
 }
@@ -4552,23 +4548,6 @@ fn empty_state_panel(ui: &mut egui::Ui, title: &str, body: &str) {
                 .text_style(egui::TextStyle::Small)
                 .color(ui.visuals().weak_text_color()),
         );
-    });
-}
-
-fn color_note_row(ui: &mut egui::Ui, swatch: egui::Color32, title: &str, body: &str) {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(rect, egui::Rounding::same(6.0), swatch);
-        ui.add_space(6.0);
-        ui.vertical(|ui| {
-            ui.label(egui::RichText::new(title).strong());
-            ui.label(
-                egui::RichText::new(body)
-                    .text_style(egui::TextStyle::Small)
-                    .color(ui.visuals().weak_text_color()),
-            );
-        });
     });
 }
 
@@ -9409,67 +9388,6 @@ pub(super) fn ui_settings(app: &mut DirOtterNativeApp, ui: &mut egui::Ui, ctx: &
                         {
                             app.set_advanced_tools_enabled(!app.advanced_tools_enabled);
                         }
-                    },
-                );
-            },
-        );
-
-    ui.add_space(14.0);
-    settings_section(
-            ui,
-            app.t("视觉方向", "Visual Direction"),
-            app.t(
-                "这一组只保留品牌语义和当前状态，不把说明文字拆成零散卡片。",
-                "This section keeps brand semantics and current state together instead of splitting them into disconnected cards.",
-            ),
-            |ui| {
-                color_note_row(
-                    ui,
-                    river_teal(),
-                    app.t("River Teal", "River Teal"),
-                    app.t(
-                        "主品牌色，用于主按钮、选中与重点数据。",
-                        "Primary brand accent for key actions, selection, and emphasis.",
-                    ),
-                );
-                ui.add_space(10.0);
-                color_note_row(
-                    ui,
-                    if app.theme_dark {
-                        egui::Color32::from_rgb(0x18, 0x22, 0x27)
-                    } else {
-                        egui::Color32::from_rgb(0xEE, 0xF1, 0xF0)
-                    },
-                    app.t("基础面板", "Base Surfaces"),
-                    app.t(
-                        "保持低对比、长时间查看不刺眼。",
-                        "Kept low-contrast so long sessions stay easy on the eyes.",
-                    ),
-                );
-                ui.add_space(10.0);
-                color_note_row(
-                    ui,
-                    sand_accent(),
-                    app.t("暖色辅助", "Warm Accent"),
-                    app.t(
-                        "只做轻微平衡，不大面积出现。",
-                        "Used sparingly to soften the palette, not dominate it.",
-                    ),
-                );
-                ui.add_space(14.0);
-                tone_banner(
-                    ui,
-                    app.t("当前模式", "Current Mode"),
-                    if app.theme_dark {
-                        app.t(
-                            "深色主题已启用：更适合长时间扫描和对比文件体积。",
-                            "Dark theme is enabled: better for extended scanning and file-size comparison.",
-                        )
-                    } else {
-                        app.t(
-                            "浅色主题已启用：保持低对比和柔和明度，避免纯白带来的刺眼感。",
-                            "Light theme is enabled: low contrast and softer luminance to avoid harsh white surfaces.",
-                        )
                     },
                 );
             },
