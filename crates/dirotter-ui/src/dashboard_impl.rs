@@ -19,6 +19,18 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             "Start with the folders consuming the most space.",
         )
         .to_string();
+    let folders_empty_body = app
+        .t(
+            "开始扫描后会显示占用空间最多的目录。",
+            "Start a scan to see which directories consume the most space.",
+        )
+        .to_string();
+    let items_empty_body = app
+        .t(
+            "开始扫描后会优先显示最值得检查的大文件。",
+            "Start a scan to surface the largest files worth reviewing first.",
+        )
+        .to_string();
     if app.scan_active() {
         render_live_overview_hero(app, ui);
     } else if app.summary.bytes_observed > 0 || app.cleanup.analysis.is_some() {
@@ -44,6 +56,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                         ui,
                         &folders_title,
                         &folders_subtitle,
+                        &folders_empty_body,
                         &ranked_dirs,
                         app.summary.bytes_observed,
                         &mut app.selection,
@@ -60,6 +73,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                         ui,
                         &items_title,
                         &items_subtitle,
+                        &items_empty_body,
                         &ranked_items,
                         app.summary.bytes_observed,
                         &mut app.selection,
@@ -73,6 +87,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             ui,
             &folders_title,
             &folders_subtitle,
+            &folders_empty_body,
             &ranked_dirs,
             app.summary.bytes_observed,
             &mut app.selection,
@@ -83,6 +98,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             ui,
             &items_title,
             &items_subtitle,
+            &items_empty_body,
             &ranked_items,
             app.summary.bytes_observed,
             &mut app.selection,

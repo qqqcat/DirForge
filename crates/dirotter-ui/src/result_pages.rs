@@ -75,11 +75,24 @@ pub(super) fn ui_current_scan(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             "This keeps updating until the scan finishes.",
         )
         .to_string();
+    let live_folders_empty_body = app
+        .t(
+            "开始扫描后会显示占用空间最多的目录。",
+            "Start a scan to see which directories consume the most space.",
+        )
+        .to_string();
+    let live_files_empty_body = app
+        .t(
+            "开始扫描后会优先显示最值得检查的大文件。",
+            "Start a scan to surface the largest files worth reviewing first.",
+        )
+        .to_string();
     ui.columns(2, |columns| {
         render_ranked_size_list(
             &mut columns[0],
             &live_folders_title,
             &live_folders_subtitle,
+            &live_folders_empty_body,
             &ranked_dirs,
             app.summary.bytes_observed,
             &mut app.selection,
@@ -89,6 +102,7 @@ pub(super) fn ui_current_scan(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             &mut columns[1],
             &live_files_title,
             &live_files_subtitle,
+            &live_files_empty_body,
             &ranked_files,
             app.summary.bytes_observed,
             &mut app.selection,

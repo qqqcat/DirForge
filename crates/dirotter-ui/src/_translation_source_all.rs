@@ -4620,6 +4620,7 @@ fn render_ranked_size_list(
     ui: &mut egui::Ui,
     title: &str,
     subtitle: &str,
+    empty_body: &str,
     items: &[dirotter_scan::RankedPath],
     total: u64,
     selection: &mut SelectionState,
@@ -4636,15 +4637,7 @@ fn render_ranked_size_list(
             ui.add_space(8.0);
 
             if items.is_empty() {
-                empty_state_panel(
-                    ui,
-                    title,
-                    if title.contains("Folder") || title.contains("文件夹") {
-                        "Start a scan to see which directories consume the most space."
-                    } else {
-                        "Start a scan to surface the largest files worth reviewing first."
-                    },
-                );
+                empty_state_panel(ui, title, empty_body);
                 return;
             }
 
@@ -5316,6 +5309,33 @@ mod ui_tests {
     }
 
     #[test]
+    fn recent_multilingual_patch_keys_do_not_fall_back_to_english() {
+        let keys = [
+            "Scan Strategy",
+            "Default strategy is enough for normal cleanup. Open advanced pacing only for huge folders, external drives, or stress testing.",
+            "Advanced scan pacing",
+            "Start a scan to see which directories consume the most space.",
+            "Start a scan to surface the largest files worth reviewing first.",
+            "Deletion has finished. Cleanup suggestions and duplicate data are synchronizing in the background and will refresh automatically.",
+            "Synchronizing cleanup suggestions and duplicate data after deletion",
+            "Select a file or folder from the live list, duplicate review, or errors first.",
+        ];
+
+        for &lang in supported_languages() {
+            if matches!(lang, Lang::Zh | Lang::En) {
+                continue;
+            }
+            for key in keys {
+                assert_ne!(
+                    translate_ui(lang, "中文占位", key),
+                    key,
+                    "{lang:?} fell back to English for {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn french_and_spanish_translations_cover_primary_actions() {
         assert_eq!(translate_fr("Start Scan"), "Démarrer l'analyse");
         assert_eq!(translate_es("Start Scan"), "Iniciar escaneo");
@@ -5454,6 +5474,11 @@ mod ui_tests {
     #[test]
     fn all_supported_languages_cover_result_pages_keys() {
         assert_translations_cover_source(include_str!("result_pages.rs"), "result-page");
+    }
+
+    #[test]
+    fn all_supported_languages_cover_dashboard_keys() {
+        assert_translations_cover_source(include_str!("dashboard_impl.rs"), "dashboard");
     }
 
     #[test]
@@ -7355,6 +7380,18 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             "Start with the folders consuming the most space.",
         )
         .to_string();
+    let folders_empty_body = app
+        .t(
+            "开始扫描后会显示占用空间最多的目录。",
+            "Start a scan to see which directories consume the most space.",
+        )
+        .to_string();
+    let items_empty_body = app
+        .t(
+            "开始扫描后会优先显示最值得检查的大文件。",
+            "Start a scan to surface the largest files worth reviewing first.",
+        )
+        .to_string();
     if app.scan_active() {
         render_live_overview_hero(app, ui);
     } else if app.summary.bytes_observed > 0 || app.cleanup.analysis.is_some() {
@@ -7380,6 +7417,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                         ui,
                         &folders_title,
                         &folders_subtitle,
+                        &folders_empty_body,
                         &ranked_dirs,
                         app.summary.bytes_observed,
                         &mut app.selection,
@@ -7396,6 +7434,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                         ui,
                         &items_title,
                         &items_subtitle,
+                        &items_empty_body,
                         &ranked_items,
                         app.summary.bytes_observed,
                         &mut app.selection,
@@ -7409,6 +7448,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             ui,
             &folders_title,
             &folders_subtitle,
+            &folders_empty_body,
             &ranked_dirs,
             app.summary.bytes_observed,
             &mut app.selection,
@@ -7419,6 +7459,7 @@ pub(super) fn ui_dashboard(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             ui,
             &items_title,
             &items_subtitle,
+            &items_empty_body,
             &ranked_items,
             app.summary.bytes_observed,
             &mut app.selection,
@@ -9017,11 +9058,24 @@ pub(super) fn ui_current_scan(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             "This keeps updating until the scan finishes.",
         )
         .to_string();
+    let live_folders_empty_body = app
+        .t(
+            "开始扫描后会显示占用空间最多的目录。",
+            "Start a scan to see which directories consume the most space.",
+        )
+        .to_string();
+    let live_files_empty_body = app
+        .t(
+            "开始扫描后会优先显示最值得检查的大文件。",
+            "Start a scan to surface the largest files worth reviewing first.",
+        )
+        .to_string();
     ui.columns(2, |columns| {
         render_ranked_size_list(
             &mut columns[0],
             &live_folders_title,
             &live_folders_subtitle,
+            &live_folders_empty_body,
             &ranked_dirs,
             app.summary.bytes_observed,
             &mut app.selection,
@@ -9031,6 +9085,7 @@ pub(super) fn ui_current_scan(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
             &mut columns[1],
             &live_files_title,
             &live_files_subtitle,
+            &live_files_empty_body,
             &ranked_files,
             app.summary.bytes_observed,
             &mut app.selection,
