@@ -51,7 +51,6 @@ use controller::{
 const MAX_PENDING_BATCH_EVENTS: usize = 32;
 const MAX_PENDING_SNAPSHOTS: usize = 8;
 const MAX_LIVE_FILES: usize = 20_000;
-const MAX_TREEMAP_CHILDREN: usize = 2_000;
 const MAX_CLEANUP_DETAIL_ITEMS: usize = 48;
 const MAX_CACHE_CLEANUP_ITEMS: usize = 96;
 const MAX_CLEANUP_ITEMS_PER_CATEGORY: usize = 24;
@@ -85,7 +84,6 @@ const DUPLICATE_AUTO_SELECT_MIN_AGE_DAYS: u64 = 30;
 enum Page {
     Dashboard,
     CurrentScan,
-    Treemap,
     Duplicates,
     Errors,
     Diagnostics,
@@ -130,7 +128,6 @@ enum AppStatus {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SelectionSource {
     Table,
-    Treemap,
     Duplicate,
     Error,
 }
@@ -208,17 +205,6 @@ struct ScanFinalizePayload {
 #[derive(Clone)]
 pub(crate) struct SelectedTarget {
     node_id: Option<NodeId>,
-    name: Arc<str>,
-    path: Arc<str>,
-    size_bytes: u64,
-    kind: NodeKind,
-    file_count: u64,
-    dir_count: u64,
-}
-
-#[derive(Clone)]
-struct TreemapEntry {
-    node_id: NodeId,
     name: Arc<str>,
     path: Arc<str>,
     size_bytes: u64,
@@ -379,7 +365,6 @@ pub struct DirOtterNativeApp {
 
     pending_batch_events: VecDeque<Vec<BatchEntry>>,
     pending_snapshots: VecDeque<SnapshotDelta>,
-    treemap_focus_path: Option<Arc<str>>,
     live_files: Vec<dirotter_scan::RankedPath>,
     live_top_files: Vec<dirotter_scan::RankedPath>,
     live_top_dirs: Vec<dirotter_scan::RankedPath>,
@@ -475,7 +460,6 @@ impl DirOtterNativeApp {
             scan_dropped_progress: 0,
             pending_batch_events: VecDeque::new(),
             pending_snapshots: VecDeque::new(),
-            treemap_focus_path: None,
             live_files: Vec::new(),
             live_top_files: Vec::new(),
             live_top_dirs: Vec::new(),
@@ -575,33 +559,33 @@ impl DirOtterNativeApp {
 
     fn scan_mode_title(&self, mode: ScanMode) -> &'static str {
         match mode {
-            ScanMode::Quick => self.t("快速扫描（推荐）", "Quick Scan (Recommended)"),
-            ScanMode::Deep => self.t("深度扫描", "Deep Scan"),
-            ScanMode::LargeDisk => self.t("超大硬盘模式", "Large Disk Mode"),
+            ScanMode::Quick => self.t("推荐策略", "Recommended strategy"),
+            ScanMode::Deep => self.t("复杂目录", "Complex Directory"),
+            ScanMode::LargeDisk => self.t("外置/超大硬盘", "External / Huge Drive"),
         }
     }
 
     fn scan_mode_description(&self, mode: ScanMode) -> &'static str {
         match mode {
             ScanMode::Quick => self.t(
-                "更快进入可操作结果，适合日常整理和大多数本地磁盘。",
-                "Reach actionable results faster. Best for routine cleanup and most local disks.",
+                "使用默认的响应式节奏完整扫描，适合日常整理和大多数本地磁盘。",
+                "Complete scanning with the default responsive pacing for daily cleanup and most local disks.",
             ),
             ScanMode::Deep => self.t(
-                "用更稳的节奏持续展开复杂目录，适合首次全面排查。",
-                "Use a steadier cadence for complex directory trees and first-pass investigations.",
+                "放慢结果发布节奏，适合首次排查复杂目录树。",
+                "Slow the publishing cadence for first-pass investigations of complex directory trees.",
             ),
             ScanMode::LargeDisk => self.t(
-                "降低界面刷新压力，适合超大硬盘、外置盘和文件数极多的目录。",
-                "Reduce UI refresh pressure for very large drives, external disks, or extremely dense folders.",
+                "使用最保守的批处理和界面刷新节奏，适合外置盘、超大硬盘或文件数极多的目录。",
+                "Use the most conservative batching and UI refresh cadence for external drives, very large disks, or extremely dense folders.",
             ),
         }
     }
 
     fn scan_mode_note(&self) -> &'static str {
         self.t(
-            "所有模式都会完整扫描当前范围，差异只在扫描节奏和界面刷新方式。",
-            "All modes scan the same scope. The only difference is pacing and UI update cadence.",
+            "所有节奏都会扫描同一范围并产出同一组结果，只改变批处理和界面刷新频率。",
+            "All pacing options scan the same scope and produce the same result set. They only change batching and UI refresh cadence.",
         )
     }
 
@@ -735,41 +719,6 @@ impl DirOtterNativeApp {
         })
     }
 
-    fn root_node_id(&self) -> Option<NodeId> {
-        self.store
-            .as_ref()?
-            .nodes
-            .iter()
-            .find(|node| node.parent.is_none())
-            .map(|node| node.id)
-    }
-
-    fn treemap_focus_target(&self) -> Option<SelectedTarget> {
-        let store = self.store.as_ref()?;
-
-        if let Some(path) = self.treemap_focus_path.as_deref() {
-            if let Some(node_id) = store.path_index.get(path).copied() {
-                if let Some(target) = self.target_from_node_id(node_id) {
-                    if matches!(target.kind, NodeKind::Dir) {
-                        return Some(target);
-                    }
-                }
-            }
-        }
-
-        self.root_node_id()
-            .and_then(|node_id| self.target_from_node_id(node_id))
-    }
-
-    fn selected_directory_target(&self) -> Option<SelectedTarget> {
-        let target = self.selected_target()?;
-        if matches!(target.kind, NodeKind::Dir) {
-            Some(target)
-        } else {
-            None
-        }
-    }
-
     fn delete_request_for_target(
         target: SelectedTarget,
         selection_origin: SelectionOrigin,
@@ -790,11 +739,6 @@ impl DirOtterNativeApp {
             .node_id
             .is_some_and(|node_id| self.selection.selected_node == Some(node_id))
             || self.selection_matches_path(target.path.as_ref())
-    }
-
-    fn selection_matches_treemap_entry(&self, entry: &TreemapEntry) -> bool {
-        self.selection.selected_node == Some(entry.node_id)
-            || self.selection_matches_path(entry.path.as_ref())
     }
 
     fn cleanup_category_label(&self, category: CleanupCategory) -> &'static str {
@@ -1543,82 +1487,9 @@ impl DirOtterNativeApp {
         }
     }
 
-    fn treemap_entries(&self, scope_path: &str, limit: usize) -> Vec<TreemapEntry> {
-        let Some(store) = self.store.as_ref() else {
-            return Vec::new();
-        };
-        let Some(scope_id) = store.path_index.get(scope_path).copied() else {
-            return Vec::new();
-        };
-        let Some(children) = store.children.get(&scope_id) else {
-            return Vec::new();
-        };
-
-        let mut entries: Vec<TreemapEntry> = children
-            .iter()
-            .filter_map(|child_id| store.nodes.get(child_id.0))
-            .map(|node| TreemapEntry {
-                node_id: node.id,
-                name: store
-                    .resolve_string_arc(node.name_id)
-                    .unwrap_or_else(|| Arc::from("")),
-                path: node.path.clone(),
-                size_bytes: node.size_subtree.max(node.size_self),
-                kind: node.kind,
-                file_count: node.file_count,
-                dir_count: node.dir_count,
-            })
-            .collect();
-
-        entries.sort_by(|a, b| {
-            b.size_bytes
-                .cmp(&a.size_bytes)
-                .then_with(|| a.name.cmp(&b.name))
-        });
-        entries.truncate(limit);
-        entries
-    }
-
-    fn focus_treemap_path(&mut self, path: Arc<str>) {
-        self.treemap_focus_path = Some(path.clone());
-        self.select_path(path.as_ref(), SelectionSource::Treemap);
-    }
-
-    fn focus_treemap_node(&mut self, node_id: NodeId) {
-        let Some(target) = self.target_from_node_id(node_id) else {
-            return;
-        };
-        self.treemap_focus_path = Some(target.path.clone());
-        self.select_node(node_id, SelectionSource::Treemap);
-    }
-
-    fn focus_treemap_parent(&mut self) {
-        let Some(current) = self.treemap_focus_target() else {
-            return;
-        };
-        let Some(store) = self.store.as_ref() else {
-            return;
-        };
-        let Some(node_id) = store.path_index.get(current.path.as_ref()).copied() else {
-            self.treemap_focus_path = None;
-            return;
-        };
-        let Some(node) = store.nodes.get(node_id.0) else {
-            self.treemap_focus_path = None;
-            return;
-        };
-        if let Some(parent_id) = node.parent {
-            if let Some(parent) = self.target_from_node_id(parent_id) {
-                self.focus_treemap_path(parent.path);
-                return;
-            }
-        }
-        self.treemap_focus_path = None;
-    }
-
     fn selection_origin(&self) -> SelectionOrigin {
         match self.selection.source {
-            Some(SelectionSource::Table | SelectionSource::Treemap) => SelectionOrigin::TopFiles,
+            Some(SelectionSource::Table) => SelectionOrigin::TopFiles,
             Some(SelectionSource::Duplicate) => SelectionOrigin::Duplicates,
             Some(SelectionSource::Error) | None => SelectionOrigin::Manual,
         }
@@ -2175,7 +2046,6 @@ impl DirOtterNativeApp {
         self.scan_last_event_at = None;
         self.scan_cancel_requested = false;
         self.execution_report = None;
-        self.treemap_focus_path = None;
         self.scan_finalize_session = None;
         if released_result_store {
             let _ = dirotter_platform::trim_process_memory();
@@ -2284,7 +2154,6 @@ impl DirOtterNativeApp {
         self.result_store_load_session = None;
         self.missing_result_store_root = None;
         self.selection = SelectionState::default();
-        self.treemap_focus_path = None;
         self.reset_duplicate_review();
         self.reset_duplicate_prep();
         true
@@ -2322,7 +2191,7 @@ impl DirOtterNativeApp {
     fn result_store_is_in_active_use(&self) -> bool {
         self.result_store_load_session.is_some()
             || self.duplicate_scan_session.is_some()
-            || matches!(self.page, Page::Treemap | Page::Duplicates)
+            || matches!(self.page, Page::Duplicates)
     }
 
     fn result_store_load_active(&self) -> bool {
@@ -2358,7 +2227,7 @@ impl DirOtterNativeApp {
         };
 
         self.result_store_load_session = None;
-        let keep_loaded_store = matches!(self.page, Page::Treemap | Page::Duplicates);
+        let keep_loaded_store = matches!(self.page, Page::Duplicates);
         if let Some(store) = payload.store {
             if keep_loaded_store {
                 self.store = Some(store);
@@ -2477,7 +2346,6 @@ impl DirOtterNativeApp {
         self.scan_current_path = None;
         self.scan_last_event_at = None;
         self.status = AppStatus::Idle;
-        self.treemap_focus_path = None;
         self.reset_duplicate_review();
         self.reset_duplicate_prep();
         let trimmed = dirotter_platform::trim_process_memory();
@@ -2567,7 +2435,6 @@ impl DirOtterNativeApp {
         self.scan_dropped_progress = 0;
         self.pending_batch_events.clear();
         self.pending_snapshots.clear();
-        self.treemap_focus_path = None;
         self.live_files.clear();
         self.live_top_files.clear();
         self.live_top_dirs.clear();
@@ -2806,7 +2673,6 @@ impl DirOtterNativeApp {
         for (p, label_zh, label_en) in [
             (Page::Dashboard, "概览", "Overview"),
             (Page::CurrentScan, "扫描进行中", "Live Scan"),
-            (Page::Treemap, "结果视图", "Result View"),
             (Page::Duplicates, "重复文件", "Duplicate Files"),
             (Page::Settings, "偏好设置", "Settings"),
         ] {
@@ -2864,10 +2730,6 @@ impl DirOtterNativeApp {
 
     fn ui_current_scan(&mut self, ui: &mut egui::Ui) {
         result_pages::ui_current_scan(self, ui);
-    }
-
-    fn ui_treemap(&mut self, ui: &mut egui::Ui) {
-        result_pages::ui_treemap(self, ui);
     }
 
     fn ui_duplicates(&mut self, ui: &mut egui::Ui) {
@@ -3001,8 +2863,8 @@ impl DirOtterNativeApp {
                         );
                     } else {
                         ui.label(self.t(
-                            "尚未选择任何文件或目录。可以从实时列表、结果视图或其他页面点选对象。",
-                            "No file or folder is selected yet. Pick one from the live list, result view, or another page.",
+                            "尚未选择任何文件或目录。可以从实时列表、重复文件或错误中心点选对象。",
+                            "No file or folder is selected yet. Pick one from the live list, duplicate review, or errors.",
                         ));
                     }
                 });
@@ -4104,8 +3966,8 @@ impl DirOtterNativeApp {
                 self.t("已耗时", "Elapsed"),
                 phase,
                 self.t(
-                    "删除已经完成，正在后台整理结果视图与清理建议。",
-                    "Deletion finished. The result view and cleanup suggestions are being synchronized in the background.",
+                    "删除已经完成，正在后台整理清理建议和重复文件数据。",
+                    "Deletion finished. Cleanup suggestions and duplicate data are being synchronized in the background.",
                 )
             ),
         );
@@ -4201,9 +4063,6 @@ impl eframe::App for DirOtterNativeApp {
                         with_scrollable_page_width(ui, PAGE_MAX_WIDTH + 40.0, |ui| {
                             self.ui_current_scan(ui)
                         })
-                    }
-                    Page::Treemap => {
-                        with_page_width_fill_height(ui, PAGE_MAX_WIDTH, |ui| self.ui_treemap(ui))
                     }
                     Page::Duplicates => {
                         with_page_width_fill_height(ui, DUPLICATES_PAGE_MAX_WIDTH, |ui| {
@@ -5220,7 +5079,6 @@ mod ui_tests {
             scan_dropped_progress: 0,
             pending_batch_events: VecDeque::new(),
             pending_snapshots: VecDeque::new(),
-            treemap_focus_path: None,
             live_files: Vec::new(),
             live_top_files: Vec::new(),
             live_top_dirs: Vec::new(),
@@ -5399,7 +5257,7 @@ mod ui_tests {
     }
 
     #[test]
-    fn result_view_only_reloads_cache_for_current_session_results() {
+    fn result_store_reloads_only_current_session_results() {
         let mut app = make_test_app();
         assert!(!app.can_reload_result_store_from_cache());
 
@@ -5441,6 +5299,18 @@ mod ui_tests {
         assert_eq!(lang_setting_value(Lang::Es), "es");
         assert_eq!(lang_setting_value(Lang::Vi), "vi");
         assert_eq!(supported_languages().len(), 19);
+    }
+
+    #[test]
+    fn missing_key_patch_does_not_override_chinese_source_text() {
+        assert_eq!(
+            translate_ui(
+                Lang::Zh,
+                "尚未选择任何文件或目录。可以从实时列表、重复文件或错误中心点选对象。",
+                "No file or folder is selected yet. Pick one from the live list, duplicate review, or errors.",
+            ),
+            "尚未选择任何文件或目录。可以从实时列表、重复文件或错误中心点选对象。"
+        );
     }
 
     #[test]
@@ -5728,7 +5598,6 @@ mod ui_tests {
             scan_dropped_progress: 0,
             pending_batch_events: VecDeque::new(),
             pending_snapshots: VecDeque::new(),
-            treemap_focus_path: None,
             live_files: Vec::new(),
             live_top_files: Vec::new(),
             live_top_dirs: Vec::new(),
@@ -5820,7 +5689,6 @@ mod ui_tests {
             scan_dropped_progress: 0,
             pending_batch_events: VecDeque::new(),
             pending_snapshots: VecDeque::new(),
-            treemap_focus_path: None,
             live_files: Vec::new(),
             live_top_files: Vec::new(),
             live_top_dirs: Vec::new(),
@@ -5903,187 +5771,6 @@ mod ui_tests {
     }
 
     #[test]
-    fn treemap_entries_only_return_direct_children() {
-        let mut store = NodeStore::default();
-        let root = store.add_node(None, "d:\\".into(), "d:\\".into(), NodeKind::Dir, 0);
-        let users = store.add_node(
-            Some(root),
-            "Users".into(),
-            "d:\\Users".into(),
-            NodeKind::Dir,
-            0,
-        );
-        store.add_node(
-            Some(users),
-            "alice.dat".into(),
-            "d:\\Users\\alice.dat".into(),
-            NodeKind::File,
-            12,
-        );
-        store.add_node(
-            Some(root),
-            "pagefile.sys".into(),
-            "d:\\pagefile.sys".into(),
-            NodeKind::File,
-            20,
-        );
-        store.rollup();
-
-        let app = DirOtterNativeApp {
-            egui_ctx: egui::Context::default(),
-            page: Page::Treemap,
-            available_volumes: Vec::new(),
-            root_input: "d:\\".into(),
-            status: AppStatus::Completed,
-            summary: ScanSummary::default(),
-            store: Some(store),
-            scan_session: None,
-            scan_finalize_session: None,
-            delete_session: None,
-            delete_finalize_session: None,
-            duplicate_scan_session: None,
-            result_store_load_session: None,
-            memory_release_session: None,
-            scan_mode: ScanMode::Quick,
-            scan_current_path: None,
-            scan_last_event_at: None,
-            scan_cancel_requested: false,
-            scan_dropped_batches: 0,
-            scan_dropped_snapshots: 0,
-            scan_dropped_progress: 0,
-            pending_batch_events: VecDeque::new(),
-            pending_snapshots: VecDeque::new(),
-            treemap_focus_path: None,
-            live_files: Vec::new(),
-            live_top_files: Vec::new(),
-            live_top_dirs: Vec::new(),
-            completed_top_files: Vec::new(),
-            completed_top_dirs: Vec::new(),
-            last_coalesce_commit: Instant::now(),
-            cleanup: CleanupPanelState::default(),
-            duplicates: DuplicatePanelState {
-                sort: Some(DuplicateSort::Waste),
-                ..DuplicatePanelState::default()
-            },
-            duplicate_prep: DuplicatePrepState::default(),
-            execution_report: None,
-            pending_delete_confirmation: None,
-            queued_delete: None,
-            explorer_feedback: None,
-            maintenance_feedback: None,
-            last_system_memory_release: None,
-            process_memory: None,
-            system_memory: None,
-            last_memory_status_refresh: None,
-            last_user_activity: Instant::now(),
-            last_auto_memory_release_at: None,
-            errors: Vec::new(),
-            language: Lang::En,
-            theme_dark: true,
-            advanced_tools_enabled: false,
-            cache: CacheStore::for_tests().expect("cache"),
-            perf: PerfMetrics::default(),
-            diagnostics_json: String::new(),
-            selection: SelectionState::default(),
-            error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
-        };
-
-        let entries = app.treemap_entries("d:\\", 32);
-        assert_eq!(entries.len(), 2);
-        assert!(entries
-            .iter()
-            .any(|entry| entry.path.as_ref() == "d:\\Users"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.path.as_ref() == "d:\\pagefile.sys"));
-        assert!(!entries
-            .iter()
-            .any(|entry| entry.path.as_ref() == "d:\\Users\\alice.dat"));
-    }
-
-    #[test]
-    fn treemap_focus_falls_back_to_root_when_focus_is_missing() {
-        let mut store = NodeStore::default();
-        let root = store.add_node(None, "d:\\".into(), "d:\\".into(), NodeKind::Dir, 0);
-        let users = store.add_node(
-            Some(root),
-            "Users".into(),
-            "d:\\Users".into(),
-            NodeKind::Dir,
-            0,
-        );
-        store.rollup();
-
-        let app = DirOtterNativeApp {
-            egui_ctx: egui::Context::default(),
-            page: Page::Treemap,
-            available_volumes: Vec::new(),
-            root_input: "d:\\".into(),
-            status: AppStatus::Completed,
-            summary: ScanSummary::default(),
-            store: Some(store),
-            scan_session: None,
-            scan_finalize_session: None,
-            delete_session: None,
-            delete_finalize_session: None,
-            duplicate_scan_session: None,
-            result_store_load_session: None,
-            memory_release_session: None,
-            scan_mode: ScanMode::Quick,
-            scan_current_path: None,
-            scan_last_event_at: None,
-            scan_cancel_requested: false,
-            scan_dropped_batches: 0,
-            scan_dropped_snapshots: 0,
-            scan_dropped_progress: 0,
-            pending_batch_events: VecDeque::new(),
-            pending_snapshots: VecDeque::new(),
-            treemap_focus_path: Some("d:\\missing".into()),
-            live_files: Vec::new(),
-            live_top_files: Vec::new(),
-            live_top_dirs: Vec::new(),
-            completed_top_files: Vec::new(),
-            completed_top_dirs: Vec::new(),
-            last_coalesce_commit: Instant::now(),
-            cleanup: CleanupPanelState::default(),
-            duplicates: DuplicatePanelState {
-                sort: Some(DuplicateSort::Waste),
-                ..DuplicatePanelState::default()
-            },
-            duplicate_prep: DuplicatePrepState::default(),
-            execution_report: None,
-            pending_delete_confirmation: None,
-            queued_delete: None,
-            explorer_feedback: None,
-            maintenance_feedback: None,
-            last_system_memory_release: None,
-            process_memory: None,
-            system_memory: None,
-            last_memory_status_refresh: None,
-            last_user_activity: Instant::now(),
-            last_auto_memory_release_at: None,
-            errors: Vec::new(),
-            language: Lang::En,
-            theme_dark: true,
-            advanced_tools_enabled: false,
-            cache: CacheStore::for_tests().expect("cache"),
-            perf: PerfMetrics::default(),
-            diagnostics_json: String::new(),
-            selection: SelectionState {
-                selected_node: Some(users),
-                selected_path: Some("d:\\Users".into()),
-                source: Some(SelectionSource::Table),
-            },
-            error_filter: ErrorFilter::All,
-            missing_result_store_root: None,
-        };
-
-        let focus = app.treemap_focus_target().expect("focus target");
-        assert_eq!(focus.path.as_ref(), "d:\\");
-    }
-
-    #[test]
     fn released_store_can_reload_from_snapshot() {
         let mut store = NodeStore::default();
         let root = store.add_node(None, "d:\\".into(), "d:\\".into(), NodeKind::Dir, 0);
@@ -6120,7 +5807,6 @@ mod ui_tests {
             scan_dropped_progress: 0,
             pending_batch_events: VecDeque::new(),
             pending_snapshots: VecDeque::new(),
-            treemap_focus_path: None,
             live_files: Vec::new(),
             live_top_files: Vec::new(),
             live_top_dirs: Vec::new(),

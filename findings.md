@@ -427,8 +427,8 @@ Split dirotter-ui responsibilities to reduce DirOtterNativeApp monolithic state 
 
 ## Product Impact
 - 普通用户不再被迫理解底层性能参数。
-- “快速扫描（推荐）”为默认路径，显著降低首次使用成本。
-- “深度扫描”和“超大硬盘模式”把复杂场景选择从技术术语改成任务语义。
+- “推荐策略”为默认路径，显著降低首次使用成本。
+- “复杂目录”和“外置/超大硬盘”保留在高级扫描节奏中，避免把低频性能节奏做成首页主决策。
 
 ## 2026-03-18 Result View Simplification
 
@@ -556,7 +556,7 @@ Split dirotter-ui responsibilities to reduce DirOtterNativeApp monolithic state 
 
 ## Product Direction Follow-up
 - 对普通用户而言，自动扫描历史、自动错误 CSV、自动快照落库的价值明显低于“现在能清多少、怎么一键处理”。
-- 当前最值得保留的主路径是：快速扫描 -> 清理建议 -> 缓存快清 / 删除执行 -> 结果确认。
+- 当前最值得保留的主路径是：推荐策略扫描 -> 清理建议 -> 缓存快清 / 删除执行 -> 结果确认。
 - `History / Errors / Diagnostics` 更像维护者和诊断工具，后续应降级为二级入口，而不是继续和主清理路径并列。
 - “一键释放内存”不宜做成含糊承诺；如果要做，应限定为应用自身占用优化或实验性辅助工具。
 

@@ -131,7 +131,6 @@ dirotter-ui-core/          # UI 核心抽象
 dirotter-ui-components/    # 可复用组件
 ├── src/
 │   ├── lib.rs
-│   ├── treemap.rs       # 树图组件
 │   ├── dashboard.rs      # 仪表盘组件
 │   └── inspector.rs     # 检查器组件
 
@@ -581,11 +580,11 @@ impl RetainedUi {
 }
 ```
 
-#### 建议 2：优化 Treemap 渲染
+#### 建议 2：收口结果渲染入口
 
-**当前问题：** egui 的即时模式在渲染大规模 Treemap 时性能差。
+**当前问题：** 独立结果视图的信息密度和可读性不足，继续优化大规模 Treemap 渲染会把工程投入推向低价值入口。
 
-**最新实现：** 已在 `crates/dirotter-ui/src/result_pages.rs` 引入自定义绘制层，将结果列表从每个条目大量 Widget 渲染改为低级 `Painter` 绘制。该实现保留现有交互逻辑，并减少 egui 布局与 Widget 开销。当前修复了 Treemap 结果区域的布局计算问题，使行间距和进度条在窄窗口下更稳定。
+**最新实现：** 独立 Result View / Treemap 入口已删除。完成态结果浏览收口到 Overview 的最大文件夹/文件证据区和右侧 Inspector；需要完整结果树的 Duplicate Files 仍按需后台载入当前会话快照。
 
 **补充优化：**
 
@@ -593,7 +592,7 @@ impl RetainedUi {
 - 已在 `crates/dirotter-core/src/lib.rs` 为 `NodeStore` 添加 `update_node_size` 和 `propagate_size_delta`，为未来的增量树统计与动态大小更新奠定基础。
 
 **当前覆盖范围：**
-- UI 渲染优化：已实现 Treemap 条目与排名列表两种低级绘制路径
+- UI 渲染优化：保留排名列表低级绘制路径，删除独立 Treemap 结果入口
 - 核心基础：已添加节点大小增量更新辅助方法
 - 文档与验证：已同步文档并确保 `dirotter-ui` 编译通过
 
@@ -601,15 +600,15 @@ impl RetainedUi {
 - SmolStr / StringPool 引用计数等字符串内存优化
 - 专用分配器与零拷贝数据结构（bumpalo、bytes::Bytes）
 - 完整 SumTree 重构与 top-k 查询优化
-- egui 缓存机制、LOD Treemap、主题系统与自定义渲染管线
+- egui 缓存机制、主题系统与自定义渲染管线
 - 架构重构、UI 组件库拆分、插件系统
 
 **改进方案：**
 
 ```rust
-// 1. 使用 egui 的 Painter 进行自定义绘制
-fn draw_treemap_result_rows(&mut self, ui: &mut egui::Ui, entries: &[TreemapEntry]) {
-    // 使用一个滚动区域与低级绘制，避免每一帧构建成千上万个 SelectableLabel / ProgressBar。
+// 1. 使用 egui 的 Painter 绘制排名行
+fn render_ranked_size_list(ui: &mut egui::Ui, items: &[RankedPath]) {
+    // 使用低级绘制减少重复布局开销，结果浏览仍回到 Overview 证据区。
 }
 ```
 
@@ -619,20 +618,9 @@ fn draw_treemap_result_rows(&mut self, ui: &mut egui::Ui, entries: &[TreemapEntr
 - 未来可引入保留模式布局树，进一步减少每帧重建成本。
 
 ```rust
-// 2. 实现细节层次（LOD）
-fn draw_treemap_lod(&self, ui: &mut egui::Ui) {
-    let zoom_level = calculate_zoom();
-    
-    if zoom_level < 0.1 {
-        // 远处：只绘制聚合矩形
-        draw_aggregated_rectangles(ui, &self.summary);
-    } else if zoom_level < 1.0 {
-        // 中距离：绘制主要区块
-        draw_major_blocks(ui, &self.major_blocks);
-    } else {
-        // 近处：绘制详细内容
-        draw_detailed_treemap(ui, &self.nodes);
-    }
+// 2. 后续如果恢复复杂结果浏览，应先证明它比 Overview 证据区更有用
+fn should_add_result_browser(user_task: &CleanupTask) -> bool {
+    user_task.requires_deep_directory_navigation()
 }
 ```
 
@@ -834,7 +822,6 @@ pub struct NodeStore {
 - [x] 评估 egui 是否满足需求
 - [ ] 如果继续使用 egui：
   - [ ] 实现缓存机制
-  - [ ] 优化 Treemap 渲染（LOD）
   - [ ] 建立主题系统
 - [ ] 如果迁移到自定义渲染：
   - [ ] 建立渲染管线
@@ -842,8 +829,8 @@ pub struct NodeStore {
   - [ ] GPU 加速
 
 **当前状态：**
-- 已部分实现：`crates/dirotter-ui/src/result_pages.rs` 的 Treemap 结果列表和 `crates/dirotter-ui/src/lib.rs` 的排名列表已改为低级 `Painter` 渲染。
-- 仍需完成：egui 缓存、LOD 渲染、系统主题以及更大范围的自定义渲染管线。
+- 已实现：独立 Result View / Treemap 结果入口删除，`crates/dirotter-ui/src/lib.rs` 的排名列表保留低级 `Painter` 渲染。
+- 仍需完成：egui 缓存、系统主题以及更大范围的自定义渲染管线。
 
 **预期收益：**
 - UI 响应速度提升 50%+

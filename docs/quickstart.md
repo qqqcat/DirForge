@@ -28,23 +28,22 @@ cargo run -p dirotter-app
 ## 3. 建议的 10 分钟体验路径
 
 1. 在 Overview 直接点击盘符按钮开始扫描。
-2. 保持默认 `快速扫描（推荐）`，除非你明确在测复杂目录或超大磁盘。
+2. 保持默认 `推荐策略`，除非你明确在测复杂目录、外置盘或超大磁盘。
 3. 切到 `Live Scan`，确认进度、排行榜和最近扫描文件都在更新。
 4. 点击一次 `Stop Scan`，确认按钮进入 `Stopping` 并能安全退出。
 5. 重新开始一次扫描并等待完成。
 6. 回到 Overview，先确认首页主动作、清理建议摘要、最大文件夹和所选范围最大项目是否合理。
 7. 打开 `查看详情`，检查绿色/黄色/红色风险分级。
 8. 尝试 `一键提速（推荐）` 或 `Fast Cleanup`，确认删除完成后快速回到完成态，不长时间停在结果同步。
-9. 打开 `Result View`，确认它立即用 Treemap 矩形区块展示完成态 Top-N 目录和文件，切回 Overview 不应触发闪退或大内存整理。
-10. 在 Inspector 尝试 `Open File Location` 与 `Move to Recycle Bin`。
-11. 在 Settings 切换语言或主题，确认界面即时生效。
-12. 如需维护动作，再进入 `高级工具 -> Diagnostics`。
+9. 在 Inspector 尝试 `Open File Location` 与 `Move to Recycle Bin`。
+10. 在 Settings 切换语言或主题，确认界面即时生效。
+11. 如需维护动作，再进入 `高级工具 -> Diagnostics`。
 
 ## 4. 预期结果
 
 - 扫描、停止扫描和完成态切换不会卡死 UI。
 - 一键缓存清理完成后先轻量同步摘要、Top-N 和清理建议，不为刷新 UI 强制重建完整结果树。
-- Result View 默认不会同步或后台自动载入完整结果树；Treemap 画布应基于完成态 Top-N 稳定非空。
+- 完成态结果浏览应收口在 Overview 的最大文件夹/文件证据区和 Inspector，不再出现独立 Result View / Treemap 入口。
 - 设置可持久化；若设置目录不可写，Settings 会明确显示临时会话存储提示。
 
 ## 5. 发布产物速查

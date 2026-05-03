@@ -489,8 +489,8 @@ impl DirOtterNativeApp {
         Some(DeleteTaskViewModel {
             title: self.t("后台任务：同步结果", "Background Task: Sync Results"),
             description: self.t(
-                "删除已完成，结果视图和清理建议正在后台同步。界面会在同步后自动刷新。",
-                "Deletion has finished. The result view and cleanup suggestions are synchronizing in the background and will refresh automatically.",
+                "删除已完成，清理建议和重复文件数据正在后台同步。界面会在同步后自动刷新。",
+                "Deletion has finished. Cleanup suggestions and duplicate data are synchronizing in the background and will refresh automatically.",
             ),
             target_value: truncate_middle(&snapshot.label, 34),
             target_hint: format!(
@@ -509,8 +509,8 @@ impl DirOtterNativeApp {
             ),
             elapsed_value: format!("{:.1}s", snapshot.started_at.elapsed().as_secs_f32()),
             elapsed_hint: self.t(
-                "删除完成后同步结果视图和清理建议",
-                "Synchronizing the result view and cleanup suggestions after deletion",
+                "删除完成后同步清理建议和重复文件数据",
+                "Synchronizing cleanup suggestions and duplicate data after deletion",
             ),
             current_target_title: None,
             current_target_value: None,
@@ -757,8 +757,8 @@ impl DirOtterNativeApp {
         } else if !has_selection {
             Some(
                 self.t(
-                    "先从列表、结果视图或其他页面里选中一个文件或文件夹。",
-                    "Select a file or folder from a list, result view, or another page first.",
+                    "先从实时列表、重复文件或错误中心里选中一个文件或文件夹。",
+                    "Select a file or folder from the live list, duplicate review, or errors first.",
                 )
                 .to_string(),
             )

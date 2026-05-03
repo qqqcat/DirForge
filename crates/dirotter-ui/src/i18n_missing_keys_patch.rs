@@ -15,6 +15,8 @@ macro_rules! translation_table {
 
 translation_table!(lookup_fr, {
     "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Nettoyage rapide\" n'apparaît que lorsque la sélection actuelle correspond aux règles de cache à faible risque. Pour les autres cibles, utilisez Ouvrir l'emplacement, Corbeille ou Suppression permanente.",
+    "Advanced scan pacing" => "Rythme d'analyse avancé",
+    "All pacing options scan the same scope and produce the same result set. They only change batching and UI refresh cadence." => "Toutes les options de rythme analysent le même périmètre et produisent le même ensemble de résultats. Elles changent seulement le regroupement et la fréquence de rafraîchissement de l'interface.",
     "All files inside duplicate groups" => "Tous les fichiers dans des groupes en double",
     "AppData" => "Données d'application",
     "Auto Select Suggested" => "Sélection automatique suggérée",
@@ -24,7 +26,10 @@ translation_table!(lookup_fr, {
     "By File Size" => "Par taille de fichier",
     "By Reclaimable Space" => "Par espace récupérable",
     "Clear Selection" => "Effacer la sélection",
+    "Complete scanning with the default responsive pacing for daily cleanup and most local disks." => "Analyse complète avec le rythme réactif par défaut pour le nettoyage quotidien et la plupart des disques locaux.",
     "Complete a scan first before opening duplicate review." => "Effectuez d’abord une analyse avant d’ouvrir la révision en double.",
+    "Complex Directory" => "Dossier complexe",
+    "Default strategy is enough for normal cleanup. Open advanced pacing only for huge folders, external drives, or stress testing." => "La stratégie par défaut suffit pour le nettoyage courant. Ouvrez le rythme avancé seulement pour les très grands dossiers, les disques externes ou les tests de charge.",
     "Delete Selected" => "Supprimer la sélection",
     "Delete non-keeper files in this group" => "Supprimer les fichiers non-gardiens dans ce groupe",
     "Desktop" => "Bureau",
@@ -37,6 +42,7 @@ translation_table!(lookup_fr, {
     "Each group keeps at least one file. High-risk groups are not auto-selected for deletion." => "Chaque groupe conserve au moins un dossier. Les groupes à haut risque ne sont pas automatiquement sélectionnés pour la suppression.",
     "Either the current snapshot has no duplicates, or the background verification is still running." => "Soit l'instantané actuel ne contient aucun doublon, soit la vérification en arrière-plan est toujours en cours.",
     "Expand All" => "Développer tout",
+    "External / Huge Drive" => "Disque externe / très grand disque",
     "Group" => "Groupe",
     "Keep score" => "Garder le score",
     "Large Files Only" => "Fichiers volumineux uniquement",
@@ -49,9 +55,12 @@ translation_table!(lookup_fr, {
     "Preparing candidate groups..." => "Préparation des groupes de candidats...",
     "Program Files" => "Fichiers programme",
     "Reclaimable Space" => "Espace récupérable",
+    "Recommended strategy" => "Stratégie recommandée",
     "Recommended keep:" => "Conservation recommandée :",
     "Review Duplicates After Scan Completion" => "Vérifier les doublons une fois l'analyse terminée",
+    "Scan Strategy" => "Stratégie d'analyse",
     "Sort" => "Trier",
+    "Slow the publishing cadence for first-pass investigations of complex directory trees." => "Ralentit le rythme de publication pour les premiers diagnostics de structures de dossiers complexes.",
     "Temp" => "Température",
     "The duplicate review will begin background verification after the saved result snapshot is ready." => "L'examen en double commencera la vérification des antécédents une fois que l'instantané du résultat enregistré sera prêt.",
     "The goal is not to list duplicates. It is to make deletion safe: every group keeps one copy and the default selection follows the recommended keeper." => "Le but n’est pas de lister les doublons. Il s'agit de sécuriser la suppression : chaque groupe conserve une copie et la sélection par défaut suit le gardien recommandé.",
@@ -59,6 +68,7 @@ translation_table!(lookup_fr, {
     "Today" => "Aujourd'hui",
     "Unknown" => "Inconnu",
     "User Folder" => "Dossier utilisateur",
+    "Use the most conservative batching and UI refresh cadence for external drives, very large disks, or extremely dense folders." => "Utilise le regroupement et le rafraîchissement d'interface les plus prudents pour les disques externes, les très grands disques ou les dossiers extrêmement denses.",
     "Waste beyond one keeper per group" => "Déchets au-delà d'un gardien par groupe",
     "Windows" => "Fenêtres",
     "copies" => "copies",
@@ -72,6 +82,8 @@ translation_table!(lookup_fr, {
 
 translation_table!(lookup_es, {
     "\"Fast Cleanup\" only appears when the current selection matches the low-risk cache rules. For other targets, use Open File Location, Recycle Bin, or Permanent Delete." => "\"Limpieza rápida\" solo aparece cuando la selección actual coincide con las reglas de caché de bajo riesgo. Para otros objetivos, use Abrir ubicación, Papelera de reciclaje o Eliminar permanentemente.",
+    "Advanced scan pacing" => "Ritmo de escaneo avanzado",
+    "All pacing options scan the same scope and produce the same result set. They only change batching and UI refresh cadence." => "Todas las opciones de ritmo escanean el mismo alcance y producen el mismo conjunto de resultados. Solo cambian el procesamiento por lotes y la frecuencia de actualización de la interfaz.",
     "All files inside duplicate groups" => "Todos los archivos dentro de grupos duplicados",
     "AppData" => "Datos de aplicación",
     "Auto Select Suggested" => "Selección automática sugerida",
@@ -81,7 +93,10 @@ translation_table!(lookup_es, {
     "By File Size" => "Por tamaño de archivo",
     "By Reclaimable Space" => "Por espacio recuperable",
     "Clear Selection" => "Borrar selección",
+    "Complete scanning with the default responsive pacing for daily cleanup and most local disks." => "Escaneo completo con el ritmo adaptable predeterminado para la limpieza diaria y la mayoría de los discos locales.",
     "Complete a scan first before opening duplicate review." => "Primero complete un escaneo antes de abrir la revisión de duplicados.",
+    "Complex Directory" => "Directorio complejo",
+    "Default strategy is enough for normal cleanup. Open advanced pacing only for huge folders, external drives, or stress testing." => "La estrategia predeterminada basta para la limpieza normal. Abra el ritmo avanzado solo para carpetas enormes, discos externos o pruebas de carga.",
     "Delete Selected" => "Eliminar seleccionado",
     "Delete non-keeper files in this group" => "Eliminar archivos que no son de custodia en este grupo",
     "Desktop" => "De oficina",
@@ -94,6 +109,7 @@ translation_table!(lookup_es, {
     "Each group keeps at least one file. High-risk groups are not auto-selected for deletion." => "Cada grupo guarda al menos un archivo. Los grupos de alto riesgo no se seleccionan automáticamente para su eliminación.",
     "Either the current snapshot has no duplicates, or the background verification is still running." => "O la instantánea actual no tiene duplicados o la verificación en segundo plano aún se está ejecutando.",
     "Expand All" => "Expandir todo",
+    "External / Huge Drive" => "Disco externo / enorme",
     "Group" => "Grupo",
     "Keep score" => "mantener la puntuación",
     "Large Files Only" => "Sólo archivos grandes",
@@ -106,9 +122,12 @@ translation_table!(lookup_es, {
     "Preparing candidate groups..." => "Preparando grupos de candidatos...",
     "Program Files" => "Archivos de programa",
     "Reclaimable Space" => "Espacio recuperable",
+    "Recommended strategy" => "Estrategia recomendada",
     "Recommended keep:" => "Conservación recomendada:",
     "Review Duplicates After Scan Completion" => "Revisar duplicados después de completar el escaneo",
+    "Scan Strategy" => "Estrategia de escaneo",
     "Sort" => "Clasificar",
+    "Slow the publishing cadence for first-pass investigations of complex directory trees." => "Reduce el ritmo de publicación para primeras revisiones de árboles de directorios complejos.",
     "Temp" => "Temperatura",
     "The duplicate review will begin background verification after the saved result snapshot is ready." => "La revisión de duplicados comenzará la verificación en segundo plano una vez que la instantánea del resultado guardado esté lista.",
     "The goal is not to list duplicates. It is to make deletion safe: every group keeps one copy and the default selection follows the recommended keeper." => "El objetivo no es enumerar duplicados. Su objetivo es hacer que la eliminación sea segura: cada grupo conserva una copia y la selección predeterminada sigue el guardián recomendado.",
@@ -116,6 +135,7 @@ translation_table!(lookup_es, {
     "Today" => "Hoy",
     "Unknown" => "Desconocido",
     "User Folder" => "Carpeta de usuario",
+    "Use the most conservative batching and UI refresh cadence for external drives, very large disks, or extremely dense folders." => "Usa el procesamiento por lotes y la frecuencia de actualización más conservadores para discos externos, discos muy grandes o carpetas extremadamente densas.",
     "Waste beyond one keeper per group" => "Desperdicio más allá de un portero por grupo",
     "Windows" => "ventanas",
     "copies" => "copias",
@@ -1689,8 +1709,17 @@ translation_table!(lookup_vi, {
 
 fn shared_duplicate_safety_fallback(en: &str) -> Option<&'static str> {
     match en {
+        "Advanced scan pacing" => Some("Advanced scan pacing"),
+        "All pacing options scan the same scope and produce the same result set. They only change batching and UI refresh cadence." => Some(
+            "All pacing options scan the same scope and produce the same result set. They only change batching and UI refresh cadence.",
+        ),
         "Manual Review Only" => Some("Manual Review Only"),
+        "Default strategy is enough for normal cleanup. Open advanced pacing only for huge folders, external drives, or stress testing." => Some(
+            "Default strategy is enough for normal cleanup. Open advanced pacing only for huge folders, external drives, or stress testing.",
+        ),
         "Review Needed" => Some("Review Needed"),
+        "Recommended strategy" => Some("Recommended strategy"),
+        "Scan Strategy" => Some("Scan Strategy"),
         "Cautious Auto" => Some("Cautious Auto"),
         "Safe Auto" => Some("Safe Auto"),
         "This group matched system paths, installed app paths, or runtime dependency rules, so no files are auto-selected for deletion." => Some(
@@ -1705,11 +1734,41 @@ fn shared_duplicate_safety_fallback(en: &str) -> Option<&'static str> {
         "This group is low-risk duplicate content and fits the automatic cleanup flow." => Some(
             "This group is low-risk duplicate content and fits the automatic cleanup flow.",
         ),
+        "Complete scanning with the default responsive pacing for daily cleanup and most local disks." => Some(
+            "Complete scanning with the default responsive pacing for daily cleanup and most local disks.",
+        ),
+        "Complex Directory" => Some("Complex Directory"),
+        "External / Huge Drive" => Some("External / Huge Drive"),
+        "No file or folder is selected yet. Pick one from the live list, duplicate review, or errors." => Some(
+            "No file or folder is selected yet. Pick one from the live list, duplicate review, or errors.",
+        ),
+        "Deletion finished. Cleanup suggestions and duplicate data are being synchronized in the background." => Some(
+            "Deletion finished. Cleanup suggestions and duplicate data are being synchronized in the background.",
+        ),
+        "Deletion has finished. Cleanup suggestions and duplicate data are synchronizing in the background and will refresh automatically." => Some(
+            "Deletion has finished. Cleanup suggestions and duplicate data are synchronizing in the background and will refresh automatically.",
+        ),
+        "Synchronizing cleanup suggestions and duplicate data after deletion" => Some(
+            "Synchronizing cleanup suggestions and duplicate data after deletion",
+        ),
+        "Select a file or folder from the live list, duplicate review, or errors first." => Some(
+            "Select a file or folder from the live list, duplicate review, or errors first.",
+        ),
+        "Slow the publishing cadence for first-pass investigations of complex directory trees." => Some(
+            "Slow the publishing cadence for first-pass investigations of complex directory trees.",
+        ),
+        "Use the most conservative batching and UI refresh cadence for external drives, very large disks, or extremely dense folders." => Some(
+            "Use the most conservative batching and UI refresh cadence for external drives, very large disks, or extremely dense folders.",
+        ),
         _ => None,
     }
 }
 
 pub(crate) fn translate_missing_ui_key(lang: Lang, en: &str) -> Option<&'static str> {
+    if lang == Lang::Zh {
+        return None;
+    }
+
     let translated = match lang {
         Lang::Fr => lookup_fr(en),
         Lang::Es => lookup_es(en),

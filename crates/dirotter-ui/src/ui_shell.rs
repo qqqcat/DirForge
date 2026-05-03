@@ -25,7 +25,6 @@ pub(super) fn ui_nav(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
     for (p, label_zh, label_en) in [
         (Page::Dashboard, "概览", "Overview"),
         (Page::CurrentScan, "扫描进行中", "Live Scan"),
-        (Page::Treemap, "结果视图", "Result View"),
         (Page::Duplicates, "重复文件", "Duplicate Files"),
         (Page::Settings, "偏好设置", "Settings"),
     ] {
@@ -186,8 +185,8 @@ pub(super) fn ui_inspector(app: &mut DirOtterNativeApp, ui: &mut egui::Ui) {
                     );
                 } else {
                     ui.label(app.t(
-                        "尚未选择任何文件或目录。可以从实时列表、结果视图或其他页面点选对象。",
-                        "No file or folder is selected yet. Pick one from the live list, result view, or another page.",
+                        "尚未选择任何文件或目录。可以从实时列表、重复文件或错误中心点选对象。",
+                        "No file or folder is selected yet. Pick one from the live list, duplicate review, or errors.",
                     ));
                 }
             });
@@ -1240,8 +1239,8 @@ pub(super) fn ui_delete_activity_banner(app: &mut DirOtterNativeApp, ui: &mut eg
             app.t("已耗时", "Elapsed"),
             phase,
             app.t(
-                "删除已经完成，正在后台整理结果视图与清理建议。",
-                "Deletion finished. The result view and cleanup suggestions are being synchronized in the background.",
+                "删除已经完成，正在后台整理清理建议和重复文件数据。",
+                "Deletion finished. Cleanup suggestions and duplicate data are being synchronized in the background.",
             )
         ),
     );

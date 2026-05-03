@@ -5,7 +5,7 @@
 本轮复评覆盖：
 
 1. workspace 与 crate 边界
-2. 扫描、结果视图、清理建议、删除执行、存储恢复主链路
+2. 扫描、Overview 证据区、清理建议、删除执行、存储恢复主链路
 3. 工程门槛、CI、Windows 发布链路
 4. 代码与文档一致性
 
@@ -45,7 +45,7 @@ DirOtter 当前处于 **Production Readiness with UI Regression Risk**。
 
 - Overview 已明确承担首页角色，先给出 `一键提速（推荐）`、清理建议和关键证据区。
 - 扫描入口已经用户化，三档模式替代了早期的技术参数暴露。
-- Result View 已收口为“扫描完成后再看”的轻量目录下钻页，不再把实时重布局作为主方向。
+- 独立 Result View / Treemap 入口已删除；完成态结果浏览收口到 Overview 的最大文件夹/文件证据区和 Inspector。
 - Inspector 已是危险动作主入口，支持回收站删除、永久删除确认和低风险缓存 `Fast Cleanup`。
 
 ### 3.2 扫描与结果链路
@@ -134,14 +134,14 @@ DirOtter 当前处于 **Production Readiness with UI Regression Risk**。
 - 主题切换必须重建 `egui::Visuals::light()` / `Visuals::dark()`，否则浅色 palette 会沿用深色控件状态。
 - 扫描完成后的常驻内存不应保留完整结果树；默认保留 Top-N、摘要和清理建议，完整 `NodeStore` 应落到会话快照后按需后台载入。
 - 最大文件夹/文件证据区必须信任扫描快照，不能用实时 `fs::metadata()` 二次过滤；这类过滤会在权限、长路径或清理后路径消失时把有效结果显示成空。
-- Result View 已转向固定画布 Treemap：默认只用完成态 Top-N 结果计算矩形区块，不自动载入完整 `NodeStore`，避免切页时后台反序列化百万节点带来资源峰值。
+- 完成态结果证据默认只保留摘要、Top-N 和清理建议；不再维护独立 Treemap 入口，避免把低可读性图形作为主要结果浏览方式。
 - SumTree 当前不作为短期内存修复项。现有增量聚合、Top-K、字符串池和完成后释放 `NodeStore` 已覆盖当前主要内存峰值；除非后续要做长期驻留的可编辑结果树或复杂范围查询，否则直接上 SumTree 会增加重构风险。
-- 快速缓存清理的主要体验风险不是删除慢，而是删除后强制重建完整结果树；一键缓存清理应优先走轻量同步，只在用户进入 Result View / Duplicate Files 时再后台载入完整快照。
+- 快速缓存清理的主要体验风险不是删除慢，而是删除后强制重建完整结果树；一键缓存清理应优先走轻量同步，只在用户进入 Duplicate Files 等确实需要完整树的页面时再后台载入完整快照。
 - 扫描完成后的整理阶段不应再对大量候选逐项读取文件系统元数据；访问时间等非关键评分可以后移或省略，优先保证完成态快速可见。
 
 ## 6. 当前建议优先级（未来 2~4 周）
 
-1. 为 Overview、Live Scan、Result View、Settings 和 Inspector 建立最小视觉回归，覆盖明暗主题、左侧导航、底部状态栏、Settings 下拉框、排名列表坐标、Treemap 非空绘制和按钮对比度。
+1. 为 Overview、Live Scan、Duplicate Files、Settings 和 Inspector 建立最小视觉回归，覆盖明暗主题、左侧导航、底部状态栏、Settings 下拉框、排名列表坐标和按钮对比度。
 2. 扩展真实删除链路的跨平台与异常场景测试。
 3. 配置 Windows 签名 secrets，并把签名验收纳入正式发布流程。
 4. 继续收紧 `dirotter-ui` 协调层职责，但不再以“拆更多文件”为目标，而以“稳定边界、降低回归”为目标。

@@ -609,43 +609,60 @@ pub(super) fn render_scan_target_card(app: &mut DirOtterNativeApp, ui: &mut egui
         );
 
         ui.add_space(14.0);
-        ui.label(egui::RichText::new(app.t("扫描模式", "Scan Mode")).strong());
+        ui.label(egui::RichText::new(app.t("扫描策略", "Scan Strategy")).strong());
         ui.label(
-                egui::RichText::new(app.t(
-                    "三种模式都会完整扫描当前范围，差异只在扫描节奏和界面刷新方式。",
-                    "All three modes scan the same scope. The only difference is pacing and UI update cadence.",
-                ))
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
-            );
+            egui::RichText::new(app.t(
+                "默认策略足够日常清理；只有超大目录、外置盘或压力测试时再展开高级节奏。",
+                "Default strategy is enough for normal cleanup. Open advanced pacing only for huge folders, external drives, or stress testing.",
+            ))
+            .text_style(egui::TextStyle::Small)
+            .color(ui.visuals().weak_text_color()),
+        );
         ui.add_space(8.0);
         ui.add_enabled_ui(!app.scan_active(), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for mode in [ScanMode::Quick, ScanMode::Deep, ScanMode::LargeDisk] {
-                    let response = sized_selectable(
-                        ui,
-                        190.0,
-                        app.scan_mode == mode,
-                        app.scan_mode_title(mode),
-                    )
-                    .on_hover_text(app.scan_mode_description(mode));
-                    if response.clicked() {
-                        app.set_scan_mode(mode);
-                    }
-                }
-            });
+            let recommended = ScanMode::Quick;
+            let response = sized_selectable(
+                ui,
+                220.0,
+                app.scan_mode == recommended,
+                app.scan_mode_title(recommended),
+            )
+            .on_hover_text(app.scan_mode_description(recommended));
+            if response.clicked() {
+                app.set_scan_mode(recommended);
+            }
+
+            ui.add_space(6.0);
+            egui::CollapsingHeader::new(app.t("高级扫描节奏", "Advanced scan pacing"))
+                .default_open(app.scan_mode != ScanMode::Quick)
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(app.scan_mode_note())
+                            .text_style(egui::TextStyle::Small)
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for mode in [ScanMode::Deep, ScanMode::LargeDisk] {
+                            let response = sized_selectable(
+                                ui,
+                                190.0,
+                                app.scan_mode == mode,
+                                app.scan_mode_title(mode),
+                            )
+                            .on_hover_text(app.scan_mode_description(mode));
+                            if response.clicked() {
+                                app.set_scan_mode(mode);
+                            }
+                        }
+                    });
+                });
         });
         ui.add_space(10.0);
         tone_banner(
             ui,
             app.scan_mode_title(app.scan_mode),
             app.scan_mode_description(app.scan_mode),
-        );
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(app.scan_mode_note())
-                .text_style(egui::TextStyle::Small)
-                .color(ui.visuals().weak_text_color()),
         );
 
         if let Some((used, free, _)) = app.volume_numbers() {

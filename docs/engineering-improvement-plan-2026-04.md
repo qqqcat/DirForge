@@ -47,7 +47,7 @@
 范围：
 
 - `DirOtterNativeApp`
-- 页面函数 `ui_dashboard / ui_current_scan / ui_treemap / ui_diagnostics / ui_settings`
+- 页面函数 `ui_dashboard / ui_current_scan / ui_duplicates / ui_diagnostics / ui_settings`
 - 扫描/删除/内存释放的 relay 与 controller
 - cleanup analysis 与 diagnostics 逻辑
 
@@ -166,7 +166,7 @@
 1. 抽离 `cleanup_analysis` 到独立模块。
 2. 抽离 `diagnostics` 和导出逻辑。
 3. 抽离 `scan_controller / delete_controller / memory_controller`。
-4. 抽离 `pages/dashboard.rs`、`pages/current_scan.rs`、`pages/treemap.rs`。
+4. 抽离 `pages/dashboard.rs`、`pages/current_scan.rs` 和重复文件页。
 
 实施方式：
 
@@ -313,9 +313,8 @@
   - `render_live_overview_hero`
   - `render_overview_metrics_strip`
   - `render_scan_target_card`
-- `current_scan / treemap` 相关方法也已从 `lib.rs` 移出：
+- `current_scan` 相关方法也已从 `lib.rs` 移出：
   - `ui_current_scan`
-  - `ui_treemap`
 - `history / errors / diagnostics / settings` 相关方法也已从 `lib.rs` 移出：
   - `ui_history`
   - `ui_errors`
@@ -495,8 +494,8 @@
 
 - 当前结果树相关 UI 状态已开始从“路径字符串驱动”收口为“`NodeId` 优先”：
   - `SelectedTarget` 携带 `node_id`
-  - `TreemapEntry` 携带 `node_id`
-  - 新增 `select_node()`，treemap 与 cleanup 候选点击优先走节点 ID
+  - 清理候选携带 `node_id`
+  - 新增 `select_node()`，cleanup 候选点击优先走节点 ID
 - 这一步暂时没有追求“一次改穿所有 UI 状态”，而是先抓最值钱的当前结果树交互层。
 - 这样做的好处是：
   - 降低重复 `path -> NodeId` 回查
@@ -519,22 +518,21 @@
   - 实时/完成态排行改用共享 `RankedPath`
   - 上下文文件榜单改用共享 `RankedPath`
   - `live_files` 改为共享路径列表
-  - `TreemapEntry.name / path` 改为共享 `Arc<str>`
+- 独立 Treemap 结果视图已删除；UI 共享路径策略保留在扫描排行、选择态和 cleanup 选择集中。
 - 这一步的重要性在于，它把“少拷贝/延迟物化”的策略继续推进到了 UI 展示层，而不是只停在 scan/core 内部。
 
 ### 2026-04-04 UI Shared Path State Reduction
 
-- UI 内部最后两块高频路径状态也已继续收口：
+- UI 内部高频路径状态也已继续收口：
   - `CleanupPanelState.selected_paths` 改为 `HashSet<Arc<str>>`
-  - `treemap_focus_path` 改为 `Option<Arc<str>>`
-- 这一步的价值不是“字段类型更统一”，而是把 cleanup 勾选和 treemap 聚焦这两条仍会频繁 `contains/remove/set-focus` 的路径状态也拉回共享模型。
+- 独立 Treemap 聚焦状态已随 Result View 删除，避免继续维护低价值结果浏览状态。
 - 当前状态下，UI 内部共享路径的覆盖面已经从：
   - scan 事件
   - 实时/完成态排行
-  - `SelectedTarget / TreemapEntry`
+  - `SelectedTarget`
   继续扩展到：
   - cleanup 选择集
-  - treemap 当前焦点
+  - cleanup 选择集
 
 ### 2026-04-04 Inspector / Confirm View-Model Extraction
 
