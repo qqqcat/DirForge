@@ -277,13 +277,13 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-See `CONTRIBUTING.md` for development setup, quality gates, pull request expectations, issue labels, translation rules, safety-sensitive cleanup changes, and release checks.
+For contribution guidelines, see `CONTRIBUTING.md`.
 
 ## Security
 
 DirOtter works with local filesystem data and cleanup operations, so security and safety are important project concerns.
 
-Please report potential security or data-loss issues privately if possible. See `SECURITY.md` for supported versions, reporting guidance, sensitive areas, response timelines, and disclosure policy.
+For security reporting and disclosure policy, see `SECURITY.md`.
 
 Areas of special concern include:
 
