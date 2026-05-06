@@ -79,7 +79,7 @@ Before publishing a release:
 2. Run the full quality gate.
 3. Build the release application.
 4. Run `./scripts/package-windows.ps1 -Configuration release` for Windows artifacts.
-5. Verify `dist/DirOtter-windows-x64-<version>-portable/BUILD-INFO.json`.
+5. Verify `dist/DirOtter-windows-x64-{version}-portable/BUILD-INFO.json`.
 6. Confirm whether the artifact is signed or explicitly documented as unsigned.
 7. Update release notes and changelog material.
 8. Confirm bundled documentation matches the source documentation.
