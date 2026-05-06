@@ -277,13 +277,13 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-More detailed contributor documentation should be added in `CONTRIBUTING.md`.
+See `CONTRIBUTING.md` for development setup, quality gates, pull request expectations, issue labels, translation rules, safety-sensitive cleanup changes, and release checks.
 
 ## Security
 
 DirOtter works with local filesystem data and cleanup operations, so security and safety are important project concerns.
 
-Please report potential security or data-loss issues privately if possible. A dedicated `SECURITY.md` policy should define the preferred reporting channel, supported versions, and disclosure process.
+Please report potential security or data-loss issues privately if possible. See `SECURITY.md` for supported versions, reporting guidance, sensitive areas, response timelines, and disclosure policy.
 
 Areas of special concern include:
 
@@ -305,7 +305,7 @@ Any future telemetry or crash reporting should be opt-in, clearly documented, an
 
 ## License
 
-The workspace currently declares the project license as MIT in `Cargo.toml`. A root `LICENSE` file should be added before broader distribution.
+DirOtter is licensed under the MIT License. See `LICENSE`.
 
 ## Project Goal
 

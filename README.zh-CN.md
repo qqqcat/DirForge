@@ -277,13 +277,13 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-更详细的贡献者文档应补充到 `CONTRIBUTING.md`。
+开发环境、质量门禁、PR 要求、issue 标签、翻译规则、安全敏感清理改动和发布检查请见 `CONTRIBUTING.md`。
 
 ## 安全
 
 DirOtter 会处理本地文件系统数据和清理操作，因此安全和防止数据损失是项目的重要关注点。
 
-如发现潜在安全或数据损失问题，请尽可能私下报告。后续应通过专门的 `SECURITY.md` 定义推荐报告渠道、支持版本和披露流程。
+如发现潜在安全或数据损失问题，请尽可能私下报告。支持版本、报告方式、敏感区域、响应时间和披露策略请见 `SECURITY.md`。
 
 需要特别关注的领域包括：
 
@@ -305,7 +305,7 @@ DirOtter 是本地优先应用。
 
 ## 许可证
 
-当前 workspace 在 `Cargo.toml` 中声明项目许可证为 MIT。正式扩大分发前，应在仓库根目录补充 `LICENSE` 文件。
+DirOtter 使用 MIT License。请见 `LICENSE`。
 
 ## 项目目标
 
