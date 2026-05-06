@@ -24,7 +24,7 @@ DirOtter has successfully achieved **Production Readiness** status as of May 3, 
 
 ### 1.2 Test Coverage ✅
 
-**Total Tests: 94** - All Passing
+**Total Tests: 95** - All Passing
 
 | Crate | Tests | Status |
 |-------|-------|--------|
@@ -38,7 +38,7 @@ DirOtter has successfully achieved **Production Readiness** status as of May 3, 
 | integration_scan | 7 | ✅ |
 | dirotter-telemetry | 2 | ✅ |
 | benchmark_thresholds | 4 | ✅ |
-| dirotter-ui | 38 | ✅ (includes i18n and theme tests) |
+| dirotter-ui | 39 | ✅ (includes i18n, theme, and cleanup safety tests) |
 
 **Test Coverage Score: 10/10**
 
@@ -146,7 +146,7 @@ DirOtter has successfully achieved **Production Readiness** status as of May 3, 
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Windows Portable Package | ✅ | `DirOtter-windows-x64-1.0.1-portable.zip` |
+| Windows Portable Package | ✅ | `DirOtter-windows-x64-1.0.2-portable.zip` |
 | Installation Script | ✅ | `install-windows-portable.ps1` |
 | Uninstallation Script | ✅ | `uninstall-windows-portable.ps1` |
 | Code Signing Pipeline | ⚠️ | Configured but requires secrets |
@@ -167,7 +167,7 @@ DirOtter has successfully achieved **Production Readiness** status as of May 3, 
 
 ### 4.3 Reliability ✅
 
-- **Test Coverage:** 94 tests, 100% pass rate
+- **Test Coverage:** 95 tests, 100% pass rate
 - **Error Handling:** Comprehensive with `DirOtterError` enum
 - **Edge Cases:** Symlink loops, restricted dirs, locked files tested
 - **Resource Management:** Session-based with automatic cleanup
@@ -244,7 +244,7 @@ cargo build --workspace
 
 # Test count verification
 cargo test --workspace 2>&1 | Select-String -Pattern "test result:|running|passed|failed"
-# Output: 94 tests, 0 failed
+# Output: 95 tests, 0 failed
 ```
 
 ---

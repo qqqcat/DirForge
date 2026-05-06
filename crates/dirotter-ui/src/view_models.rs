@@ -546,7 +546,6 @@ impl DirOtterNativeApp {
         &self,
         request: &CleanupDeleteRequest,
     ) -> CleanupDeleteConfirmViewModel {
-        let is_fast_cleanup = request.mode == ExecutionMode::FastPurge;
         let preview_items: Vec<CleanupDeletePreviewItemViewModel> = request
             .targets
             .iter()
@@ -555,39 +554,54 @@ impl DirOtterNativeApp {
                 size_value: format_bytes(target.size_bytes),
             })
             .collect();
-        CleanupDeleteConfirmViewModel {
-            intro: self.t(
-                if is_fast_cleanup {
-                    "将先把建议项快速移出当前目录，再在后台继续释放空间。"
-                } else {
-                    "将优先把建议项移到回收站，避免直接永久删除。"
-                },
-                if is_fast_cleanup {
-                    "Suggested items will be moved out of the current view first, then reclaimed in the background."
-                } else {
-                    "Suggested items will be moved to the recycle bin first instead of being deleted permanently."
-                },
-            ),
-            task_value: request.label.clone(),
-            task_hint: self.t("规则驱动清理", "Rule-driven cleanup"),
-            item_count_value: format_count(request.targets.len() as u64),
-            item_count_hint: if is_fast_cleanup {
-                self.t("会先进入后台清理区", "Will be staged for background cleanup")
-            } else {
-                self.t("将进入系统回收站", "Will move to the system recycle bin")
-            },
-            estimated_reclaim_value: format_bytes(request.estimated_bytes),
-            estimated_reclaim_hint: if is_fast_cleanup {
+        let (
+            intro,
+            item_count_hint,
+            estimated_reclaim_hint,
+            confirm_label,
+        ) = match request.mode {
+            ExecutionMode::FastPurge => (
+                self.t("会先进入后台清理区", "Will be staged for background cleanup"),
+                self.t("会先进入后台清理区", "Will be staged for background cleanup"),
                 self.t(
                     "磁盘空间会在后台逐步释放",
                     "Disk space will continue to be reclaimed in the background",
-                )
-            } else {
+                ),
+                self.t("立即清理", "Clean Now"),
+            ),
+            ExecutionMode::Permanent => (
+                self.t(
+                    "该操作会直接删除文件或目录，不进入回收站。",
+                    "This action deletes the file or folder directly without using the recycle bin.",
+                ),
+                self.t("永久删除", "Permanent delete"),
+                self.t(
+                    "建议：如果只是普通清理，优先使用“移到回收站”。永久删除适合明确确认后再执行。",
+                    "Recommendation: prefer recycle-bin deletion for routine cleanup. Use permanent delete only when you are certain.",
+                ),
+                self.t("永久删除", "Delete Permanently"),
+            ),
+            ExecutionMode::RecycleBin => (
+                self.t(
+                    "将优先把建议项移到回收站，避免直接永久删除。",
+                    "Suggested items will be moved to the recycle bin first instead of being deleted permanently.",
+                ),
+                self.t("将进入系统回收站", "Will move to the system recycle bin"),
                 self.t(
                     "实际释放量取决于系统删除结果",
                     "Actual reclaim depends on execution results",
-                )
-            },
+                ),
+                self.t("移到回收站", "Move to Recycle Bin"),
+            ),
+        };
+        CleanupDeleteConfirmViewModel {
+            intro,
+            task_value: request.label.clone(),
+            task_hint: self.t("规则驱动清理", "Rule-driven cleanup"),
+            item_count_value: format_count(request.targets.len() as u64),
+            item_count_hint,
+            estimated_reclaim_value: format_bytes(request.estimated_bytes),
+            estimated_reclaim_hint,
             preview_title: self.t("本次将处理的项目", "Items In This Cleanup").to_string(),
             preview_hint: self
                 .t(
@@ -596,11 +610,7 @@ impl DirOtterNativeApp {
                 )
                 .to_string(),
             preview_items,
-            confirm_label: if is_fast_cleanup {
-                self.t("立即清理", "Clean Now")
-            } else {
-                self.t("移到回收站", "Move to Recycle Bin")
-            },
+            confirm_label,
         }
     }
 

@@ -84,7 +84,7 @@ cargo run -p dirotter-app
    - `Move to Recycle Bin`
    - `Delete Permanently`
    - 当前选中项若命中低风险缓存规则，还会出现 `Fast Cleanup`
-11. 永久删除会先弹确认层；确认后窗口立即关闭，执行转为后台任务。
+11. 永久删除会先弹确认层；确认层必须明确说明不会进入回收站，最终按钮也必须显示 `Delete Permanently`，确认后窗口立即关闭，执行转为后台任务。
 12. 删除进行中，顶部横幅和 Inspector 会显示已处理/成功/失败统计和当前处理项。
 13. 删除完成后，结果同步会在后台进行，UI 不应进入 `Not Responding`。
 14. 如需系统级内存辅助动作，使用右侧 `Quick Actions` 的 `Release System Memory`。

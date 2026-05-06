@@ -36,8 +36,9 @@ cargo run -p dirotter-app
 7. 打开 `查看详情`，检查绿色/黄色/红色风险分级。
 8. 尝试 `一键提速（推荐）` 或 `Fast Cleanup`，确认删除完成后快速回到完成态，不长时间停在结果同步。
 9. 在 Inspector 尝试 `Open File Location` 与 `Move to Recycle Bin`。
-10. 在 Settings 切换语言或主题，确认界面即时生效。
-11. 如需维护动作，再进入 `高级工具 -> Diagnostics`。
+10. 如果测试 `Delete Permanently`，确认弹窗必须说明不会进入回收站，最终按钮必须显示 `Delete Permanently`。
+11. 在 Settings 切换语言或主题，确认界面即时生效。
+12. 如需维护动作，再进入 `高级工具 -> Diagnostics`。
 
 ## 4. 预期结果
 

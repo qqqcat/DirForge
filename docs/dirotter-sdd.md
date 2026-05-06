@@ -147,6 +147,8 @@ root planning
 - 高风险显式确认后：`Delete Permanently`
 - 低风险缓存：`Fast Cleanup`
 
+永久删除确认是独立安全路径。无论从 Inspector、重复文件清理还是 cleanup details 触发，确认层都必须说明目标不会进入回收站，并且最终执行按钮必须使用永久删除语义，不能复用回收站确认文案。
+
 `Fast Cleanup` 当前语义：
 
 - 目标先移入 `.dirotter-staging`

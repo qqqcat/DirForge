@@ -24,7 +24,7 @@
 
 ### 1.2 测试覆盖 ✅
 
-**测试总数：94个** - 全部通过
+**测试总数：95个** - 全部通过
 
 | Crate | 测试数 | 状态 |
 |-------|--------|------|
@@ -38,7 +38,7 @@
 | integration_scan | 7 | ✅ |
 | dirotter-telemetry | 2 | ✅ |
 | benchmark_thresholds | 4 | ✅ |
-| dirotter-ui | 38 | ✅（包含 i18n 和主题测试） |
+| dirotter-ui | 39 | ✅（包含 i18n、主题和清理安全测试） |
 
 **测试覆盖评分：10/10**
 
@@ -157,7 +157,7 @@
 
 | 要求 | 状态 | 说明 |
 |------|------|------|
-| Windows 便携包 | ✅ | `DirOtter-windows-x64-1.0.1-portable.zip` |
+| Windows 便携包 | ✅ | `DirOtter-windows-x64-1.0.2-portable.zip` |
 | 安装脚本 | ✅ | `install-windows-portable.ps1` |
 | 卸载脚本 | ✅ | `uninstall-windows-portable.ps1` |
 | 代码签名管道 | ⚠️ | 已配置但需要配置 secrets |
@@ -178,7 +178,7 @@
 
 ### 4.3 可靠性 ✅
 
-- **测试覆盖：** 94个测试，100% 通过率
+- **测试覆盖：** 95个测试，100% 通过率
 - **错误处理：** 全面的 `DirOtterError` 枚举
 - **边界情况：** 符号链接循环、受限目录、锁定文件已测试
 - **资源管理：** 基于会话，自动清理
@@ -233,7 +233,7 @@
 
 DirOtter 已成功从"功能能跑但质量不可控"的状态，转型为 **生产就绪的应用程序**，具备：
 
-- ✅ 94个测试（100% 通过率）
+- ✅ 95个测试（100% 通过率）
 - ✅ 0 warnings 策略已执行
 - ✅ 清晰架构，11个职责明确的 crates
 - ✅ 性能优化（增量更新、内存管理）
@@ -259,7 +259,7 @@ cargo build --workspace
 
 # 测试数量验证
 cargo test --workspace 2>&1 | Select-String -Pattern "test result:|running|passed|failed"
-# 输出：94个测试，0个失败
+# 输出：95个测试，0个失败
 ```
 
 ---

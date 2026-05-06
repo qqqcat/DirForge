@@ -28,7 +28,7 @@ Current validation status:
 
 - `cargo fmt --all -- --check` passes
 - `cargo check --workspace` passes with 0 errors and 0 warnings
-- `cargo test --workspace` passes with 94 tests
+- `cargo test --workspace` passes with 95 tests
 - `cargo clippy --workspace --all-targets -- -D warnings` passes
 - `cargo build --workspace` succeeds
 
@@ -96,6 +96,7 @@ Supported cleanup actions include:
 - fast cleanup for low-risk cache candidates
 
 Cleanup execution reports progress and result counts while processing files in the background.
+Permanent cleanup actions use a dedicated confirmation path that states the target will not go to the recycle bin and labels the final button as permanent deletion.
 
 ### Local-First Storage
 
@@ -144,6 +145,8 @@ The project treats cleanup as a safety-sensitive operation because mistakes can 
 - keep permanent deletion explicit
 - limit fast cleanup to low-risk cache or temporary paths
 - surface operation results and failures clearly
+
+The UI treats permanent deletion as a separate safety path. Inspector, duplicate cleanup, and cleanup-details permanent actions must show permanent-delete wording in the confirmation copy and final action label before execution starts.
 
 Future work includes deeper safety auditing for platform-specific trash behavior, high-risk paths, symbolic links, permission failures, and irreversible deletion edge cases.
 

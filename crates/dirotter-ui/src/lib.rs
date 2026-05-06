@@ -5989,6 +5989,35 @@ mod ui_tests {
     }
 
     #[test]
+    fn cleanup_confirmation_makes_permanent_delete_explicit() {
+        let app = make_test_app();
+        let request = CleanupDeleteRequest {
+            label: "Delete Selected Permanently".into(),
+            targets: vec![SelectedTarget {
+                node_id: None,
+                name: "archive.zip".into(),
+                path: "d:\\downloads\\archive.zip".into(),
+                size_bytes: 128 * 1024 * 1024,
+                kind: NodeKind::File,
+                file_count: 1,
+                dir_count: 0,
+            }],
+            estimated_bytes: 128 * 1024 * 1024,
+            mode: ExecutionMode::Permanent,
+        };
+
+        let view_model = app.cleanup_delete_confirmation_view_model(&request);
+
+        assert_eq!(view_model.confirm_label, "Delete Permanently");
+        assert!(view_model.intro.contains("without using the recycle bin"));
+        assert_eq!(view_model.item_count_hint, "Permanent delete");
+        assert!(view_model
+            .estimated_reclaim_hint
+            .contains("prefer recycle-bin deletion"));
+        assert!(!view_model.confirm_label.contains("Recycle Bin"));
+    }
+
+    #[test]
     fn execution_report_view_model_exposes_failure_details_action() {
         let mut app = make_test_app();
         app.execution_report = Some(ExecutionReport {
